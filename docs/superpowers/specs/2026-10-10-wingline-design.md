@@ -263,7 +263,9 @@ requests(
 | 结果不确定 | `terminal wait` 超时、只拿到 `input_accepted`、退出状态查不清 | 3 | 注册表标 uncertain，输出带同一请求 ID 的重试命令，不自动重发、不关进程 |
 | 内部错误 | 回执无法解析、注册表写入失败 | 4 | 打印回执原文与日志路径，提示可能是 Orca 版本不兼容 |
 
-每条命令启动时执行一次 `orca status --json` 读取版本，不在已验证范围内时打印警告但继续。
+每条命令启动时执行一次 `orca --version` 读取版本（纯文本输出），不在已验证范围内时打印警告但继续；再执行 `orca status --json`，`result.runtime.reachable` 为 false 时按“Orca 明确报错”处理并提示 `orca open`。
+
+Orca `--json` 输出的统一信封（据 Orca 源码 `src/shared/runtime-rpc-envelope.ts`）：成功为 `{ id, ok: true, result, _meta }`，失败为 `{ id, ok: false, error: { code, message, data? } }`，失败时进程退出码为 1。
 
 日志写到 `~/.wingline/logs/`，每次 Orca 调用记录参数、耗时、回执（消息正文截断到 200 字符），按天滚动，保留 7 天。
 
@@ -305,6 +307,7 @@ CI：GitHub Actions，`macos-latest`、`ubuntu-latest`、`windows-latest` × Nod
 | `node:sqlite` 在 Node 22 上为实验特性 | 启动时打印警告；接口可能小幅变化 | CLI 屏蔽该警告；注册表通过 `Registry` 封装，必要时可换实现 |
 | 探针结论与假设不符 | 后续阶段设计需要调整 | 第 6.1 节已为每个假设准备退路；首期只有 `run-lifetime` 影响 MVP |
 | `terminal send` 对单条文本可能有长度上限，文档未写明 | 启动包被截断或拒收 | 探针 `adopt-terminal` 顺带用 12,000 字符文本测一次；上限更低时把启动包写成文件，只发送“请先阅读 <路径>” |
+| Windows 上 Orca CLI 通常是 `.cmd` 包装，换行无法安全经过 `cmd.exe` | 多行启动包和消息无法发送 | 经 `.cmd` 时启动包写入 `~/.wingline/briefs/<team>/<post>.md`，只发送一行“请先完整阅读 <路径>”；含换行的 `wl send` 消息报输入错误，提示设置 `WINGLINE_ORCA` 指向 `orca.exe` |
 | `terminal wait --for tui-idle` 对部分 agent 不准 | 启动包在 agent 就绪前送出而丢失 | 超时即标 uncertain、不发送；集成测试覆盖 Claude Code 与 Codex |
 
 ## 10. 参考
