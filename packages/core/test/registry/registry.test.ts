@@ -104,3 +104,13 @@ test('stale lock from a dead pid is taken over', async () => {
   raw.close()
   expect(await r.withTeamLock('duo', () => 'took over')).toBe('took over')
 })
+
+test('listTeams and getPost', () => {
+  const r = Registry.open(tmpDb())
+  r.upsertTeam(team)
+  r.upsertTeam({ ...team, name: 'alpha' })
+  r.upsertPost(post())
+  expect(r.listTeams().map((t) => t.name)).toEqual(['alpha', 'duo'])
+  expect(r.getPost('builder@duo')).toEqual(post())
+  expect(r.getPost('ghost@duo')).toBeNull()
+})

@@ -1,0 +1,98 @@
+import { expect, test } from 'vitest'
+import { send } from '../../src/commands/send.js'
+import { WinglineError } from '../../src/errors.js'
+import { FakeOrca, mkDeps } from './fake-client.js'
+
+function seeded(orca: FakeOrca, over = {}) {
+  const m = mkDeps(orca, over)
+  m.registry.upsertTeam({ name: 'duo', specPath: '/s', specHash: 'h', runId: null, status: 'up' })
+  m.registry.upsertPost({ address: 'checker@duo', team: 'duo', agent: 'codex', worktree: 'current', handle: 'old', status: 'live', isLead: false })
+  orca.terminals = [{ handle: 'c1', title: 'checker@duo', connected: true, worktreeId: 'w' }]
+  return m
+}
+
+test('send delivered when stages include turn_started', async () => {
+  const o = new FakeOrca()
+  const r = await send(seeded(o).deps, { address: 'checker@duo', message: '你好' })
+  expect(r).toEqual({ address: 'checker@duo', outcome: 'delivered', handle: 'c1' })
+  expect(o.calls).toEqual(['version', 'status', 'terminalList', 'terminalSend'])
+})
+
+test('send input_only throws uncertain, records it, and never resends', async () => {
+  const o = new FakeOrca()
+  o.sendStages = ['input_accepted']
+  const { deps, registry } = seeded(o)
+  await expect(send(deps, { address: 'checker@duo', message: 'hi' })).rejects.toMatchObject({ kind: 'uncertain', code: 'send_unconfirmed' })
+  expect(o.sent).toHaveLength(1)
+  expect(registry.getRequest(o.sent[0]!.retryRequest)!.state).toBe('uncertain')
+})
+
+test('retrying an unconfirmed send reuses the same retry id', async () => {
+  const o = new FakeOrca()
+  o.sendStages = ['input_accepted']
+  const { deps } = seeded(o)
+  await expect(send(deps, { address: 'checker@duo', message: 'hi' })).rejects.toBeTruthy()
+  await expect(send(deps, { address: 'checker@duo', message: 'hi' })).rejects.toBeTruthy()
+  expect(o.sent[0]!.retryRequest).toBe(o.sent[1]!.retryRequest)
+})
+
+test('sending the same message again after delivery uses a fresh retry id', async () => {
+  const o = new FakeOrca()
+  const { deps } = seeded(o)
+  await send(deps, { address: 'checker@duo', message: 'hi' })
+  await send(deps, { address: 'checker@duo', message: 'hi' })
+  expect(o.sent[0]!.retryRequest).not.toBe(o.sent[1]!.retryRequest)
+})
+
+test('send passes the message verbatim incl. quotes, newline, 中文', async () => {
+  const o = new FakeOrca()
+  const msg = 'a "b"\n第二行 %PATH% ^ & |'
+  await send(seeded(o).deps, { address: 'checker@duo', message: msg })
+  expect(o.sent[0]!.text).toBe(msg)
+})
+
+test('stale handle is re-located once', async () => {
+  const o = new FakeOrca()
+  o.failSendOnce = new WinglineError('orca', 'terminal_handle_stale', 'stale')
+  const { deps, registry } = seeded(o)
+  const r = await send(deps, { address: 'checker@duo', message: 'hi' })
+  expect(r.outcome).toBe('delivered')
+  expect(o.calls.filter((c) => c === 'terminalList')).toHaveLength(2)
+  expect(o.sent).toHaveLength(2)
+  expect(registry.getPost('checker@duo')!.handle).toBe('c1')
+})
+
+test('stale handle twice is reported, not looped', async () => {
+  const o = new FakeOrca()
+  const stale = new WinglineError('orca', 'terminal_handle_stale', 'stale')
+  o.terminalSend = async () => { o.calls.push('terminalSend'); throw stale }
+  await expect(send(seeded(o).deps, { address: 'checker@duo', message: 'hi' })).rejects.toMatchObject({ code: 'terminal_handle_stale' })
+  expect(o.calls.filter((c) => c === 'terminalSend')).toHaveLength(2)
+})
+
+test('multiline message when multilineSafe is false is an input error with hint', async () => {
+  const o = new FakeOrca()
+  await expect(send(seeded(o, { multilineSafe: false }).deps, { address: 'checker@duo', message: 'a\nb' })).rejects.toMatchObject({
+    kind: 'input', code: 'multiline_unsupported', hint: expect.stringContaining('WINGLINE_ORCA'),
+  })
+  expect(o.calls).toEqual([])
+})
+
+test('message over 4000 chars is an input error before any orca call', async () => {
+  const o = new FakeOrca()
+  await expect(send(seeded(o).deps, { address: 'checker@duo', message: 'x'.repeat(4001) })).rejects.toMatchObject({ code: 'message_too_long' })
+  expect(o.calls).toEqual([])
+})
+
+test('unknown address is an input error', async () => {
+  const o = new FakeOrca()
+  await expect(send(seeded(o).deps, { address: 'ghost@duo', message: 'hi' })).rejects.toMatchObject({ kind: 'input', code: 'post_unknown' })
+  expect(o.calls).toEqual([])
+})
+
+test('a post with no terminal is an input error pointing at wl up', async () => {
+  const o = new FakeOrca()
+  const { deps } = seeded(o)
+  o.terminals = []
+  await expect(send(deps, { address: 'checker@duo', message: 'hi' })).rejects.toMatchObject({ kind: 'input', code: 'post_offline', hint: expect.stringContaining('wl up') })
+})

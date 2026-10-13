@@ -32,6 +32,24 @@ type Row = Record<string, string | number | null>
 
 const now = () => new Date().toISOString()
 
+const teamRow = (r: Row): TeamRow => ({
+  name: r.name as string,
+  specPath: r.spec_path as string,
+  specHash: r.spec_hash as string,
+  runId: r.run_id as string | null,
+  status: r.status as TeamRow['status'],
+})
+
+const postRow = (r: Row): PostRow => ({
+  address: r.address as string,
+  team: r.team as string,
+  agent: r.agent as string,
+  worktree: r.worktree as string,
+  handle: r.handle as string | null,
+  status: r.status as PostStatus,
+  isLead: r.is_lead === 1,
+})
+
 function pidAlive(pid: number): boolean {
   try {
     process.kill(pid, 0)
@@ -71,9 +89,16 @@ export class Registry {
 
   getTeam(name: string): TeamRow | null {
     const r = this.db.prepare('SELECT * FROM teams WHERE name = ?').get(name) as Row | undefined
-    return r
-      ? { name: r.name as string, specPath: r.spec_path as string, specHash: r.spec_hash as string, runId: r.run_id as string | null, status: r.status as TeamRow['status'] }
-      : null
+    return r ? teamRow(r) : null
+  }
+
+  listTeams(): TeamRow[] {
+    return (this.db.prepare('SELECT * FROM teams ORDER BY name').all() as Row[]).map(teamRow)
+  }
+
+  getPost(address: string): PostRow | null {
+    const r = this.db.prepare('SELECT * FROM posts WHERE address = ?').get(address) as Row | undefined
+    return r ? postRow(r) : null
   }
 
   upsertTeam(t: TeamRow): void {
@@ -87,16 +112,7 @@ export class Registry {
   }
 
   listPosts(team: string): PostRow[] {
-    const rows = this.db.prepare('SELECT * FROM posts WHERE team = ? ORDER BY rowid').all(team) as Row[]
-    return rows.map((r) => ({
-      address: r.address as string,
-      team: r.team as string,
-      agent: r.agent as string,
-      worktree: r.worktree as string,
-      handle: r.handle as string | null,
-      status: r.status as PostStatus,
-      isLead: r.is_lead === 1,
-    }))
+    return (this.db.prepare('SELECT * FROM posts WHERE team = ? ORDER BY rowid').all(team) as Row[]).map(postRow)
   }
 
   upsertPost(p: PostRow): void {
