@@ -12,7 +12,6 @@ export type UpOutcome = 'already_live' | 'launched' | 'failed' | 'uncertain'
 
 export interface UpResult {
   team: string
-  runId: string | null
   posts: Array<{ address: string; outcome: UpOutcome; reason?: string; retry?: string }>
 }
 
@@ -53,16 +52,7 @@ function lifetimeGen(l: Launch, post: string, located: boolean): number {
   return g
 }
 
-async function ensureRun(l: Launch, existing: string | null): Promise<string | null> {
-  if (existing || !l.deps.createRun) return existing
-  const id = requestId(l.spec.name, '', 'run', l.hash)
-  const { value } = await recorded(l.deps.registry, id, () =>
-    l.deps.orca.runCreate({ objective: `wingline:${l.spec.name}`, retryRequest: id }),
-  )
-  return value.runId
-}
-
-async function registerTeam(l: Launch): Promise<string | null> {
+async function registerTeam(l: Launch): Promise<void> {
   const { registry } = l.deps
   const existing = registry.getTeam(l.spec.name)
   if (existing?.status === 'up' && existing.specHash !== l.hash) {
@@ -70,8 +60,7 @@ async function registerTeam(l: Launch): Promise<string | null> {
       hint: `不支持在线修改编队，请先执行 wl down ${l.spec.name}`,
     })
   }
-  const runId = await ensureRun(l, existing?.runId ?? null)
-  registry.upsertTeam({ name: l.spec.name, specPath: l.spec.specPath, specHash: l.hash, runId, status: 'up' })
+  registry.upsertTeam({ name: l.spec.name, specPath: l.spec.specPath, specHash: l.hash, runId: existing?.runId ?? null, status: 'up' })
   for (const p of l.spec.posts) {
     const address = postAddress(p.id, l.spec.name)
     const prev = registry.listPosts(l.spec.name).find((r) => r.address === address)
@@ -80,7 +69,6 @@ async function registerTeam(l: Launch): Promise<string | null> {
       handle: prev?.handle ?? null, status: prev?.status ?? 'offline', isLead: p.id === l.spec.lead,
     })
   }
-  return runId
 }
 
 function briefText(l: Launch, post: PostSpec, briefing: string): string {
@@ -113,7 +101,7 @@ async function startPost(l: Launch, post: PostSpec, briefing: string, existingHa
   const text = briefText(l, post, briefing)
   const id = rid('brief')
   const sent = await recorded(registry, id, () =>
-    orca.terminalSend({ handle: handle!, text, enter: true, waitSubmitSec: WAIT_SUBMIT_SEC, retryRequest: id }),
+    orca.terminalSend({ handle: handle!, text, enter: true, waitSubmitSec: WAIT_SUBMIT_SEC }),
     (v) => v.accepted,
   )
   return sent.confirmed
@@ -150,9 +138,9 @@ export async function up(deps: CommandDeps, args: { specPath: string }): Promise
   return deps.registry.withTeamLock(spec.name, async () => {
     await preflight(deps)
     const l: Launch = { deps, spec, hash }
-    const runId = await registerTeam(l)
+    await registerTeam(l)
     const posts: PostResult[] = []
     for (const p of spec.posts) posts.push(await launchPost(l, p, briefings.get(p.id)!))
-    return { team: spec.name, runId, posts }
+    return { team: spec.name, posts }
   })
 }

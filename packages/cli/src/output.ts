@@ -22,7 +22,7 @@ export function renderUp(r: UpResult): string {
     const detail = [p.reason, p.retry && `重试：${p.retry}`].filter(Boolean).join('；')
     return `${p.address}  ${UP_LABEL[p.outcome]}${detail ? `  ${detail}` : ''}`
   })
-  return `团队 ${r.team}${r.runId ? `（Run ${r.runId}）` : ''}\n${lines.join('\n')}\n`
+  return `团队 ${r.team}\n${lines.join('\n')}\n`
 }
 
 export function renderSend(r: SendResultRow): string {

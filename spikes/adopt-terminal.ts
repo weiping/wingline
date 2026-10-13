@@ -12,7 +12,7 @@ try {
     adopt = 'ok'
   } catch (e) { record('adopt-terminal', 'worker-start-error', String(e)) }
   try {
-    const sent = await client.terminalSend({ handle: created.handle, text: 'x'.repeat(12_000), enter: true, waitSubmitSec: 10, retryRequest: 'spike:adopt:long' })
+    const sent = await client.terminalSend({ handle: created.handle, text: 'x'.repeat(12_000), enter: true, waitSubmitSec: 10 })
     record('adopt-terminal', 'send-12000', sent)
     const read = await runner.json<unknown>(['terminal', 'read', '--terminal', created.handle])
     record('adopt-terminal', 'read-after-send', read)

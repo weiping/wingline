@@ -1,1 +1,16 @@
-{"id":"r4","ok":true,"result":{"wait":{"satisfied":false}},"_meta":{}}
+{
+  "id": "r",
+  "ok": true,
+  "result": {
+    "wait": {
+      "handle": "term_00000000-0000-4000-8000-000000000001",
+      "condition": "tui-idle",
+      "satisfied": false,
+      "status": "running",
+      "exitCode": null
+    }
+  },
+  "_meta": {
+    "runtimeId": "00000000-0000-4000-8000-0000000000ff"
+  }
+}

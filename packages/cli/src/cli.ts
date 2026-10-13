@@ -42,7 +42,6 @@ export function defaultMakeDeps(env: NodeJS.ProcessEnv, warn: (m: string) => voi
     registry: Registry.open(path.join(home, 'state.db')),
     warn,
     verifiedOrca: verified.verifiedOrca,
-    createRun: verified.createRun,
     multilineSafe: !exe.viaCmd,
     home,
   }

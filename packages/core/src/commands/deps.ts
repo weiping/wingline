@@ -9,20 +9,18 @@ export interface CommandDeps {
   warn: (msg: string) => void
   /** 已验证的 Orca 版本范围，形如 ">=1.4.214 <1.5.0"。 */
   verifiedOrca: string
-  /** 探针 run-lifetime 的结论：false 时不创建 Run。 */
-  createRun: boolean
   /** 经 Windows .cmd 包装时为 false：换行无法安全传递。 */
   multilineSafe: boolean
   home: string
 }
 
-export type Step = 'run' | 'create' | 'wait' | 'brief' | 'send' | 'close'
+export type Step = 'create' | 'wait' | 'brief' | 'send' | 'close'
 
 export const postAddress = (post: string, team: string) => `${post}@${team}`
 
 /**
- * `<team>:<post>:<step>:<hash8>`。同一岗位前一轮生命周期已完成（终端被关后重建）时，
- * 用 gen 后缀换新 id，避免 Orca 按旧 id 回放旧回执。
+ * 本地请求账本的键 `<team>:<post>:<step>:<hash8>`（不发给 Orca：Orca 的 --retry-request 只认它自己分配的 UUID）。
+ * 同一岗位前一轮生命周期已完成（终端被关后重建）时，用 gen 后缀开新的一行。
  */
 export function requestId(team: string, post: string, step: Step, hash: string, gen = 0): string {
   return `${team}:${post}:${step}:${hash.slice(0, 8)}${gen > 0 ? `-${gen}` : ''}`
@@ -40,7 +38,7 @@ export async function preflight(deps: CommandDeps): Promise<{ version: string }>
   return { version }
 }
 
-/** 同一动作再次发起（上一次已完成）要换新 id，否则 Orca 会按旧 id 回放旧回执；未完成的沿用原 id 以便幂等重试。 */
+/** 同一动作再次发起（上一次已完成）要开新的账本行；未完成的沿用原行。 */
 export function nextRequestId(registry: Registry, team: string, post: string, step: Step, hash: string): string {
   let gen = 0
   while (registry.getRequest(requestId(team, post, step, hash, gen))?.state === 'done') gen++

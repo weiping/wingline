@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { expect, test } from 'vitest'
 import { send } from '../../src/commands/send.js'
 import { WinglineError } from '../../src/errors.js'
@@ -24,24 +25,30 @@ test('send input_only throws uncertain, records it, and never resends', async ()
   const { deps, registry } = seeded(o)
   await expect(send(deps, { address: 'checker@duo', message: 'hi' })).rejects.toMatchObject({ kind: 'uncertain', code: 'send_unconfirmed' })
   expect(o.sent).toHaveLength(1)
-  expect(registry.getRequest(o.sent[0]!.retryRequest)!.state).toBe('uncertain')
+  expect(registry.getRequest('duo:checker:send:' + createHash('sha256').update('hi').digest('hex').slice(0, 8))!.state).toBe('uncertain')
 })
 
-test('retrying an unconfirmed send reuses the same retry id', async () => {
+test('retrying an unconfirmed send reuses its ledger row; after delivery a repeat opens a new row', async () => {
   const o = new FakeOrca()
   o.sendStages = ['input_accepted']
-  const { deps } = seeded(o)
+  const { deps, registry } = seeded(o)
+  const key = 'duo:checker:send:' + createHash('sha256').update('hi').digest('hex').slice(0, 8)
   await expect(send(deps, { address: 'checker@duo', message: 'hi' })).rejects.toBeTruthy()
   await expect(send(deps, { address: 'checker@duo', message: 'hi' })).rejects.toBeTruthy()
-  expect(o.sent[0]!.retryRequest).toBe(o.sent[1]!.retryRequest)
+  expect(registry.getRequest(`${key}-1`)).toBeNull()
+  o.sendStages = ['input_accepted', 'turn_started']
+  await send(deps, { address: 'checker@duo', message: 'hi' })
+  await send(deps, { address: 'checker@duo', message: 'hi' })
+  expect(registry.getRequest(key)!.state).toBe('done')
+  expect(registry.getRequest(`${key}-1`)!.state).toBe('done')
 })
 
-test('sending the same message again after delivery uses a fresh retry id', async () => {
+test("the ledger keeps Orca's own request id from the receipt", async () => {
   const o = new FakeOrca()
-  const { deps } = seeded(o)
+  const { deps, registry } = seeded(o)
   await send(deps, { address: 'checker@duo', message: 'hi' })
-  await send(deps, { address: 'checker@duo', message: 'hi' })
-  expect(o.sent[0]!.retryRequest).not.toBe(o.sent[1]!.retryRequest)
+  const key = 'duo:checker:send:' + createHash('sha256').update('hi').digest('hex').slice(0, 8)
+  expect(registry.getRequest(key)!.receipt).toContain('"requestId":"req-1"')
 })
 
 test('send passes the message verbatim incl. quotes, newline, 中文', async () => {

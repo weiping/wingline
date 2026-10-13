@@ -14,7 +14,7 @@ function io() {
 let closed = 0
 const makeDeps = () => ({ registry: { close: () => { closed++ } } }) as unknown as CommandDeps
 const cmds = (over: Partial<Commands> = {}): Commands => ({
-  up: async () => ({ team: 'duo', runId: 'run-1', posts: [{ address: 'builder@duo', outcome: 'launched' }] }),
+  up: async () => ({ team: 'duo', posts: [{ address: 'builder@duo', outcome: 'launched' }] }),
   ps: async () => [{ address: 'builder@duo', agent: 'claude', status: 'live', handle: 'h1', worktree: 'current', isLead: true }],
   send: async (_d, a) => ({ address: a.address, outcome: 'delivered', handle: 'h1' }),
   down: async (_d, a) => ({ team: a.team, posts: [{ address: 'builder@duo', outcome: a.close ? 'closed' : 'stopped' }] }),
@@ -66,14 +66,14 @@ test('ps prints a table', async () => {
 })
 
 test('up with an uncertain post exits 3; with a failed post exits 2', async () => {
-  const mk = (outcome: 'uncertain' | 'failed') => cmds({ up: async () => ({ team: 'duo', runId: null, posts: [{ address: 'a@duo', outcome, reason: 'r', retry: 'wl up x' }] }) })
+  const mk = (outcome: 'uncertain' | 'failed') => cmds({ up: async () => ({ team: 'duo', posts: [{ address: 'a@duo', outcome, reason: 'r', retry: 'wl up x' }] }) })
   expect((await exec(['up', 'x'], mk('uncertain'))).code).toBe(3)
   const f = await exec(['up', 'x'], mk('failed'))
   expect(f.code).toBe(2)
 })
 
 test('up human output names each post outcome and the retry command', async () => {
-  const r = await exec(['up', 'x'], cmds({ up: async () => ({ team: 'duo', runId: null, posts: [{ address: 'a@duo', outcome: 'uncertain', reason: '未就绪', retry: 'wl up x' }] }) }))
+  const r = await exec(['up', 'x'], cmds({ up: async () => ({ team: 'duo', posts: [{ address: 'a@duo', outcome: 'uncertain', reason: '未就绪', retry: 'wl up x' }] }) }))
   expect(r.out).toContain('a@duo')
   expect(r.out).toContain('wl up x')
 })

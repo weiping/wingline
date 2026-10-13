@@ -1,1 +1,31 @@
-{"id":"r5","ok":true,"result":{"accepted":true,"prompt":{"stages":["input_accepted","turn_started"]}},"_meta":{}}
+{
+  "id": "r",
+  "ok": true,
+  "result": {
+    "send": {
+      "handle": "term_00000000-0000-4000-8000-000000000001",
+      "accepted": true,
+      "bytesWritten": 6,
+      "prompt": {
+        "requestId": "00000000-0000-4000-8000-000000000006",
+        "stages": [
+          "input_accepted",
+          "turn_started"
+        ],
+        "provider": "claude",
+        "observation": "observed",
+        "processIncarnation": "00000000-0000-4000-8000-000000000005",
+        "generation": 3,
+        "baselineWorkingSequence": 0
+      }
+    },
+    "mutation": {
+      "requestId": "00000000-0000-4000-8000-000000000006",
+      "replayed": false
+    },
+    "warnings": []
+  },
+  "_meta": {
+    "runtimeId": "00000000-0000-4000-8000-0000000000ff"
+  }
+}

@@ -24,23 +24,23 @@ function checkMessage(deps: CommandDeps, message: string): void {
   }
 }
 
-async function sendOnce(deps: CommandDeps, address: string, message: string, id: string) {
+async function sendOnce(deps: CommandDeps, address: string, message: string) {
   const located = await locatePost(deps.orca, address)
   if (!located) {
     throw new WinglineError('input', 'post_offline', `${address} 没有对应的终端`, { hint: '先执行 wl up 拉起岗位' })
   }
   deps.registry.setPostHandle(address, located.handle)
   const result = await deps.orca.terminalSend({
-    handle: located.handle, text: message, enter: true, waitSubmitSec: WAIT_SUBMIT_SEC, retryRequest: id,
+    handle: located.handle, text: message, enter: true, waitSubmitSec: WAIT_SUBMIT_SEC,
   })
   return { handle: located.handle, result }
 }
 
-async function sendWithRelocate(deps: CommandDeps, address: string, message: string, id: string) {
+async function sendWithRelocate(deps: CommandDeps, address: string, message: string) {
   try {
-    return await sendOnce(deps, address, message, id)
+    return await sendOnce(deps, address, message)
   } catch (err) {
-    if (err instanceof WinglineError && err.code === 'terminal_handle_stale') return sendOnce(deps, address, message, id)
+    if (err instanceof WinglineError && err.code === 'terminal_handle_stale') return sendOnce(deps, address, message)
     throw err
   }
 }
@@ -56,7 +56,7 @@ export async function send(deps: CommandDeps, args: { address: string; message: 
   const id = nextRequestId(deps.registry, post.team, args.address.split('@')[0]!, 'send', hash)
   deps.registry.beginRequest(id)
   try {
-    const { handle, result } = await sendWithRelocate(deps, args.address, args.message, id)
+    const { handle, result } = await sendWithRelocate(deps, args.address, args.message)
     deps.registry.finishRequest(id, confirmed(result) ? 'done' : 'uncertain', result)
     if (!confirmed(result)) {
       throw new WinglineError('uncertain', 'send_unconfirmed', `消息已输入 ${args.address}，但未确认被处理，不会自动重发`, {

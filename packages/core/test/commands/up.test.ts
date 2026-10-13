@@ -12,14 +12,13 @@ import { FakeOrca, mkDeps } from './fake-client.js'
 
 const duo = () => mkTeam(DUO_YAML)
 
-test('fresh up creates run, then create → wait → brief per post', async () => {
+test('fresh up does create → wait → brief per post', async () => {
   const o = new FakeOrca()
   const { deps } = mkDeps(o)
   const r = await up(deps, { specPath: duo() })
   expect(r.posts.map((p) => p.outcome)).toEqual(['launched', 'launched'])
-  expect(r.runId).toBe('run-1')
   expect(o.calls).toEqual([
-    'version', 'status', 'runCreate',
+    'version', 'status',
     'terminalList', 'terminalCreate', 'terminalWait', 'terminalSend',
     'terminalList', 'terminalCreate', 'terminalWait', 'terminalSend',
   ])
@@ -27,7 +26,7 @@ test('fresh up creates run, then create → wait → brief per post', async () =
     ['builder@duo', 'live', true],
     ['checker@duo', 'live', false],
   ])
-  expect(deps.registry.getTeam('duo')).toMatchObject({ status: 'up', runId: 'run-1' })
+  expect(deps.registry.getTeam('duo')).toMatchObject({ status: 'up', runId: null })
 })
 
 test('terminal is created with title, worktree and launch command; briefing goes to that handle', async () => {
@@ -50,8 +49,6 @@ test('second up with same hash adopts live terminals, no create', async () => {
   const r = await up(deps, { specPath: p })
   expect(r.posts.map((x) => x.outcome)).toEqual(['already_live', 'already_live'])
   expect(o.calls).not.toContain('terminalCreate')
-  expect(o.calls).not.toContain('runCreate')
-  expect(r.runId).toBe('run-1')
 })
 
 test('changed hash is refused while the team is up', async () => {
@@ -116,15 +113,6 @@ test('version outside the verified range only warns', async () => {
   expect(warnings).toHaveLength(1)
 })
 
-test('createRun false skips runCreate and stores null runId', async () => {
-  const o = new FakeOrca()
-  const { deps, registry } = mkDeps(o, { createRun: false })
-  const r = await up(deps, { specPath: duo() })
-  expect(o.calls).not.toContain('runCreate')
-  expect(r.runId).toBeNull()
-  expect(registry.getTeam('duo')!.runId).toBeNull()
-})
-
 test('when multilineSafe is false, briefing goes to a file and a one-line pointer is sent', async () => {
   const o = new FakeOrca()
   const { deps, home } = mkDeps(o, { multilineSafe: false })
@@ -143,15 +131,16 @@ test('an over-long briefing fails before any orca call', async () => {
   expect(o.calls).toEqual([])
 })
 
-test('run-create and the briefing carry the deterministic retry id; terminal create has none to carry', async () => {
+test('each step is recorded in the request ledger under its deterministic key', async () => {
   const o = new FakeOrca()
   const p = duo()
   const hash = specHash(loadTeamSpec(p))
   const { deps, registry } = mkDeps(o)
   await up(deps, { specPath: p })
-  expect(o.runCreates[0]).toMatchObject({ objective: 'wingline:duo', retryRequest: requestId('duo', '', 'run', hash) })
-  expect(o.sent[0]!.retryRequest).toBe(`duo:builder:brief:${hash.slice(0, 8)}`)
-  expect(registry.getRequest(`duo:builder:create:${hash.slice(0, 8)}`)!.state).toBe('done')
+  for (const step of ['create', 'wait', 'brief'] as const) {
+    expect(registry.getRequest(requestId('duo', 'builder', step, hash))!.state).toBe('done')
+  }
+  expect(registry.getRequest(`duo:builder:brief:${hash.slice(0, 8)}`)!.receipt).toContain('"accepted":true')
 })
 
 test('requests table records pending before the call and done after', async () => {
@@ -192,7 +181,7 @@ test('a post whose previous terminal was closed is relaunched with fresh request
   const r = await up(deps, { specPath: p })
   expect(r.posts.map((x) => x.outcome)).toEqual(['launched', 'launched'])
   expect(registry.getRequest(`duo:builder:create:${specHash(loadTeamSpec(p)).slice(0, 8)}-1`)!.state).toBe('done')
-  expect(o.sent.at(-1)!.retryRequest).toMatch(/-1$/)
+  expect(registry.getRequest(`duo:builder:brief:${specHash(loadTeamSpec(p)).slice(0, 8)}-1`)!.state).toBe('done')
 })
 
 test('duplicate terminals for a post are reported uncertain without touching them', async () => {

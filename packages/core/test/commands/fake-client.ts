@@ -5,7 +5,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-export interface SentMessage { handle: string; text: string; retryRequest: string }
+export interface SentMessage { handle: string; text: string }
 
 /** 可编排的假 OrcaClient：记录调用序列，终端列表随 create/close 变化。 */
 export class FakeOrca implements OrcaClient {
@@ -18,7 +18,6 @@ export class FakeOrca implements OrcaClient {
   ptyKilled = true
   created: Array<{ worktree: string; title: string; command: string }> = []
   sent: SentMessage[] = []
-  runCreates: Array<{ objective: string; retryRequest: string }> = []
   private n = 0
   onCreate?: () => void | Promise<void>
   sendError?: Error | (() => Error)
@@ -26,9 +25,6 @@ export class FakeOrca implements OrcaClient {
 
   async version() { this.calls.push('version'); return this.versionText }
   async status() { this.calls.push('status'); return { reachable: this.reachable } }
-  async runCreate(a: { objective: string; retryRequest: string }) {
-    this.calls.push('runCreate'); this.runCreates.push(a); return { runId: 'run-1' }
-  }
   async terminalList() { this.calls.push('terminalList'); return this.terminals.map((t) => ({ ...t })) }
   async terminalCreate(a: { worktree: string; title: string; command: string }) {
     this.calls.push('terminalCreate'); this.created.push(a)
@@ -38,18 +34,17 @@ export class FakeOrca implements OrcaClient {
     return { handle }
   }
   async terminalWait() { this.calls.push('terminalWait'); return { satisfied: this.waitSatisfied } }
-  async terminalSend(a: { handle: string; text: string; retryRequest: string }) {
+  async terminalSend(a: { handle: string; text: string }) {
     this.calls.push('terminalSend')
-    this.sent.push({ handle: a.handle, text: a.text, retryRequest: a.retryRequest })
+    this.sent.push({ handle: a.handle, text: a.text })
     if (this.failSendOnce) { const e = this.failSendOnce; this.failSendOnce = undefined; throw e }
-    return { accepted: true, stages: this.sendStages }
+    return { accepted: true, stages: this.sendStages, requestId: `req-${this.sent.length}` }
   }
   async terminalClose(a: { handle: string }) {
     this.calls.push('terminalClose')
     if (this.ptyKilled) this.terminals = this.terminals.filter((t) => t.handle !== a.handle)
     return { ptyKilled: this.ptyKilled }
   }
-  async workerList() { this.calls.push('workerList'); return [] }
 }
 
 export function mkDeps(orca: FakeOrca, over: Partial<CommandDeps> = {}) {
@@ -58,7 +53,7 @@ export function mkDeps(orca: FakeOrca, over: Partial<CommandDeps> = {}) {
   const warnings: string[] = []
   const deps: CommandDeps = {
     orca, registry, warn: (m) => warnings.push(m),
-    verifiedOrca: '>=1.4.214 <1.5.0', createRun: true, multilineSafe: true, home, ...over,
+    verifiedOrca: '>=1.4.214 <1.5.0', multilineSafe: true, home, ...over,
   }
   return { deps, warnings, registry, home }
 }

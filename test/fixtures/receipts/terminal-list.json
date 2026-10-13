@@ -1,1 +1,66 @@
-{"id":"r2","ok":true,"result":{"terminals":[{"handle":"term-1","title":"builder@duo","connected":true,"worktreeId":"wt-1"},{"handle":"term-2","title":null,"connected":true,"worktreeId":"wt-1"}]},"_meta":{}}
+{
+  "id": "r",
+  "ok": true,
+  "result": {
+    "terminals": [
+      {
+        "handle": "term_00000000-0000-4000-8000-000000000007",
+        "ptyId": "00000000-0000-4000-8000-000000000004::/work/repo@@7479c938",
+        "incarnationId": "00000000-0000-4000-8000-000000000008",
+        "orphaned": false,
+        "worktreeId": "00000000-0000-4000-8000-000000000004::/work/repo",
+        "worktreePath": "/work/repo",
+        "branch": "refs/heads/feat/phase-0-1-mvp",
+        "tabId": "00000000-0000-4000-8000-000000000009",
+        "leafId": "00000000-0000-4000-8000-000000000010",
+        "title": "user@host: /work/repo",
+        "connected": true,
+        "writable": true,
+        "lastOutputAt": 1791882999560,
+        "preview": "x",
+        "executionHostId": "local"
+      }
+    ],
+    "hostScope": {
+      "hostIds": [
+        "local"
+      ],
+      "omittedHostIds": []
+    },
+    "visualLayouts": [
+      {
+        "worktreeId": "00000000-0000-4000-8000-000000000004::/work/repo",
+        "worktreePath": "/work/repo",
+        "root": {
+          "type": "group",
+          "groupId": "headless-terminals:00000000-0000-4000-8000-000000000004::/work/repo",
+          "activeTabId": "00000000-0000-4000-8000-000000000009",
+          "tabs": [
+            {
+              "tabId": "00000000-0000-4000-8000-000000000009",
+              "title": "builder@duo",
+              "activeLeafId": "00000000-0000-4000-8000-000000000010",
+              "panes": {
+                "type": "terminal",
+                "handle": "term_00000000-0000-4000-8000-000000000007",
+                "tabId": "00000000-0000-4000-8000-000000000009",
+                "leafId": "00000000-0000-4000-8000-000000000010",
+                "title": "user@host: /work/repo",
+                "connected": true,
+                "active": true
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "topologyRevisions": {
+      "00000000-0000-4000-8000-000000000004::/work/repo": 7
+    },
+    "totalCount": 1,
+    "truncated": false
+  },
+  "_meta": {
+    "runtimeId": "00000000-0000-4000-8000-0000000000ff"
+  }
+}

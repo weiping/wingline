@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { finish, record, setup } from './lib.js'
 
-const { runner, client } = setup()
+const { runner, client, worktree } = setup()
 const stateFile = path.join('spikes', 'out', 'run-lifetime', process.platform, 'runs.json')
 
 if (process.argv.includes('--verify')) {
@@ -13,10 +13,15 @@ if (process.argv.includes('--verify')) {
   const survived = ids.filter((id) => list.includes(id)).length
   finish('run-lifetime', survived === ids.length ? '成立' : survived > 0 ? '部分成立' : '不成立', `重启后 ${survived}/${ids.length} 个 Run 仍在`)
 } else {
-  const a = await client.runCreate({ objective: 'wingline:spike-a', retryRequest: `spike:run-a:${Date.now()}` })
-  const b = await client.runCreate({ objective: 'wingline:spike-b', retryRequest: `spike:run-b:${Date.now()}` })
+  // run-create 需要发送方终端：在 Orca 终端内运行，或像这里一样用 --from 指定一个终端 handle
+  const sender = await client.terminalCreate({ worktree, title: 'spike-run-sender', command: 'cat' })
+  const create = async (objective: string) =>
+    (await runner.json<{ run: { id: string } }>(['orchestration', 'run-create', '--objective', objective, '--from', sender.handle])).run.id
+  const a = await create('wingline:spike-a')
+  const b = await create('wingline:spike-b')
+  await client.terminalClose({ handle: sender.handle })
   record('run-lifetime', 'run-list-before-restart', await runner.json<unknown>(['orchestration', 'run-list']))
   fs.mkdirSync(path.dirname(stateFile), { recursive: true })
-  fs.writeFileSync(stateFile, JSON.stringify([a.runId, b.runId]))
-  console.log(`已创建 Run ${a.runId}、${b.runId}。请完全退出并重新打开 Orca，然后运行：pnpm tsx spikes/run-lifetime.ts --verify`)
+  fs.writeFileSync(stateFile, JSON.stringify([a, b]))
+  console.log(`已创建 Run ${a}、${b}。请完全退出并重新打开 Orca，然后运行：pnpm tsx spikes/run-lifetime.ts --verify`)
 }
