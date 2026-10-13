@@ -39,3 +39,10 @@ export async function preflight(deps: CommandDeps): Promise<{ version: string }>
   }
   return { version }
 }
+
+/** 同一动作再次发起（上一次已完成）要换新 id，否则 Orca 会按旧 id 回放旧回执；未完成的沿用原 id 以便幂等重试。 */
+export function nextRequestId(registry: Registry, team: string, post: string, step: Step, hash: string): string {
+  let gen = 0
+  while (registry.getRequest(requestId(team, post, step, hash, gen))?.state === 'done') gen++
+  return requestId(team, post, step, hash, gen)
+}

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { WinglineError } from '../errors.js'
 import type { SendResult } from '../orca/types.js'
-import { preflight, requestId, type CommandDeps } from './deps.js'
+import { nextRequestId, preflight, type CommandDeps } from './deps.js'
 import { locatePost } from './locate.js'
 
 export interface SendResultRow {
@@ -22,13 +22,6 @@ function checkMessage(deps: CommandDeps, message: string): void {
       hint: '设置 WINGLINE_ORCA 指向 orca.exe，或改写为单行消息',
     })
   }
-}
-
-/** 相同消息再次发送（上一次已送达）要换新 id，否则 Orca 会按旧 id 回放。未确认的发送沿用原 id 以便幂等重试。 */
-function freshRequestId(deps: CommandDeps, team: string, post: string, hash: string): string {
-  let gen = 0
-  while (deps.registry.getRequest(requestId(team, post, 'send', hash, gen))?.state === 'done') gen++
-  return requestId(team, post, 'send', hash, gen)
 }
 
 async function sendOnce(deps: CommandDeps, address: string, message: string, id: string) {
@@ -60,7 +53,7 @@ export async function send(deps: CommandDeps, args: { address: string; message: 
   if (!post) throw new WinglineError('input', 'post_unknown', `没有岗位 ${args.address}`, { hint: '用 wl ps 查看现有岗位' })
   await preflight(deps)
   const hash = createHash('sha256').update(args.message).digest('hex')
-  const id = freshRequestId(deps, post.team, args.address.split('@')[0]!, hash)
+  const id = nextRequestId(deps.registry, post.team, args.address.split('@')[0]!, 'send', hash)
   deps.registry.beginRequest(id)
   try {
     const { handle, result } = await sendWithRelocate(deps, args.address, args.message, id)
