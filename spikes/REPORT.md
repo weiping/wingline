@@ -178,6 +178,8 @@ pnpm tsx spikes/resume-after-restart.ts
 
 `pnpm test:live`（Linux；checker 用 Claude 代替本机没有的 codex，`WINGLINE_LIVE_CHECKER_LAUNCH=claude`）通过：验收 1–5 成立（up 拉起、再次 up 不产生新终端、ps 为 live、send、down --close 后终端消失）。send 一步：岗位忙时按设计为 `send_unconfirmed`，空闲时为 `delivered`。
 
-注：`duo.live.test.ts` 的 send 一步在岗位空闲时断言 `delivered`、忙时断言 `send_unconfirmed`，两条分支都算通过，所以下面 macOS 真机那次到底走了哪条分支没有记录；`delivered` 在 macOS 本机 claude 上的确认需要补跑并记下 `wl send` 的实际输出。
+注：`duo.live.test.ts` 的 send 一步在岗位空闲时断言 `delivered`、忙时断言 `send_unconfirmed`，两条分支都算通过，所以下面 macOS 真机那次到底走了哪条分支没有记录。
+
+**macOS 真机 `wl send` 补测（2026-10-13，Orca 1.4.224，本机 claude × 2，显式 `launch`）**：`up` 后立刻对 checker 发送 → `send_unconfirmed`、退出码 3（岗位正在处理启动包，设计预期）；`terminal wait --for tui-idle` 满足后再发 → `outcome: delivered`、退出码 0。即本机 claude 上 `delivered` 路径成立，忙时不误报、不重发。收尾 `down --close` 两个岗位均 `closed`。
 
 macOS 真机（Orca 1.4.224）以**本机 claude × 2**（builder 与 checker 都用显式 `launch` 指向本机 claude 二进制，见实测发现 12–13）跑同一验收，1–5 全部通过。
