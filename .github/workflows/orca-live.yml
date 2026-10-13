@@ -22,9 +22,9 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       ORCA_VERSION: ${{ inputs.orca_version }}
-      WINGLINE_HOME: ${{ runner.temp }}/wl-home
     steps:
       - uses: actions/checkout@v4
+      - run: echo "WINGLINE_HOME=$RUNNER_TEMP/wl-home" >> "$GITHUB_ENV"
       - uses: pnpm/action-setup@v4
         with: { version: 10 }
       - uses: actions/setup-node@v4
