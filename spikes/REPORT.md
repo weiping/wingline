@@ -23,7 +23,7 @@ pnpm tsx spikes/retained-reuse.ts
 | 探针 | macOS | Linux | Windows | 影响 |
 | --- | --- | --- | --- | --- |
 | adopt-terminal | **部分成立**：`worker-start` 同样被拒（需要协调者终端）；12,000 字符 `terminal send` 收下 | **部分成立**：12,000 字符 `terminal send` 完整收下（`bytesWritten` 12001）；`worker-start --terminal` 被拒，需要“已绑定 Run 的协调者终端”，从普通 shell 不行；协调者终端内能否接管未验证 | 未运行 | 阶段 2：dispatcher 本来就是专用终端，需在那里重测 |
-| run-lifetime | **部分成立**：从普通 shell 同样报 `no_active_sender_terminal`；用 `--from <终端 handle>` 时 `run-create` 成功，两个 Run 并存（其中一个绑定了协调者终端，另一个 `coordinator_handle` 为 null）；重启后保留未测 | **不成立（从普通 shell）**：`run-create` 报 `no_active_sender_terminal`，需要 `--from <终端 handle>` 或在 Orca 终端内运行。多 Run 并存、重启后保留未测 | **部分成立**：同 macOS（`--from` 可行，两个 Run 并存，重启未测） | MVP：`wl up` 不创建 Run（`run_id` 留空，`ps` 不查 `worker-list`），即 spec 的退路 |
+| run-lifetime | **成立（需协调者终端）**：普通 shell 报 `no_active_sender_terminal`；用 `--from <终端 handle>` 或在 Orca 终端内 `run-create` 成功；Run 及其 `coordinator_handle` 绑定字符串在 Orca 完整重启后**保留**（实测 Orca 1.4.224 重启前 `ready`，重启后 Run 与绑定依然在，worker 自动置为 `abandoned`/`terminal_missing`，旧终端失效需重新认领）。详见待验证项 C | **不成立（从普通 shell）**：`run-create` 报 `no_active_sender_terminal`，需要 `--from <终端 handle>` 或在 Orca 终端内运行。多 Run 并存、重启后保留未测 | **部分成立**：同 macOS（`--from` 可行，两个 Run 并存，重启未测） | MVP：`wl up` 不创建 Run（`run_id` 留空，`ps` 不查 `worker-list`），即 spec 的退路 |
 | session-id | **不成立（`terminal show`）/ 另有来源**：真机 1.4.224 实测，`terminal show` 只有 `agentIdentity`；但 `orca search` 能给出 `sessionId` 和 `resumeCommand`（本机 agent 完整给出；配对环境的远端 agent 只给 `sessionId`，resumeCommand 被扣留）。详见「macOS 真机探查」 | **不成立（`terminal show`）/ 另有来源**：回执只有 `agentIdentity: "claude"`；但 `orca search --agent claude --json`（Orca 1.4.222）每条命中含 `sessionId`、`source.filePath`、完整 `resumeCommand`，与 macOS 一致。命中里没有终端 handle，终端↔会话仍只能按 `cwd` + `updatedAt` 启发式对应 | 未运行 | 阶段 3：会话 ID 来源已找到（`orca search` / agent 会话文件），见「macOS 真机探查」 |
 | resume-after-restart | **成立**（macOS 真机，Orca 1.4.224 完整重启后验证）：runtimeId 从 `707f62af…` 变为 `3154b9e7…` 确认是真重启；用 `orca search` 拿到的恢复命令（`claude --resume 7cd6dc01-…`，显式本机路径）开 `spike-resume-2`，屏幕完整显示原会话（checker 岗位说明 + 重启前被中断的那一轮的现场），空闲等待输入。回执在 `spikes/out/resume-after-restart/darwin/after.json` | 未运行 | 未运行 | 阶段 3：恢复命令来源 = `orca search`（本机）或拼 `claude --resume <id>`；`resume-after-restart.ts` 已改为 search + 会话文件兜底的自动探针（见下节） |
 | retained-reuse | **不成立**：同因（需要协调者终端） | **不成立（从普通 shell）**：与 adopt-terminal 同因 | **不成立**：同因 | 阶段 2 |
@@ -217,6 +217,38 @@ orca orchestration worker-list --run <RUN> --json
 1. 保存工作后，普通终端执行 `orca orchestration worker-list --run <RUN> --json > /tmp/before.json`。
 2. 完全退出 Orca 再重开（重启会中断所有终端）。
 3. 重启后执行同一条 `worker-list --run <RUN> --json`，与 `/tmp/before.json` 对比：Run 是否仍在、协调者绑定是否保留。
+
+### 执行结果（2026-10-13，macOS 真机，Orca 1.4.224，由 Claude 代为执行）
+
+**A. 终端 ↔ 会话映射：成立。** 两个岗位（builder@duo、checker@duo）各发唯一标记 `WLMAP-B-1791903316` / `WLMAP-C-1791903316`，带引号精确搜索 `orca search '"<标记>"' --agent claude --fresh --json`，各恰好 1 个命中，sessionId 不同：
+
+| 标记 | sessionId | 岗位 |
+| --- | --- | --- |
+| WLMAP-B-1791903316 | `05386dbe-0475-4262-aafc-c173de47a608` | builder@duo |
+| WLMAP-C-1791903316 | `7d9292c9-7da9-4df1-a417-aa7b7c724e38` | checker@duo |
+
+- 不加引号的裸搜索会分词，各返回 2 条命中，排序第一的仍是正确会话，但不可靠，阶段 3 必须用引号精确搜索。
+- 两次 `wl send` 均为 `delivered`（岗位已空闲）。`down --close` 后两个终端均 `closed`，`terminal list` 无 duo 残留。
+- 临时目录 `/tmp/wl-map-Z6UMYK` 未删除，可自行清理。
+
+**B. 协调者终端内 `worker-start --terminal`：成立。** 步骤与计划有出入，如实记录：
+
+- 协调者终端没有在 Orca 界面手动开，而是用 `orca terminal create --title spike-coord` 建的。但 Run 的 `coordinator_handle` 与 `spike-coord` 的 handle 一致（经 `--from` 绑定），所以判读仍有效。
+- 第一次不带 `--from` 执行 `run-create` 时，`coordinator_handle` 被绑定为 `term_4f9f35e6-…`（即运行本次命令的 `π - wingline` 终端）。说明从 Orca 内终端调用时，调用方会自动绑定为协调者。
+- 接管流程：`spike-adopt`（`term_e40f50eb-…`，`claude --dangerously-skip-permissions` 本机二进制）`tui-idle` 满足后，`worker-start --from <spike-coord> --terminal <spike-adopt> --worktree path:<仓库> --run run_0716f392c455` 返回 `ok:true`、`state:ready`、`effects` 中 terminal 为 `reused`、`dispatch_input` 为 `accepted`，`turnStart: unsupported`。
+- `worker-list --run run_0716f392c455` 出现该 worker（`workerState: ready`，`agentTerminalHandle` 为接管的终端，`terminalState: retained`）。
+- 关闭两个终端后，worker 变为 `failed`（`detail: process_exited`），与预期一致。
+- 残留 Run：`run_b49d6127bc88`（`test from outside`，协调者为 `term_4f9f35e6-…`）和 `run_0716f392c455`（`spike coordinator`）。CLI 没有删除 Run 的命令，需在界面里清理。
+
+**C. Run 重启后是否保留：成立（Run 元数据及绑定字符串保留；底层终端生命周期中断）。**
+
+实测数据（2026-10-13，macOS 真机，Orca 1.4.224 重启验证，runtimeId 从 `3154b9e7…` 变为 `b3cda7f9…` 确认是真重启）：
+
+- **Run 与协调者绑定字符串持久化保留**：重启后 `orca orchestration run-show --id run_6dde7d294994 --json` 与 `run-list` 均完整返回该 Run，其 `coordinator_handle` 保持为重启前的 `term_0ebdf12c-19d6-4893-acb1-3cda925780ff`，未被清除。
+- **关联 Worker 状态转移**：重启前状态为 `ready`（`stage: input_accepted`, `activity: working`）；重启后 `orca orchestration worker-list --run run_6dde7d294994 --json` 显示 worker 状态自动判定并标记为 `abandoned`，`dispatchStatus: failed`，`stage.detail: terminal_missing`，`liveness.verdict: unverifiable (missing_status)`，`attention.requiresAction: true`。
+- **终端实例处理**：重启后旧终端句柄（`term_0ebdf12c-…` 和 `term_e316c622-…`）均已随进程销毁；虽有按 session 布局重新打开的空白 shell 标签页，但分配的是新 handle，旧 handle 彻底失效。
+- **结论与影响**：Run 及其元数据具备跨重启持久化能力，但其记录的终端 handle 会悬空；阶段 2 若基于 Run 进行协调者绑定，在系统重启后必须执行协调者重新认领（`run-use`）或新建 Run，不能假设旧终端仍然可交互。
+- 伴随产生的测试终端（如恢复后的 `spike-coord2`）已全部调用 `orca terminal close` 关闭清理，无残留。
 
 ## 实测发现（计划和 spec 里是错的，代码已按实测修正）
 
