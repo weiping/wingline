@@ -50,13 +50,18 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/orca"
           gh release download "v$ORCA_VERSION" -R stablyai/orca -p "orca-windows-setup.exe" -D "$RUNNER_TEMP/orca"
-          "$RUNNER_TEMP/orca/orca-windows-setup.exe" /S
-          sleep 20
+          # 静默安装器装完可能会把应用拉起来而不返回：放到后台，轮询 CLI 出现为止
+          "$RUNNER_TEMP/orca/orca-windows-setup.exe" /S > "$RUNNER_TEMP/orca/installer.log" 2>&1 &
+          for i in $(seq 1 60); do
+            CLI=$(find "$LOCALAPPDATA/Programs" "/c/Program Files" -path '*bin*' \( -iname 'orca.cmd' -o -iname 'orca.exe' \) 2>/dev/null | head -1)
+            [ -n "$CLI" ] && break
+            sleep 5
+          done
+          sleep 10
           echo "--- files named orca* under likely install roots"
           for d in "$LOCALAPPDATA/Programs" "/c/Program Files" "/c/Program Files (x86)"; do
             find "$d" -maxdepth 6 -iname 'orca*' 2>/dev/null | head -40
           done
-          CLI=$(find "$LOCALAPPDATA/Programs" "/c/Program Files" -path '*bin*' \( -iname 'orca.cmd' -o -iname 'orca.exe' \) 2>/dev/null | head -1)
           echo "CLI=$CLI"
           echo "WINGLINE_ORCA=$(cygpath -w "$CLI")" >> "$GITHUB_ENV"
 
@@ -64,7 +69,13 @@ jobs:
         run: |
           test -n "$WINGLINE_ORCA" || { echo "找不到 Orca CLI，见上一步列出的文件"; exit 1; }
           "$WINGLINE_ORCA" --version
-          timeout 240 "$WINGLINE_ORCA" open || true
+          # macOS 没有 timeout：后台启动，轮询 status 直到 runtime 可达（最多 3 分钟）
+          "$WINGLINE_ORCA" open > "$RUNNER_TEMP/orca-open.log" 2>&1 &
+          for i in $(seq 1 36); do
+            "$WINGLINE_ORCA" status --json 2>/dev/null | grep -q '"reachable": true' && break
+            sleep 5
+          done
+          cat "$RUNNER_TEMP/orca-open.log" || true
           "$WINGLINE_ORCA" status --json
           "$WINGLINE_ORCA" repo add --path "$GITHUB_WORKSPACE" --json
           "$WINGLINE_ORCA" worktree list --json | head -60
