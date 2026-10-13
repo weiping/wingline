@@ -35,7 +35,7 @@ wl down duo --close                # 停止团队并关闭终端
 
 ### Orca 可执行文件
 
-按顺序查找：`WINGLINE_ORCA` → `ORCA_CLI_COMMAND` → Linux 的 `orca-ide` / macOS 的 `orca` / Windows 的 `orca.exe`、`orca.cmd`。Windows 上经 `.cmd` 包装时无法安全传递换行：启动包会写入文件再发送一行指引，含换行的 `wl send` 消息会被拒绝——设置 `WINGLINE_ORCA` 指向 `orca.exe` 可避免。
+按顺序查找：`WINGLINE_ORCA` → `ORCA_CLI_COMMAND` → Linux 的 `orca-ide` / macOS 的 `orca` / Windows 的 `orca.exe`、`orca.cmd`。Orca 的 Windows 安装（1.4.224）只提供 `orca.cmd`，经 `cmd.exe` 调用：无法传递换行，整条命令行不能超过约 8000 字符。所以启动包会写入文件再发送一行指引，含换行或过长的 `wl send` 消息会被拒绝——请改成单行，或把内容写进文件后只发路径。
 
 数据目录 `~/.wingline/`（可用 `WINGLINE_HOME` 改变）：`state.db` 注册表，`logs/` 调用日志（保留 7 天）。
 

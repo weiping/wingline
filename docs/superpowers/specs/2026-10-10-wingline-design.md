@@ -1,7 +1,7 @@
 # 雁阵 Wingline 设计总纲
 
 - 日期：2026-10-10
-- 状态：阶段 0+1 已实现；按 Linux 上 Orca 1.4.222 的实测修订（2026-10-13，见 `spikes/REPORT.md`）
+- 状态：阶段 0+1 已实现；按 Linux（1.4.222）、macOS 与 Windows（1.4.224，CI）上的实测修订（2026-10-13，见 `spikes/REPORT.md`）
 - 范围：全项目总纲（阶段 0–6）+ 首期（阶段 0、1）详细设计
 - 对照的 Orca 版本：stablyai/orca 提交 59631b8（1.4.214，2026-10-09）
 
@@ -160,7 +160,7 @@ wingline/
 2. 环境变量 `ORCA_CLI_COMMAND`（Orca 为托管 WSL 会话导出）。
 3. Linux：`orca-ide`。自动解析时永远不使用裸 `orca`，因为在 Orca 终端外它通常指向 GNOME 读屏器 `/usr/bin/orca`。
 4. macOS：`orca`。
-5. Windows：在 PATH 中依次查找 `orca.exe`、`orca.cmd`。`.cmd` 需要经 `cmd.exe /d /s /c` 启动，参数按 cmd 规则转义；这是全项目唯一允许经过 shell 的情况，转义函数单独测试。
+5. Windows：在 PATH 中依次查找 `orca.exe`、`orca.cmd`（1.4.224 的安装只有 `orca.cmd`，位于 `…\Programs\orca\resources\bin\`）。`.cmd` 需要经 `cmd.exe /d /s /c` 启动，参数按 cmd 规则转义；这是全项目唯一允许经过 shell 的情况，转义函数单独测试。
 
 解析结果在一次命令执行内缓存。按以上顺序都找不到时，报用户输入错误，提示安装 Orca 或设置 `WINGLINE_ORCA`。
 
@@ -309,7 +309,7 @@ CI：GitHub Actions，`macos-latest`、`ubuntu-latest`、`windows-latest` × Nod
 | `node:sqlite` 在 Node 22 上为实验特性 | 启动时打印警告；接口可能小幅变化 | CLI 屏蔽该警告；注册表通过 `Registry` 封装，必要时可换实现 |
 | 探针结论与假设不符 | 后续阶段设计需要调整 | 第 6.1 节已为每个假设准备退路；首期只有 `run-lifetime` 影响 MVP，已按退路实现（不创建 Run）。实测还纠正了 7.7 中的回执字段、标题查找和重试 ID 三处假设 |
 | `terminal send` 对单条文本可能有长度上限，文档未写明 | 启动包被截断或拒收 | 探针 `adopt-terminal` 顺带用 12,000 字符文本测一次；上限更低时把启动包写成文件，只发送“请先阅读 <路径>” |
-| Windows 上 Orca CLI 通常是 `.cmd` 包装，换行无法安全经过 `cmd.exe` | 多行启动包和消息无法发送 | 经 `.cmd` 时启动包写入 `~/.wingline/briefs/<team>/<post>.md`，只发送一行“请先完整阅读 <路径>”；含换行的 `wl send` 消息报输入错误，提示设置 `WINGLINE_ORCA` 指向 `orca.exe` |
+| Windows 上 Orca CLI 只有 `.cmd` 包装（1.4.224 实测，没有 orca.exe），换行无法安全经过 `cmd.exe`，整条命令行有约 8191 字符上限 | 多行或过长的启动包和消息无法发送 | 经 `.cmd` 时启动包写入 `~/.wingline/briefs/<team>/<post>.md`，只发送一行“请先完整阅读 <路径>”；含换行或使命令行超限的 `wl send` 消息报输入错误，提示改成单行或写进文件后只发路径 |
 | `terminal wait --for tui-idle` 对部分 agent 不准 | 启动包在 agent 就绪前送出而丢失 | 超时即标 uncertain、不发送；集成测试覆盖 Claude Code 与 Codex |
 
 ## 10. 参考
