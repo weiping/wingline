@@ -6,25 +6,38 @@
 - 不含：调度员进程、巡查与熔断、基于 token 的预算（这些是阶段 2B，另开独立 spec 和 plan）。
 - 承接：`docs/superpowers/specs/2026-10-10-wingline-design.md`（下称总纲）第 4、5.1 节划定的边界；依赖阶段 0+1 已实现的 `wl up/ps/send/down`、`Registry`、`loadTeamSpec`。
 
+> **2026-10-13 改版：** 第一版设计（雁阵自建 `tasks`/`events` 两张表、一套独立状态机）在写完后用 `spikes/task-dispatch-probe.ts` 实测核对，发现 `orca orchestration` 已经原生提供 `task-create/task-update/dispatch/gate-create` 这一整套任务与决策机制（`orca-ide orchestration --help`，Orca 1.4.222）。本版改为：**任务状态机直接借用 Orca 原生状态，雁阵只加一张很薄的扩展表**。原因和实测依据见第 2、7 节；探针结论见 `spikes/REPORT.md`"阶段 2 探针"一节。
+
 ## 1. 目标与定位
 
-总纲把阶段 2（团队工作流）定义为一揽子交付：调度员、`wl task` 系列、连接、质量闸门、先计划后动手、就绪队列与自领、预算、巡查与熔断。这个范围太大，不适合一份计划书。本文档只覆盖其中**不需要后台进程就能工作**的部分：
+总纲把阶段 2（团队工作流）定义为一揽子交付：调度员、`wl task` 系列、连接、质量闸门、先计划后动手、就绪队列与自领、预算、巡查与熔断。这个范围太大，不适合一份计划书。本文档只覆盖其中**不需要调度员常驻就能工作**的部分：
 
 - 岗位（已经是带 shell 的 Orca 终端，见阶段 1）**自己**创建、认领、开始、完成任务 —— 不需要调度员替它们跑。
 - 质量闸门、计划先行、预算、评审/交接的连接，都做成 `wl task` 命令执行时的同步逻辑。
-- 调度员（阶段 2B）将来只是在这些命令之上加一层自动轮询和提醒，不改变本文档定义的状态机和接口。
+- 调度员（阶段 2B）将来复用同一个 Run，只是多一层"接管协调者身份、处理 `worker_done`/`escalation` 收件箱、自动巡查"的自动化，不改变本文档定义的状态机和接口。
 
 ### 1.1 成功标准
 
-一个 `duo` 这样的两岗位团队，在不启动任何后台进程的情况下：human 用 `wl task create` 建一个任务指给 builder；builder 自己 `wl task plan` → `wl task start` → 干活 → `wl task done`，gate 通过后自动给 checker 建一个 review 任务；checker 自领或被指派、走完同样的流程；全程状态和事件可以用 `wl task list/show` 查到。
+一个 `duo` 这样的两岗位团队，在不启动任何后台进程的情况下：human 用 `wl task create` 建一个任务指给 builder；builder 自己 `wl task plan` → `wl task start` → 干活 → `wl task done`，gate 通过后自动给 checker 建一个关联的 review 任务并 dispatch 过去；checker 自领或被指派、走完同样的流程；全程状态可以用 `wl task list/show` 查到（直接读 Orca 的任务数据，不是雁阵自己的镜像）。
 
-## 2. 全局约束补充
+## 2. 关键事实：Orca 原生编排层（实测结论）
+
+写 spec 前用 `spikes/task-dispatch-probe.ts` 在真实 Orca（1.4.222，Linux）上验证了以下几点，決定了下面的架构：
+
+1. **`task-create`/`task-update`/`dispatch` 要求 `--from` 等于该 Run 的 `coordinator_handle`，但这只是字符串比对，不校验调用方是不是真的跑在那个终端的 pty 里。** 非协调者 `--from` 会被拒绝，错误码 `consumer_fenced`。——雁阵只要在团队级别记住这个字符串，任何岗位调用 `wl task` 时内部都拿它当 `--from`，不要求调用者就是那个终端。
+2. **一个被 dispatch 的终端可以自己上报完成/失败**：`orchestration send --type worker_done --outcome succeeded|failed --task-id <id> --dispatch-id <id> --from <自己真实的 handle>` 不受协调者限制，直接把对应任务改成 `completed`/`failed`，同时进协调者的收件箱。`--subject` 是必填项。
+3. **`failed` 是终态**（重开要 `worker-start --retry-of`，更重的机制，本阶段不用），**已经 `dispatched` 的任务不能被再次 `dispatch`**。所以：gate 失败的重试预算必须留在本地计数，只有最终定论（成功，或预算耗尽的失败）才向 Orca 报一次；`hands_to`（转交）不能"重新 dispatch 同一个任务"，只能是"原任务 `completed`，同时建一个 `--parent` 关联的新任务 dispatch 给目标"——和 `reviewed_by` 是同一条代码路径，只是新任务的标题/tags 不同。
+4. **`gate-create`/`gate-resolve`/`gate-list` 不接受 `--run`**（从 `--task` 反查），其余符合直觉：对某任务提一个待决策问题，之后可以 `resolve`。**未验证谁能 resolve（是否限定协调者）**，留作第 10 节的待验证假设。
+5. **Orca 在自己管理的终端里设置环境变量 `ORCA_TERMINAL_HANDLE`**（从一条报错提示里发现的）。岗位终端内的 `wl task` 可以直接读它拿到自己当前真实、永远最新的 Orca handle，不需要雁阵自己再查一遍 `locatePost`。
+
+## 3. 全局约束补充
 
 本节是对总纲第 2 节的补充，不推翻其中任何一条：
 
 6. **gate 命令经由 shell 执行，这是继 Windows `.cmd` 包装之后第二个、且唯一的例外。** 原因：gate 命令是用户在 `team.yaml` 里写的任意 shell 字符串（可能含 `&&`、管道、环境变量展开），不像 Orca 调用那样是结构化的参数数组。范围严格限定在 `wl task done` 执行 gate 这一处；其余所有子进程调用（Orca、未来新增的任何别的调用）仍然 `shell: false`。
+7. **"协调者身份"的调用全部走 `orca … --json`，不是雁阵发明的新调用方式** —— 只是把总纲约束 1（只经由 Orca CLI 操作）用到了 `orchestration` 这个命令族上，和阶段 1 用 `terminal …` 没有本质区别。调用日志（`CallLog`，阶段 1 已有）会记录完整 argv，包括 `--from <coordinator_handle>`，这和阶段 1 已经接受的日志暴露面一致，不是新风险。
 
-## 3. `team.yaml` 扩展
+## 4. `team.yaml` 扩展
 
 在阶段 1 的子集之上新增以下字段，替换原本"出现即报错"的占位校验：
 
@@ -36,198 +49,180 @@ posts:
     plan_first: true        # 可选，默认 false；为 true 时 wl task start 前必须先有 wl task plan
 links:                      # 可选；键是岗位 id
   builder:
-    reviewed_by: [checker]  # done 时为每个目标自动建一个 review 任务，任务本身转 done
+    reviewed_by: [checker]  # done 时为每个目标建一个 --parent 关联的新任务并 dispatch 过去
   checker:
     consults: [builder]     # 阶段 2A 仅作名册元数据，不触发任何任务动作
 gates:                      # 可选；键是岗位 id，值是单条 shell 命令字符串
   builder: 'pnpm test'
 budgets:                    # 可选
   team:
-    max_in_progress_per_post: 3   # 默认 3；单岗位同时 in_progress 的任务数上限
+    max_in_progress_per_post: 3   # 默认 3；单岗位同时 dispatched 的任务数上限
   task:
-    max_gate_failures: 3          # 默认 3；单任务 gate 失败次数上限，达到后转 blocked
+    max_gate_failures: 3          # 默认 3；单任务本地 gate 失败计数上限，达到后终止并发起人工决策
 ```
 
 校验规则：
 
-- 同一岗位的 `links` 中 `reviewed_by` 与 `hands_to` 不可同时出现（`done` 时语义冲突）；二者各自是地址（`<post>`，同团队内）的列表。
+- 同一岗位的 `links` 中 `reviewed_by` 与 `hands_to` 不可同时出现（二者在 `done` 时走同一条"建关联任务"路径，同时出现没有意义上的区别，禁止是为了逼用户想清楚这是"评审"还是"交接"）；二者各自是地址（`<post>`，同团队内）的列表。
 - `tags` 是小写字母、数字、连字符组成的字符串数组；`gates` 的值是非空字符串；`budgets` 两个字段均为正整数，缺省时取上面写的默认值。
 - `consults` 允许引用任意同团队岗位 id，不做更多校验（阶段 2A 不使用其值）。
-- 这些字段参与 `specHash` 的计算，沿用阶段 1 的哈希规则（排序后序列化），无需新代码路径。
-- 总纲 5.1 节列出的"阶段 N 保留字段"中，`links`/`gates`/`budgets`/`posts[].self_claim|tags|plan_first` 到本阶段全部开放；阶段 2B 如需新增团队级配置（例如巡查阈值），由其自己的 spec 决定字段名，本阶段不预留占位。
+- 这些字段参与 `specHash` 的计算，沿用阶段 1 的哈希规则，无需新代码路径。
 
-## 4. 注册表扩展
+## 5. Run 与协调者身份
 
-新增两张表，与阶段 1 的 `teams`/`posts`/`requests` 同库（`~/.wingline/state.db`），走同一套迁移机制（`user_version` 递增）。
+`wl up` 新增一步：若 `teams.run_id` 为空（阶段 1 遗留字段，首次在本阶段用上），且团队的 `lead` 岗位这一轮已经成功在岗（`outcome` 为 `launched` 或 `already_live`）——
+
+```
+orca orchestration run-create --objective "wingline:<team>" --from <lead 的 handle> --json
+```
+
+把返回的 `run.id` 存入 `teams.run_id`，`run.coordinator_handle`（此时就是 lead 的 handle）存入新字段 `teams.coordinator_handle`。若 lead 这一轮未能就位（`failed`/`uncertain`），跳过，下次 `wl up` 再试。`run_id` 一旦建立，终生不变（除非 `wl down` 后换规格重新拉起——此时是否复用同一个 Run 由第 10 节的风险记录留到实现时决定，倾向于不复用，重新建一个）。
+
+之后所有"协调者专属" Orca 调用（`task-create`/`task-update`/`dispatch`/`gate-create`/`gate-resolve`）一律用 `teams.coordinator_handle` 当 `--from`，与发起 `wl task` 命令的是哪个岗位无关。
+
+## 6. 注册表扩展
 
 ```sql
-tasks(
-  id TEXT PRIMARY KEY,          -- "<team>-<n>"，n 为该团队内递增序号，从 1 开始
+-- teams 表新增一列（阶段 1 已有 run_id，本阶段首次写入）
+teams(
+  ...,
+  coordinator_handle TEXT      -- run-create 返回的协调者 handle；阶段 2A 起使用
+)
+
+task_ext(
+  task_id TEXT PRIMARY KEY,     -- Orca 返回的任务 id（"task_xxxxx"）
   team TEXT NOT NULL REFERENCES teams(name),
-  title TEXT NOT NULL,
-  status TEXT NOT NULL,         -- open | claimed | in_progress | blocked | done
-  post TEXT,                    -- 岗位地址 <post>@<team>；open 时为 NULL
   tags TEXT NOT NULL,           -- JSON 字符串数组，默认 '[]'
-  plan TEXT,                    -- 调用 wl task plan 前为 NULL
+  plan TEXT,                    -- wl task plan 写入
+  claimed_by TEXT,              -- wl task claim 写入；claim→start 之间的本地过渡标记
   gate_failures INTEGER NOT NULL DEFAULT 0,
-  origin_task TEXT REFERENCES tasks(id),   -- 自动创建的 review 任务指向原任务；其余为 NULL
-  created_by TEXT NOT NULL,     -- 岗位地址，或 'human'（--as 未给出且无 WINGLINE_POST 时）
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-)
-events(
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  task_id TEXT NOT NULL REFERENCES tasks(id),
-  type TEXT NOT NULL,           -- created | claimed | assigned | started | plan_set
-                                 -- | gate_failed | done | blocked | unblocked
-                                 -- | handed_to | review_created
-  actor TEXT,                   -- 岗位地址；人工或系统自动动作为 NULL
-  detail TEXT,                  -- JSON，截断规则同阶段 1 调用日志（正文截断 200 字符，整体 16 KB）
-  at TEXT NOT NULL
+  created_at TEXT NOT NULL
 )
 ```
 
-`id` 的生成：在 `withTeamLock` 内部，取该团队现有任务 id 的最大序号 +1，与插入同在一次事务里，不会产生竞争。
+不设 `events` 表：Orca 自己的任务/dispatch 记录（`task-list`、`dispatch-show --preamble`）加上阶段 1 已有的调用日志（`CallLog`，记录每次 `orca …` 调用的 argv/结果），合起来就是审计轨迹；没有再建一张平行表的必要。
 
-## 5. 组件
+## 7. 身份解析
 
-| 单元 | 职责 | 对外接口 | 依赖 |
-| --- | --- | --- | --- |
-| `registry/`（扩展） | `tasks`、`events` 的读写，事务内完成状态转移 + 事件写入 | `Registry` 新增方法（见下） | `node:sqlite`（已引入） |
-| `commands/task/` | 任务命令的业务逻辑，返回结构化结果，不打印 | `createTask`、`listTasks`、`showTask`、`claimTask`、`assignTask`、`planTask`、`startTask`、`doneTask`、`blockTask`、`unblockTask` | `Registry`、`CommandDeps` |
-| `commands/up.ts`（修改） | 启动命令前拼接 `WINGLINE_POST` 环境变量赋值 | 同阶段 1 签名，行为增强 | 无新依赖 |
-| `cli`（扩展） | `wl task <subcommand>` 的参数解析、`--as`、`--json`/人读输出、退出码 | 新增 `wl task` 子命令面 | commander、core |
+两种"自己是谁"，用途不同：
 
-`Registry` 新增方法草案：
+- **`ORCA_TERMINAL_HANDLE`**：Orca 自己在其管理的终端里设置的环境变量，是这个 pty 当前真实、随时最新的 Orca handle。`wl task done` 自报完成/失败（`send --type worker_done`）必须用这个值当 `--from`——这是自述，必须是真身份。
+- **`WINGLINE_POST`**：阶段 1 设计里雁阵在 `wl up` 构造启动命令时注入的环境变量（见总纲/阶段 1 spec 的 `wl up` 实现，本阶段新增这一步，做法同此前已批准的设计：POSIX 前缀 `WINGLINE_POST=<addr> <launch>`，Windows `.cmd` 路径前缀 `set WINGLINE_POST=<addr>&& <launch>`），给出逻辑地址 `<post>@<team>`，用于在 `team.yaml` 里查自己的 `tags`/`self_claim`/`plan_first`/`gates` 配置，以及 `wl task list --mine` 过滤。
 
-- `nextTaskId(team): string`
-- `insertTask(row: TaskRow): void` / `getTask(id): TaskRow | null` / `listTasks(filter): TaskRow[]`
-- `updateTaskStatus(id, patch: Partial<TaskRow>): void`
-- `appendEvent(e: { taskId; type; actor; detail }): void`
-- `listEvents(taskId): EventRow[]`
-- `countInProgress(post): number`（供预算检查）
+解析顺序：显式 `--as <addr>` > `WINGLINE_POST` 环境变量 > 报错 `actor_required`（仅对需要身份的命令；`wl task create`/`list`/`show` 不强制要求）。
+"自己的真实 handle"解析顺序：`ORCA_TERMINAL_HANDLE` 环境变量 > 按已解析出的逻辑地址调用 `locatePost`（阶段 1 已有，按标题精确匹配）回退查找。
 
-## 6. 岗位自我身份识别
+## 8. 任务状态机
 
-`wl up` 构造 `terminal create --command <launch>` 时，把 `<launch>` 替换为带环境变量前缀的版本：
+状态直接是 Orca 原生的 `ready`/`dispatched`/`completed`/`failed`，外加一个纯本地、Orca 看不见的过渡态（"已认领未开始"）：
 
-- POSIX（含 macOS/Linux 的 `spawn(file, args, { shell:false })` 路径）：`terminal create` 的 `--command` 参数本身由 Orca 在目标终端的 shell 里执行，所以这里直接在该字符串前拼 `WINGLINE_POST=<addr> <launch>`，由那个 shell 完成变量导出，雁阵自身调用 Orca 时仍然不经过 shell。
-- Windows `.cmd` 包装路径：同样是替换传给 Orca 的 `--command` 字符串内容，前缀改为 `set WINGLINE_POST=<addr>&& <launch>`（按 7.3 节既有转义规则处理）。
-
-`wl task` 系列命令解析调用方地址的顺序：显式 `--as <addr>` > 环境变量 `WINGLINE_POST` > 都没有时按 `created_by: 'human'`/报错（见各命令说明）。
-
-## 7. 任务状态机
-
-```text
-        wl task create --post X          wl task create（无 --post）
-                  │                                │
-                  ▼                                ▼
-              claimed                             open
-                  │                                │ wl task claim / wl task assign
-                  │ wl task start                   ▼
-                  │  （需先 plan，若 plan_first）  claimed ──┐
-                  ▼                                          │（与左边汇合）
-             in_progress ────────────────────────────────────┘
-                  │
-                  │ wl task done
-         ┌────────┼─────────────────┐
-         ▼        ▼                 ▼
-       done   gate_failed        blocked
-    （可能     （留在              （gate_failures
-     触发       in_progress，       达到上限；
-     review/    可重新 done）       wl task unblock
-     hands_to）                     回到 claimed）
+```
+(不存在)
+   │ wl task create [--post X]
+   ▼
+ready ───────────────────────────────────────────┐
+   │ wl task claim（本地写 task_ext.claimed_by，  │ wl task create --post X
+   │   不调用 Orca）                               │ （直接 dispatch，跳过认领）
+   ▼                                               │
+ready + claimed_by=X（本地过渡态）                  │
+   │ wl task start                                 │
+   │ （plan_first 检查 → dispatch --to 自己）        │
+   └───────────────────────┬───────────────────────┘
+                           ▼
+                      dispatched
+                           │ wl task done：先跑 gate
+             ┌─────────────┼──────────────────┐
+             ▼              ▼                 ▼
+     outcome=succeeded  本地重试预算未满     本地重试预算已满
+     send worker_done   原样留在 dispatched  send worker_done(failed)
+     (succeeded)        （不调用 Orca，       + gate-create（发起人工决策）
+             │           gate_failures+=1，
+             │           可再次 wl task done）
+             ▼                                    ▼
+         completed                             failed
 ```
 
-状态只有五种：`open`、`claimed`、`in_progress`、`blocked`、`done`。`gate_failed`/`handed_to`/`review_created` 不是状态，是命令返回结果里的 `outcome`，用于驱动下一步输出，不单独落在 `tasks.status` 上（`gate_failed` 时 `status` 仍是 `in_progress`）。
+## 9. 命令
 
-## 8. 命令详述
+所有涉及本地状态写入的命令（`claim`、`plan`）都在 `registry.withTeamLock(team, fn)` 内执行，防止两个岗位同时认领同一个任务；涉及 Orca 调用的命令（`create`/`start`/`done`/`escalate`/`resolve`）不需要本地锁——Orca 自己的状态机保证了 `dispatch`/`task-update` 式的并发安全（已 `dispatched` 的任务不能被二次 `dispatch`，见第 2 节）。
 
-所有写操作都在 `registry.withTeamLock(team, fn)` 内执行，与阶段 1 的 `up`/`down` 一致。已知取舍：gate 命令执行期间占住整个团队的锁，阶段 2A 规模下可接受，阶段 2B 若需要更细粒度的锁再改。
+**`wl task create <team> --title <t> [--post <addr>] [--tags a,b] [--parent <id>] [--as <addr>]`**
 
-**`wl task create <team> --title <t> [--post <addr>] [--tags a,b] [--gate <cmd>] [--as <addr>]`**
-
-任何岗位或人工都可调用（用于初始 backlog，也用于"顺手记下新发现"——不中断当前任务，另开一条）。`--post` 给出时状态为 `claimed`，否则为 `open`。`--gate` 覆盖该任务的 gate 命令，不给则用 `gates[post]`（`--post` 未给时不校验 gate，等被认领/指派后才确定执行哪条）。写 `created` 事件，`created_by` 取自调用方地址或 `'human'`。
+前置：`teams.coordinator_handle` 已建立，否则报 `run_not_ready`（提示先跑一次 `wl up`）。任何岗位或人工都可调用（用于初始 backlog，也用于"顺手记下新发现"）。调用 `orca orchestration task-create --spec "<调用方地址>: <title>" --task-title <title> --run <team.run_id> --from <coordinator_handle> [--parent <id>]`——spec 文本前缀调用方地址，是因为 Orca 自己的 `created_by_terminal_handle` 字段此时恒等于 `coordinator_handle`，对追溯"谁建的"没有意义，只能靠这里补。本地插入 `task_ext` 行（`tags`）。`--post` 给出时紧接着 `orca orchestration dispatch --task <id> --to <目标岗位 handle> --from <coordinator_handle>`（跳过认领，直接进 `dispatched`；人工直接指派视为已同意跳过 `plan_first`）。
 
 **`wl task list [team] [--mine] [--status s] [--tags a,b] [--json]`**
 
-只读，`--mine` 需要能解析出调用方地址（`--as` 或 `WINGLINE_POST`），过滤 `post = <addr>`。
+`orca orchestration task-list --run <team.run_id> --json`，与本地 `task_ext` 按 `id` 合并（取 `tags`/`plan`/`gate_failures`/`claimed_by`），再按参数过滤。`--mine` 需要能解析出"自己的真实 handle"（见第 7 节），过滤 `assignee_handle = <handle>`；未 dispatch 的任务用本地 `claimed_by` 过滤。
 
 **`wl task show <id> [--json]`**
 
-任务详情 + `events` 全部历史，按时间排序。
+`task-list` 定位该任务（Orca 没有单任务查询命令，列表里找），与 `task_ext` 合并展示；若已 dispatch，附 `dispatch-show --task <id> --preamble` 的结果方便人工核对投递内容。
 
 **`wl task claim <id> [--as <addr>]`**
 
-前置：task 存在且 `status = 'open'`；调用方地址可解析；该岗位 `self_claim = true`；任务 `tags` 为空，或与该岗位 `tags` 有交集。任一不满足即报用户输入错误（分别为 `task_not_open`、`self_claim_disabled`、`tags_mismatch`）。成功：`post = <addr>`，`status = 'claimed'`，写 `claimed` 事件。
-
-**`wl task assign <id> <addr>`**
-
-仅供人工（无 `--as`/`WINGLINE_POST` 时才允许；岗位调用这条视为输入错误 `assign_is_human_only`），绕开 `self_claim`/`tags` 校验，用于人工指派一个 `open` 任务。要求 `status = 'open'`（否则 `task_not_open`）——`blocked` 任务的指派一律走 `wl task unblock --post`，不用这条，避免"指派是否顺带清空 `gate_failures`"产生歧义。写 `assigned` 事件。
-
-**`wl task plan <id> "<text>" [--as <addr>]`**
-
-调用方须是任务 owner（`post = <addr>`，否则 `not_task_owner`）。任务未 `done` 均可调用。写入 `tasks.plan`，事件 `plan_set`。
+前置：task 存在且 Orca 状态为 `ready`、本地 `task_ext.claimed_by` 为空；调用方地址可解析；该岗位 `self_claim = true`；任务 `tags` 为空，或与该岗位 `tags` 有交集。成功：`withTeamLock` 内把 `task_ext.claimed_by` 置为 `<addr>`——不调用 Orca。
 
 **`wl task start <id> [--as <addr>]`**
 
-调用方须是 owner，`status = 'claimed'`。该岗位 `plan_first = true` 且 `tasks.plan IS NULL` → 报错 `plan_required`。`countInProgress(addr) >= budgets.team.max_in_progress_per_post` → 报错 `wip_budget_exceeded`。成功 → `status = 'in_progress'`，事件 `started`。
+前置：`task_ext.claimed_by = <addr>`（否则 `not_claimed_by_you`）。该岗位 `plan_first = true` 且 `task_ext.plan IS NULL` → `plan_required`。预算检查：`task-list` 里数 `assignee_handle = 自己真实 handle` 且 `status == 'dispatched'` 的条数 ≥ `budgets.team.max_in_progress_per_post` → `wip_budget_exceeded`。通过：`orca orchestration dispatch --task <id> --to <自己真实 handle> --from <coordinator_handle>`。
+
+**`wl task plan <id> "<text>" [--as <addr>]`**
+
+纯本地：写 `task_ext.plan`，不要求任务处于特定 Orca 状态（`completed`/`failed` 之外均可调用）。
 
 **`wl task done <id> [--as <addr>]`**
 
-调用方须是 owner，`status = 'in_progress'`。取该任务的 gate 命令（创建时 `--gate` 覆盖值，否则 `gates[post]`；两者都没有则视为 gate 通过，跳过执行）。在调用方当前工作目录下，以 `shell: true` 执行该命令（见第 2 节的例外）。
+前置：该任务 `assignee_handle` 等于调用方真实 handle（否则 `not_dispatched_to_you`），Orca 状态为 `dispatched`。取该岗位的 gate 命令（`gates[post]`，没有则视为通过，跳过执行），在调用方当前工作目录下以 `shell: true` 执行。
 
-返回结构化结果 `{ outcome, detail? }`（不抛异常，与阶段 1 `UpResult`/`UpOutcome` 同一模式），CLI 据此决定退出码：
+返回结构化结果 `{ outcome, detail? }`：
 
-| 退出码 0（success 字段 true） | 条件 | 后续动作 |
+| outcome | 条件 | 动作 |
 | --- | --- | --- |
-| `outcome: 'done'` | gate 命令退出码 0，且该岗位 `links` 无 `reviewed_by`/`hands_to` | `status → 'done'`，事件 `done` |
-| `outcome: 'done'`，另附 `reviewCreated: string[]` | gate 通过，岗位有 `reviewed_by: [X, ...]` | `status → 'done'`；为每个 X `create` 一个任务（`title` 自动生成，`tags: ['review']`，`post: X`，`origin_task` 为本任务 id），各写 `review_created` 事件 |
-| `outcome: 'handed_to'`，附 `handedTo: string` | gate 通过，岗位有 `hands_to: [Y]` | **不**转 `done`；`post → Y`，`status → 'claimed'`，`gate_failures` 清零，事件 `handed_to` |
+| `done` | gate 退出码 0，该岗位无 `reviewed_by`/`hands_to` | `send --type worker_done --outcome succeeded --task-id <id> --dispatch-id <task-list 里的 dispatch_id> --subject "gate passed" --body <(可选)输出片段> --run <run_id> --from $ORCA_TERMINAL_HANDLE` |
+| `done`，附 `linkedTask: string` | gate 退出码 0，该岗位有 `reviewed_by: [X]` 或 `hands_to: [Y]` | 先如上 `send worker_done succeeded`；再 `task-create --spec "..." --parent <id> --run <run_id> --from <coordinator_handle>` 建新任务，`dispatch --task <新id> --to <X/Y 的 handle> --from <coordinator_handle>`（`reviewed_by` 的新任务标题前缀"评审："，`hands_to` 前缀"交接："；本地写入新任务的 `task_ext` 行） |
+| `gate_failed` | gate 退出码非 0，`task_ext.gate_failures + 1 < budgets.task.max_gate_failures` | 本地 `gate_failures += 1`；**不调用 Orca**，任务原样留在 `dispatched`，可直接再次 `wl task done` 重试 |
+| `escalated` | gate 退出码非 0，`task_ext.gate_failures + 1 >= budgets.task.max_gate_failures` | `send --type worker_done --outcome failed --task-id <id> --dispatch-id <id> --subject "gate failed" --body <命令输出，截断> --run <run_id> --from $ORCA_TERMINAL_HANDLE`（任务转 `failed`，终态）；再 `gate-create --task <id> --question "连续 N 次 gate 失败，需要人工决定下一步" --options '["retry","abandon","reassign"]' --from <coordinator_handle>` |
 
-| 退出码 1（需要调用方处理） | 条件 | 后续动作 |
-| --- | --- | --- |
-| `outcome: 'gate_failed'` | gate 命令退出码非 0，`gate_failures + 1 < budgets.task.max_gate_failures` | `status` 维持 `in_progress`，`gate_failures += 1`，事件 `gate_failed`（detail 含命令输出，截断）；可直接再次 `wl task done` 重试 |
-| `outcome: 'blocked'` | 同上，但 `gate_failures + 1 >= budgets.task.max_gate_failures` | `status → 'blocked'`，事件先 `gate_failed` 后 `blocked` |
+CLI 退出码：`done`（含附带 `linkedTask` 的情形）→ 0；`gate_failed`/`escalated` → 1（需要调用方或人工处理）。
 
-**`wl task block <id> --reason <text> [--as <addr>]`**
+**`wl task escalate <id> --reason <text> [--as <addr>]`**
 
-人工或 owner 均可调用，手动把任务标记 `blocked`（不要求先有 gate 失败），写事件 `blocked`（detail 含 reason）。
+人工或当前 owner 均可调用，`gate-create --task <id> --question <reason> --from <coordinator_handle>`，不改变任务的 Orca 状态（用于"还没到 gate 失败预算，但想提前叫人"的场景）。
 
-**`wl task unblock <id> [--post <addr>] [--as <addr>]`**
+**`wl task resolve <gate_id> --resolution <text> [--as <addr>]`**
 
-仅人工（同 `assign` 的限定）。要求 `status = 'blocked'`。`gate_failures` 清零；给了 `--post` 则重新指派并置 `status = 'claimed'`，否则保留原 `post`、同样回到 `claimed`（owner 需要重新 `start`）。写事件 `unblocked`。
+`gate-resolve --id <gate_id> --resolution <text> --from <coordinator_handle>`。本阶段只记录决议文本，不自动执行"retry"等后续动作（自动重开需要 `worker-start --retry-of`，留给阶段 2B 的调度员）。
 
-## 9. 错误处理
+## 10. 错误处理
 
-沿用总纲 7.8 的四类退出码（1 输入错误 / 2 Orca 报错 / 3 不确定 / 4 内部错误），`wl task` 系列不产生新的 Orca 调用，因此不会触发退出码 2、3：
+沿用总纲 7.8 的四类退出码，`wl task` 新增的输入错误类别：`run_not_ready`、`task_not_found`、`self_claim_disabled`、`tags_mismatch`、`not_claimed_by_you`、`plan_required`、`wip_budget_exceeded`、`not_dispatched_to_you`、`actor_required`，以及 `wl task done` 的 `gate_failed`/`escalated` 两种结果（同样按"需要调用方处理"归入退出码 1）。`consumer_fenced`（协调者身份不匹配）理论上不应该在正常使用中出现——只有 `teams.coordinator_handle` 记录本身坏掉（比如数据库被手动改过）才会触发，此时按内部错误（退出码 4）处理，提示重新 `wl down` + `wl up` 重建。
 
-- 输入错误（退出码 1）：上文各命令列出的前置条件不满足（`task_not_open`、`self_claim_disabled`、`tags_mismatch`、`not_task_owner`、`plan_required`、`wip_budget_exceeded`、`assign_is_human_only`、任务不存在 `task_unknown`、`links` 校验失败等），以及 `wl task done` 的 `gate_failed`/`blocked` 两种结果（同样按"需要调用方处理"归入 1）。
-- 内部错误（退出码 4）：gate 命令本身无法启动（如可执行文件不存在）、注册表写入失败。
-
-## 10. 测试
+## 11. 测试
 
 | 层 | 范围 | 方法 |
 | --- | --- | --- |
-| 单元 | `spec/` 新字段校验、`registry/` 的 `tasks`/`events` 读写与事务、`commands/task/` 各命令的分支逻辑（含预算、自领匹配、plan_first、gate 结果三分支、reviewed_by/hands_to） | vitest，注入假 `Registry` 或内存 SQLite；gate 执行注入假的 spawn |
-| 集成 | `up`（验证 `WINGLINE_POST` 确实出现在发给 Orca 的 `--command` 里）、一次完整的 create → claim → plan → start → done（含 reviewed_by 自动建任务）跑通 | 复用阶段 1 的假 `OrcaClient` 模式，断言 argv 中的 `--command` 字符串 |
+| 单元 | `spec/` 新字段校验、`task_ext` 的读写、`commands/task/` 各命令的分支逻辑（预算、自领匹配、plan_first、gate 结果三分支、reviewed_by/hands_to 合并路径） | vitest，注入假 `Registry`；gate 执行注入假的 spawn |
+| 契约 | `orchestration run-create/task-create/task-list/dispatch/send(worker_done)/gate-create/gate-resolve` 的回执解析 | 扩展阶段 1 的假 `orca` 可执行文件，按 `spikes/out/task-dispatch-probe/` 里录到的真实回执（脱敏后）做 fixture |
+| 集成 | `wl up` 建 Run → `wl task create/claim/start/done`（含 `reviewed_by` 触发的关联任务）跑通一遍 | 复用阶段 1 的假 `OrcaClient` 模式扩展出 orchestration 方法，断言调用序列和 `--from` 取值 |
 
-不新增真机集成测试（`test:live`）项目：本阶段不涉及新的 Orca 调用面，阶段 1 的集成测试覆盖面已经验证了 `terminal create --command` 的传参路径。
+不新增真机集成测试项目：本阶段的 orchestration 调用面已经用探针验证过关键假设，阶段 1 的 `test:live` 继续覆盖 `terminal …` 调用链路。
 
-## 11. 不做的事（阶段 2A）
+## 12. 不做的事（阶段 2A）
 
 - 不做调度员、不做后台轮询或自动提醒（阶段 2B）。
-- 不做巡查信号（无进展、原地打转、消耗过快、闸门连败的"升级通知"）——阶段 2A 的 `blocked` 只是达到 `max_gate_failures` 后的被动结果，没有主动巡查。
-- 不统计 token，预算只按次数计。
+- 不做巡查信号（无进展、原地打转、消耗过快、闸门连败的"升级通知"）——阶段 2A 的 `escalated` 只是达到 `max_gate_failures` 后的被动结果，没有主动巡查。
+- 不统计 token，预算只按次数/条数计。
 - `consults` 字段只做记录，不触发任何命令行为。
 - 不改变 `wl ps` 的输出（任务状态通过 `wl task list/show` 查看，不混入 `ps`）。
-- 一个任务只能有一个 owner；不支持多岗位协作同一个任务（`hands_to` 是转交，不是共享）。
+- 不自动执行 `gate-resolve` 之后的动作（比如选了 "retry" 并不会自动重新 dispatch）——阶段 2A 只负责把决议记下来。
+- 不处理 Run 重启后 `coordinator_handle` 失效的情况（见下表风险）；阶段 3 的 `wl restore` 或阶段 2B 的调度员负责。
 
-## 12. 风险
+## 13. 风险
 
 | 风险 | 影响 | 对策 |
 | --- | --- | --- |
-| gate 命令经 shell 执行，是新引入的攻击面（`team.yaml` 若来自不可信来源，等于任意命令执行） | 本地代码执行 | 和 `launch` 字段一样，`team.yaml` 被视为可信配置（用户自己写的），不做沙箱；风险在总纲和本文档中明确记录，不在阶段 2A 解决 |
-| `withTeamLock` 粒度为整个团队，`done` 执行 gate 期间会阻塞同团队其他任务命令 | 团队规模变大后出现排队 | 阶段 2A 接受；阶段 2B 若调度员也要写任务表，再评估是否需要按任务级锁 |
-| `hands_to` 转交后新 owner 可能没有被告知（阶段 2A 没有自动通知机制） | 任务转交后停滞，直到有人手动 `wl task list --mine` 发现 | 阶段 2B 的巡查信号之一（无进展）天然覆盖这种情况；阶段 2A 期望 NORMS/brief 里约定定期自查 |
-| `budgets.task.max_gate_failures` 达到后任务进 `blocked`，若没人工关注会一直卡住 | 任务堆积 | 同上，阶段 2B 巡查负责发现并升级；阶段 2A 只负责正确记录状态 |
+| `gate-resolve` 的调用权限未实测（是否限定协调者） | 若限定协调者，`wl task resolve` 的 `--from <coordinator_handle>` 已经满足；若还有别的隐藏校验（比如必须是 gate-create 的创建者），本阶段设计可能需要微调 | 实现阶段第一次真跑 `wl task resolve` 时核对，和阶段 0 的"实测纠正假设"同一套做法 |
+| `teams.coordinator_handle` 在 Orca 重启后是否仍被接受（只验证了同一次运行内的值匹配，未测跨重启） | 若重启后失效，`wl task` 的 orchestration 调用会全部报 `consumer_fenced` | 和总纲第 9 节已记录的"阶段 2 调度员重启恢复"风险是同一类问题，留给阶段 2B /阶段 3 的恢复设计一并解决；阶段 2A 不处理 |
+| gate 命令经 shell 执行，新引入的攻击面（`team.yaml` 若来自不可信来源，等于任意命令执行） | 本地代码执行 | 和 `launch` 字段一样，`team.yaml` 被视为可信配置，风险在此明确记录，不在阶段 2A 解决 |
+| `coordinator_handle` 对雁阵来说等同于该团队在这个 Run 下的"万能钥匙"（任何知道这个字符串的调用都会被 Orca 当协调者） | 若注册表文件被其他用户读取，可伪造协调者调用 | 和 `~/.wingline/state.db` 本身的文件权限是同一个信任边界，阶段 1 已经假设本地数据库不被其他用户读取，不新增风险模型 |
+| `hands_to` 和 `reviewed_by` 合并成同一条路径后，原任务变成 `completed`（而不是直觉上的"还没完成，只是换人"） | 团队看板/统计如果以后按"completed = 真正做完"理解会有歧义 | `wl task show` 对经由 `hands_to` 完成的任务，在 `result` 文本里标注"已转交给 <addr>"，供人工辨识；阶段 3 的控制台设计时需注意这一点 |
