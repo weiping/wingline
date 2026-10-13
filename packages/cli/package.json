@@ -1,0 +1,8 @@
+{
+  "name": "wingline",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": { "wingline": "dist/main.js", "wl": "dist/main.js" },
+  "engines": { "node": ">=22.13" },
+  "dependencies": { "@wingline/core": "workspace:*", "commander": "^13.0.0" }
+}
