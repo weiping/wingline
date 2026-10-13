@@ -72,7 +72,10 @@ export function createOrcaClient(runner: OrcaRunner): OrcaClient {
       const r = await runner.json<{
         send: { accepted: boolean; prompt?: { stages?: SendStage[] } }
         mutation?: { requestId?: string }
-      }>(['terminal', 'send', '--terminal', a.handle, '--text', a.text, '--enter', '--wait-submit', String(a.waitSubmitSec)])
+      }>([
+        'terminal', 'send', '--terminal', a.handle, '--text', a.text, '--enter', '--wait-submit', String(a.waitSubmitSec),
+        ...(a.retryRequest ? ['--retry-request', a.retryRequest] : []),
+      ])
       return { accepted: r.send.accepted, stages: r.send.prompt?.stages ?? [], requestId: r.mutation?.requestId ?? null }
     },
 

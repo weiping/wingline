@@ -37,6 +37,7 @@ verified-orca: >=1.4.214 <1.5.0   （Linux 实测 1.4.222 在范围内）
 3. `--retry-request` 只接受 Orca 自己分配的 UUID（回执里的 `mutation.requestId`），不能自己编；`terminal create` 根本没有这个参数。需要确认时，对同一条命令带上 Orca 报告的 ID，Orca 回放回执而不重发。
 4. `terminal wait` 超时是 `ok:false`、code `timeout`，不是 `satisfied:false`。
 5. 对 Claude 岗位发 `terminal send`：空闲时 `stages` 含 `turn_started`（已验证 `delivered`）；岗位正在干活时只有 `input_accepted`，Orca 提示“Enter 可能被吞”，`wl send` 报 `send_unconfirmed`（退出码 3）。
+7. `terminal send --retry-request <Orca 报告的 ID>` 用同一消息重发时返回同一个 requestId，屏幕上标记文本只出现一次，即回放而非重发（已验证；“未确认→确认”的转变没能制造出来，Claude 忙时会把输入排队并报 `turn_started`）。
 6. 岗位收到启动包后会立刻开始工作（实测 Claude 读仓库、跑命令），`tui-idle` 要等它做完。
 
 ## 只读核对（Linux，Orca 1.4.222，`orca-ide <命令> --help` 与 `status`/`terminal list`/`--version`）

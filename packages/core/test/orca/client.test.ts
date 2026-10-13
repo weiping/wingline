@@ -88,6 +88,12 @@ test('terminalSend reads send.accepted, prompt.stages and Orca\'s mutation reque
   expect(calls[0]).toEqual(['terminal', 'send', '--terminal', 'h', '--text', 'hi', '--enter', '--wait-submit', '10'])
 })
 
+test('terminalSend appends --retry-request only when given', async () => {
+  const { client, calls } = clientWith({ 'terminal send': { send: { accepted: true } } })
+  await client.terminalSend({ handle: 'h', text: 'hi', enter: true, waitSubmitSec: 10, retryRequest: 'req-1' })
+  expect(calls[0]).toEqual(['terminal', 'send', '--terminal', 'h', '--text', 'hi', '--enter', '--wait-submit', '10', '--retry-request', 'req-1'])
+})
+
 test('terminalSend defaults stages to [] and requestId to null when absent', async () => {
   const { client } = clientWith({ 'terminal send': { send: { accepted: true } } })
   expect(await client.terminalSend({ handle: 'h', text: 'x', enter: true, waitSubmitSec: 10 })).toEqual({ accepted: true, stages: [], requestId: null })

@@ -5,7 +5,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-export interface SentMessage { handle: string; text: string }
+export interface SentMessage { handle: string; text: string; retryRequest?: string }
 
 /** 可编排的假 OrcaClient：记录调用序列，终端列表随 create/close 变化。 */
 export class FakeOrca implements OrcaClient {
@@ -34,9 +34,9 @@ export class FakeOrca implements OrcaClient {
     return { handle }
   }
   async terminalWait() { this.calls.push('terminalWait'); return { satisfied: this.waitSatisfied } }
-  async terminalSend(a: { handle: string; text: string }) {
+  async terminalSend(a: { handle: string; text: string; retryRequest?: string }) {
     this.calls.push('terminalSend')
-    this.sent.push({ handle: a.handle, text: a.text })
+    this.sent.push({ handle: a.handle, text: a.text, retryRequest: a.retryRequest })
     if (this.failSendOnce) { const e = this.failSendOnce; this.failSendOnce = undefined; throw e }
     return { accepted: true, stages: this.sendStages, requestId: `req-${this.sent.length}` }
   }

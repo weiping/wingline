@@ -37,6 +37,29 @@ test("an unconfirmed send names Orca's request id so the delivery can be confirm
   })
 })
 
+test('--retry-request is forwarded to Orca and the same ledger row is resolved once confirmed', async () => {
+  const o = new FakeOrca()
+  o.sendStages = ['input_accepted']
+  const { deps, registry } = seeded(o)
+  const key = 'duo:checker:send:' + createHash('sha256').update('hi').digest('hex').slice(0, 8)
+  await expect(send(deps, { address: 'checker@duo', message: 'hi' })).rejects.toMatchObject({ code: 'send_unconfirmed' })
+  o.sendStages = ['input_accepted', 'turn_started']
+  const r = await send(deps, { address: 'checker@duo', message: 'hi', retryRequest: 'req-1' })
+  expect(r.outcome).toBe('delivered')
+  expect(o.sent[1]!.retryRequest).toBe('req-1')
+  expect(o.sent[0]!.retryRequest).toBeUndefined()
+  expect(registry.getRequest(key)!.state).toBe('done')
+  expect(registry.getRequest(`${key}-1`)).toBeNull()
+})
+
+test('an unconfirmed send tells the user the exact wl command to confirm it', async () => {
+  const o = new FakeOrca()
+  o.sendStages = ['input_accepted']
+  await expect(send(seeded(o).deps, { address: 'checker@duo', message: 'hi' })).rejects.toMatchObject({
+    hint: expect.stringContaining('wl send checker@duo <同一条消息> --retry-request req-1'),
+  })
+})
+
 test('retrying an unconfirmed send reuses its ledger row; after delivery a repeat opens a new row', async () => {
   const o = new FakeOrca()
   o.sendStages = ['input_accepted']

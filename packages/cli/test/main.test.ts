@@ -84,6 +84,12 @@ test('send passes address and message verbatim', async () => {
   expect(got).toEqual({ address: 'checker@duo', message: 'a "b" 中文' })
 })
 
+test('send --retry-request is forwarded', async () => {
+  let got: unknown
+  await exec(['send', 'checker@duo', 'hi', '--retry-request', 'req-1'], cmds({ send: async (_d, a) => { got = a; return { address: a.address, outcome: 'delivered', handle: 'h' } } }))
+  expect(got).toEqual({ address: 'checker@duo', message: 'hi', retryRequest: 'req-1' })
+})
+
 test('down --close flag is forwarded', async () => {
   let got: unknown
   await exec(['down', 'duo', '--close'], cmds({ down: async (_d, a) => { got = a; return { team: 'duo', posts: [] } } }))

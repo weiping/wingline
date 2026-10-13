@@ -24,30 +24,30 @@ function checkMessage(deps: CommandDeps, message: string): void {
   }
 }
 
-async function sendOnce(deps: CommandDeps, address: string, message: string) {
+async function sendOnce(deps: CommandDeps, address: string, message: string, retryRequest?: string) {
   const located = await locatePost(deps.orca, address)
   if (!located) {
     throw new WinglineError('input', 'post_offline', `${address} 没有对应的终端`, { hint: '先执行 wl up 拉起岗位' })
   }
   deps.registry.setPostHandle(address, located.handle)
   const result = await deps.orca.terminalSend({
-    handle: located.handle, text: message, enter: true, waitSubmitSec: WAIT_SUBMIT_SEC,
+    handle: located.handle, text: message, enter: true, waitSubmitSec: WAIT_SUBMIT_SEC, retryRequest,
   })
   return { handle: located.handle, result }
 }
 
-async function sendWithRelocate(deps: CommandDeps, address: string, message: string) {
+async function sendWithRelocate(deps: CommandDeps, address: string, message: string, retryRequest?: string) {
   try {
-    return await sendOnce(deps, address, message)
+    return await sendOnce(deps, address, message, retryRequest)
   } catch (err) {
-    if (err instanceof WinglineError && err.code === 'terminal_handle_stale') return sendOnce(deps, address, message)
+    if (err instanceof WinglineError && err.code === 'terminal_handle_stale') return sendOnce(deps, address, message, retryRequest)
     throw err
   }
 }
 
 const confirmed = (r: SendResult) => r.stages.includes('turn_started')
 
-export async function send(deps: CommandDeps, args: { address: string; message: string }): Promise<SendResultRow> {
+export async function send(deps: CommandDeps, args: { address: string; message: string; retryRequest?: string }): Promise<SendResultRow> {
   checkMessage(deps, args.message)
   const post = deps.registry.getPost(args.address)
   if (!post) throw new WinglineError('input', 'post_unknown', `没有岗位 ${args.address}`, { hint: '用 wl ps 查看现有岗位' })
@@ -56,12 +56,12 @@ export async function send(deps: CommandDeps, args: { address: string; message: 
   const id = nextRequestId(deps.registry, post.team, args.address.split('@')[0]!, 'send', hash)
   deps.registry.beginRequest(id)
   try {
-    const { handle, result } = await sendWithRelocate(deps, args.address, args.message)
+    const { handle, result } = await sendWithRelocate(deps, args.address, args.message, args.retryRequest)
     deps.registry.finishRequest(id, confirmed(result) ? 'done' : 'uncertain', result)
     if (!confirmed(result)) {
       throw new WinglineError('uncertain', 'send_unconfirmed', `消息已输入 ${args.address}，但未确认被处理，不会自动重发`, {
-        hint: `先看 ${args.address} 的终端是否收到。Orca 请求 ID：${result.requestId ?? '未知'}；` +
-          '确认送达可对同一条 orca terminal send 加 --retry-request <ID> 重新发起，Orca 会回放回执而不会重复发送',
+        hint: `先看 ${args.address} 的终端是否收到。要确认是否送达（不会重复发送）：` +
+          `wl send ${args.address} <同一条消息> --retry-request ${result.requestId ?? '<ID>'}`,
       })
     }
     return { address: args.address, outcome: 'delivered', handle }

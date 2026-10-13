@@ -25,6 +25,6 @@ export interface OrcaClient {
   terminalList(a?: { worktree?: string }): Promise<TerminalSummary[]>
   terminalCreate(a: { worktree: string; title: string; command: string }): Promise<{ handle: string }>
   terminalWait(a: { handle: string; forState: 'tui-idle'; timeoutMs: number }): Promise<{ satisfied: boolean }>
-  terminalSend(a: { handle: string; text: string; enter: true; waitSubmitSec: number }): Promise<SendResult>
+  terminalSend(a: { handle: string; text: string; enter: true; waitSubmitSec: number; retryRequest?: string }): Promise<SendResult>
   terminalClose(a: { handle: string }): Promise<CloseResult>
 }

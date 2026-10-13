@@ -96,7 +96,9 @@ export async function run(
   program.command('ps [team]').description('查看岗位状态').option('--json', '输出 JSON')
     .action((team: string | undefined, o: { json?: boolean }) => execute(!!o.json, (d) => commands.ps(d, { team }), renderPs))
   program.command('send <post@team> <message>').description('给岗位发消息').option('--json', '输出 JSON')
-    .action((address: string, message: string, o: { json?: boolean }) => execute(!!o.json, (d) => commands.send(d, { address, message }), renderSend))
+    .option('--retry-request <id>', '确认上次未确认的发送：传入当时报告的 Orca 请求 ID，消息须与原来完全相同，不会重复发送')
+    .action((address: string, message: string, o: { json?: boolean; retryRequest?: string }) =>
+      execute(!!o.json, (d) => commands.send(d, { address, message, retryRequest: o.retryRequest }), renderSend))
   program.command('down <team>').description('停止团队；加 --close 关闭终端').option('--close', '关闭岗位终端').option('--json', '输出 JSON')
     .action((team: string, o: { close?: boolean; json?: boolean }) => execute(!!o.json, (d) => commands.down(d, { team, close: !!o.close }), renderDown))
 
