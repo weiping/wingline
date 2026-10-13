@@ -6,6 +6,8 @@ export default defineConfig({
     alias: { '@wingline/core': path.resolve(__dirname, 'packages/core/src/index.ts') },
   },
   test: {
+    // Windows CI 上首次打开 SQLite（WAL）和写临时文件偶尔超过默认 5 秒
+    testTimeout: 20_000,
     include: ['packages/*/test/**/*.test.ts', 'test/**/*.test.ts'],
     exclude: process.env.WINGLINE_LIVE ? [] : ['test/live/**', '**/node_modules/**'],
   },
