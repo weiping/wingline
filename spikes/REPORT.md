@@ -141,6 +141,83 @@ pnpm tsx spikes/resume-after-restart.ts
 5. 把结果填进 REPORT 的结论表，只改 spikes/REPORT.md，不要改其他文件，不要提交也不要推送。
 ```
 
+## 待验证项的操作步骤（macOS / Linux，不含 Windows；均在测试 worktree 内，不用重启的先做）
+
+以下命令按 zsh 写：用函数 `wl`，不要把命令存进变量再 `$WL` 展开（zsh 不拆分）。`dist` 是平台无关的 tsc 产物，共享目录时不需要在每台机器上重新 `pnpm install`。
+
+### A. 终端 ↔ 会话映射是否可靠（对应阶段 3 的恢复）
+
+问题：duo 的两个岗位在同一 worktree，`orca search` 命中里没有终端 handle。能否“给终端发唯一标记，再搜标记”精确对应？
+
+```bash
+cd <仓库根目录>
+wl() { node "$PWD/packages/cli/dist/main.js" "$@"; }
+export WL_SB=$(mktemp -d /tmp/wl-map-XXXXXX); export WINGLINE_HOME=$WL_SB/home
+cp -R teams/duo $WL_SB/duo
+CLAUDE_BIN=$(command -v claude)      # 要的是本机二进制，不是 claude-lima 之类
+cat > $WL_SB/duo/team.yaml <<EOT
+version: 1
+name: duo
+repo: path:$PWD
+norms: NORMS.md
+lead: builder
+posts:
+  - id: builder
+    agent: claude
+    launch: '$CLAUDE_BIN --dangerously-skip-permissions'
+    worktree: path:$PWD
+    brief: [briefs/builder.md]
+  - id: checker
+    agent: claude
+    launch: '$CLAUDE_BIN --dangerously-skip-permissions'
+    worktree: path:$PWD
+    brief: [briefs/checker.md]
+EOT
+wl up $WL_SB/duo/team.yaml --json
+get() { wl ps duo --json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).result.find(r=>r.address===process.argv[1]).handle))' "$1"; }
+HB=$(get builder@duo); HC=$(get checker@duo); echo "builder=$HB checker=$HC"   # 任一为空就停
+orca terminal wait --terminal "$HB" --for tui-idle --timeout-ms 180000 --json | grep satisfied
+orca terminal wait --terminal "$HC" --for tui-idle --timeout-ms 180000 --json | grep satisfied
+N=$(date +%s)
+wl send builder@duo "只回复收到。标记 WLMAP-B-$N" --json; echo "exit=$?"
+wl send checker@duo "只回复收到。标记 WLMAP-C-$N" --json; echo "exit=$?"
+orca terminal wait --terminal "$HB" --for tui-idle --timeout-ms 120000 --json | grep satisfied
+orca terminal wait --terminal "$HC" --for tui-idle --timeout-ms 120000 --json | grep satisfied
+for K in B C; do
+  echo "--- WLMAP-$K-$N"
+  orca search "WLMAP-$K-$N" --agent claude --fresh --json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const h=JSON.parse(s).result.hits||[];console.log("hits="+h.length);h.forEach(x=>console.log(x.sessionId,x.cwd,x.updatedAt))})'
+done
+wl down duo --close --json
+orca terminal list --json | grep -n 'duo'      # 应无输出
+```
+
+判读：B、C 各恰好 1 个命中且 `sessionId` 不同 → 成立（阶段 3 用“发标记再搜”绑定终端与会话）；命中为 0、多于 1 或两个 ID 相同 → 不成立，保留输出。`send` 返回 `send_unconfirmed` 不影响，标记仍会落盘。
+
+### B. 协调者终端内的 `worker-start --terminal`（阶段 2 dispatcher）
+
+问题：从普通 shell 已知被拒；在已绑定 Run 的协调者终端里能否接管已有终端？**必须在 Orca 自己的终端里敲命令。**
+
+1. 在 Orca 界面对测试 worktree 新开一个普通 shell 标签，作为协调者。
+2. 在该终端里：
+
+```bash
+orca orchestration run-create --objective "spike coordinator" --json     # 记下 run_id → RUN
+orca terminal create --worktree path:<测试仓库路径> --title spike-adopt --command "$(command -v claude)" --json   # 记下 handle → T
+orca terminal wait --terminal <T> --for tui-idle --timeout-ms 120000 --json | grep satisfied
+orca orchestration worker-start --spec "只回复 OK" --terminal <T> --worktree current --run <RUN> --json
+orca orchestration worker-list --run <RUN> --json
+```
+
+3. 收尾：`orca terminal close --terminal <T>`，再关掉协调者标签。Orca CLI 没有删除 Run 的命令，`spike coordinator` 这个 Run 需要在界面里清理。
+
+判读：`worker-start` 返回 `ok:true` 且 `worker-list` 出现该 worker → 成立；否则记下错误码和 message。
+
+### C. Run 重启后是否保留（需要重启 Orca，在 B 之后做）
+
+1. 保存工作后，普通终端执行 `orca orchestration worker-list --run <RUN> --json > /tmp/before.json`。
+2. 完全退出 Orca 再重开（重启会中断所有终端）。
+3. 重启后执行同一条 `worker-list --run <RUN> --json`，与 `/tmp/before.json` 对比：Run 是否仍在、协调者绑定是否保留。
+
 ## 实测发现（计划和 spec 里是错的，代码已按实测修正）
 
 1. `terminal list` 的 `title` 是 shell 自己的窗口标题；`terminal create --title` 设的自定义标题只在 `--include-visual-layouts` 的 `visualLayouts[].root…tabs[].title` 里，用 `tabId` 与终端对应。按 `list` 的 title 找岗位永远找不到，`wl up` 会重复建终端。
