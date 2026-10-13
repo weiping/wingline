@@ -102,6 +102,27 @@ pnpm tsx spikes/resume-after-restart.ts
 - 把 `RESULT` 行和你的判断填进上面的结论表。
 - 清理残留终端：`orca terminal list --json`，再逐个 `orca terminal close --terminal <handle>`。探针开的终端标题都以 `spike-` 开头。
 
+### 5. 交给 Claude Code 执行
+
+第 0 到 2 步和第 4 步适合交给 Claude Code 在真机上做；第 3 步要重启 Orca，注意：
+
+- 如果 Claude Code 就跑在 Orca 的终端里，重启 Orca 会把它自己杀掉。请在 Orca 之外的普通终端里运行它，由人来完成“退出并重开 Orca”，它只在提示处等待。
+- `resume-after-restart` 只会输出“部分成立”，是否接回了原对话由人看 `after.json` 判断，不要让它自行下结论。
+- 它会往 Orca 里登记仓库、创建和关闭终端，务必限定在测试仓库的专用 worktree 里。
+- 先在那台机器上 `git pull`，确保拿到包含本节的最新 `main`。
+- 如果它找到了会话 ID 的来源，`session-id.ts` 需要相应修改：让它把 diff 给你看，或带回来再改。
+
+可以直接贴给它的提示词（把 `<平台>`、`<路径>` 换成实际值）：
+
+```text
+读 spikes/REPORT.md 里的“如何在真机上跑 session-id 和 resume-after-restart”，在本机（<平台>）按步骤做：
+1. 用测试仓库 <路径> 的专用 worktree，不要碰其他仓库和 worktree。
+2. 先跑 session-id 探针，再按第 2 步探查会话 ID 的来源，把发现的命令和输出摘要给我。
+3. 到 resume-after-restart 之前停下来问我；它需要我手动重启 Orca，我确认后你再继续，之后把 after.json 的关键内容摘给我，由我判断。
+4. 全程只创建、关闭标题以 spike- 开头的终端，结束时列出残留的并关掉。
+5. 把结果填进 REPORT 的结论表，只改 spikes/REPORT.md，不要改其他文件，不要提交也不要推送。
+```
+
 ## 实测发现（计划和 spec 里是错的，代码已按实测修正）
 
 1. `terminal list` 的 `title` 是 shell 自己的窗口标题；`terminal create --title` 设的自定义标题只在 `--include-visual-layouts` 的 `visualLayouts[].root…tabs[].title` 里，用 `tabId` 与终端对应。按 `list` 的 title 找岗位永远找不到，`wl up` 会重复建终端。
