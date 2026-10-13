@@ -24,7 +24,7 @@ pnpm tsx spikes/retained-reuse.ts
 | --- | --- | --- | --- | --- |
 | adopt-terminal | **部分成立**：`worker-start` 同样被拒（需要协调者终端）；12,000 字符 `terminal send` 收下 | **部分成立**：12,000 字符 `terminal send` 完整收下（`bytesWritten` 12001）；`worker-start --terminal` 被拒，需要“已绑定 Run 的协调者终端”，从普通 shell 不行；协调者终端内能否接管未验证 | 未运行 | 阶段 2：dispatcher 本来就是专用终端，需在那里重测 |
 | run-lifetime | **部分成立**：从普通 shell 同样报 `no_active_sender_terminal`；用 `--from <终端 handle>` 时 `run-create` 成功，两个 Run 并存（其中一个绑定了协调者终端，另一个 `coordinator_handle` 为 null）；重启后保留未测 | **不成立（从普通 shell）**：`run-create` 报 `no_active_sender_terminal`，需要 `--from <终端 handle>` 或在 Orca 终端内运行。多 Run 并存、重启后保留未测 | **部分成立**：同 macOS（`--from` 可行，两个 Run 并存，重启未测） | MVP：`wl up` 不创建 Run（`run_id` 留空，`ps` 不查 `worker-list`），即 spec 的退路 |
-| session-id | **不成立（`terminal show`）/ 另有来源**：真机 1.4.224 实测，`terminal show` 只有 `agentIdentity`；但 `orca search` 能给出 `sessionId` 和 `resumeCommand`（本机 agent 完整给出；配对环境的远端 agent 只给 `sessionId`，resumeCommand 被扣留）。详见「macOS 真机探查」 | **不成立（仅看 `terminal show`）**：回执有 `agentIdentity: "claude"`，没有会话 ID 或 resumeCommand；其他命令是否提供未查 | 未运行 | 阶段 3：会话 ID 来源已找到（`orca search` / agent 会话文件），见「macOS 真机探查」 |
+| session-id | **不成立（`terminal show`）/ 另有来源**：真机 1.4.224 实测，`terminal show` 只有 `agentIdentity`；但 `orca search` 能给出 `sessionId` 和 `resumeCommand`（本机 agent 完整给出；配对环境的远端 agent 只给 `sessionId`，resumeCommand 被扣留）。详见「macOS 真机探查」 | **不成立（`terminal show`）/ 另有来源**：回执只有 `agentIdentity: "claude"`；但 `orca search --agent claude --json`（Orca 1.4.222）每条命中含 `sessionId`、`source.filePath`、完整 `resumeCommand`，与 macOS 一致。命中里没有终端 handle，终端↔会话仍只能按 `cwd` + `updatedAt` 启发式对应 | 未运行 | 阶段 3：会话 ID 来源已找到（`orca search` / agent 会话文件），见「macOS 真机探查」 |
 | resume-after-restart | **成立**（macOS 真机，Orca 1.4.224 完整重启后验证）：runtimeId 从 `707f62af…` 变为 `3154b9e7…` 确认是真重启；用 `orca search` 拿到的恢复命令（`claude --resume 7cd6dc01-…`，显式本机路径）开 `spike-resume-2`，屏幕完整显示原会话（checker 岗位说明 + 重启前被中断的那一轮的现场），空闲等待输入。回执在 `spikes/out/resume-after-restart/darwin/after.json` | 未运行 | 未运行 | 阶段 3：恢复命令来源 = `orca search`（本机）或拼 `claude --resume <id>`；`resume-after-restart.ts` 已改为 search + 会话文件兜底的自动探针（见下节） |
 | retained-reuse | **不成立**：同因（需要协调者终端） | **不成立（从普通 shell）**：与 adopt-terminal 同因 | **不成立**：同因 | 阶段 2 |
 
@@ -177,5 +177,7 @@ pnpm tsx spikes/resume-after-restart.ts
 `orca-live` 工作流（手动触发，macOS 与 Windows，Orca 1.4.224，builder/checker 都用 `node -e "process.stdin.resume()"` 占位，`send` 预期 `send_unconfirmed`）：两个平台验收 1–5 全部通过。
 
 `pnpm test:live`（Linux；checker 用 Claude 代替本机没有的 codex，`WINGLINE_LIVE_CHECKER_LAUNCH=claude`）通过：验收 1–5 成立（up 拉起、再次 up 不产生新终端、ps 为 live、send、down --close 后终端消失）。send 一步：岗位忙时按设计为 `send_unconfirmed`，空闲时为 `delivered`。
+
+注：`duo.live.test.ts` 的 send 一步在岗位空闲时断言 `delivered`、忙时断言 `send_unconfirmed`，两条分支都算通过，所以下面 macOS 真机那次到底走了哪条分支没有记录；`delivered` 在 macOS 本机 claude 上的确认需要补跑并记下 `wl send` 的实际输出。
 
 macOS 真机（Orca 1.4.224）以**本机 claude × 2**（builder 与 checker 都用显式 `launch` 指向本机 claude 二进制，见实测发现 12–13）跑同一验收，1–5 全部通过。
