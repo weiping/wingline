@@ -1,0 +1,16 @@
+version: 1
+name: duo
+repo: path:/abs/path/to/your/repo   # 改成你的仓库；原样记录，供后续阶段使用
+norms: NORMS.md
+lead: builder
+posts:
+  - id: builder
+    agent: claude
+    model: opus
+    worktree: current               # current，或 Orca 的 worktree 选择器
+    brief: [briefs/builder.md]
+  - id: checker
+    agent: codex
+    launch: 'codex --model gpt-6-astra -c model_reasoning_effort="high"'
+    worktree: current
+    brief: [briefs/checker.md]
