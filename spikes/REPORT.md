@@ -1,6 +1,6 @@
 # 阶段 0 探针报告
 
-状态：**Linux（本机真实 Orca 1.4.222）、macOS 与 Windows（GitHub Actions `orca-live` 工作流，Orca 1.4.224）已运行。** `session-id` 与 `resume-after-restart` 只在 Linux 上跑过（需要已登录的 Claude；后者要重启 Orca）。
+状态：**Linux（本机真实 Orca 1.4.222）、macOS 与 Windows（GitHub Actions `orca-live` 工作流，Orca 1.4.224）已运行。** `session-id` 在 Linux（1.4.222）与 macOS 真机（1.4.224，有界面）上跑过；`resume-after-restart` 在 macOS 真机完成重启验证（成立，见「重启验证」一节）。
 
 Linux 测试环境：把 wingline 仓库本身登记进 Orca（`orca repo add`，Orca CLI 没有 repo rm，需要时在界面里移除），worktree 选择器 `path:/Users/liuweiping/workspace/dev/wingline`。
 
@@ -24,11 +24,29 @@ pnpm tsx spikes/retained-reuse.ts
 | --- | --- | --- | --- | --- |
 | adopt-terminal | **部分成立**：`worker-start` 同样被拒（需要协调者终端）；12,000 字符 `terminal send` 收下 | **部分成立**：12,000 字符 `terminal send` 完整收下（`bytesWritten` 12001）；`worker-start --terminal` 被拒，需要“已绑定 Run 的协调者终端”，从普通 shell 不行；协调者终端内能否接管未验证 | 未运行 | 阶段 2：dispatcher 本来就是专用终端，需在那里重测 |
 | run-lifetime | **部分成立**：从普通 shell 同样报 `no_active_sender_terminal`；用 `--from <终端 handle>` 时 `run-create` 成功，两个 Run 并存（其中一个绑定了协调者终端，另一个 `coordinator_handle` 为 null）；重启后保留未测 | **不成立（从普通 shell）**：`run-create` 报 `no_active_sender_terminal`，需要 `--from <终端 handle>` 或在 Orca 终端内运行。多 Run 并存、重启后保留未测 | **部分成立**：同 macOS（`--from` 可行，两个 Run 并存，重启未测） | MVP：`wl up` 不创建 Run（`run_id` 留空，`ps` 不查 `worker-list`），即 spec 的退路 |
-| session-id | 未运行 | **不成立（仅看 `terminal show`）**：回执有 `agentIdentity: "claude"`，没有会话 ID 或 resumeCommand；其他命令是否提供未查 | 未运行 | 阶段 3 |
-| resume-after-restart | 未运行 | 未运行（需要人重启 Orca，且依赖 session-id） | 未运行 | 阶段 3 |
+| session-id | **不成立（`terminal show`）/ 另有来源**：真机 1.4.224 实测，`terminal show` 只有 `agentIdentity`；但 `orca search` 能给出 `sessionId` 和 `resumeCommand`（本机 agent 完整给出；配对环境的远端 agent 只给 `sessionId`，resumeCommand 被扣留）。详见「macOS 真机探查」 | **不成立（仅看 `terminal show`）**：回执有 `agentIdentity: "claude"`，没有会话 ID 或 resumeCommand；其他命令是否提供未查 | 未运行 | 阶段 3：会话 ID 来源已找到（`orca search` / agent 会话文件），见「macOS 真机探查」 |
+| resume-after-restart | **成立**（macOS 真机，Orca 1.4.224 完整重启后验证）：runtimeId 从 `707f62af…` 变为 `3154b9e7…` 确认是真重启；用 `orca search` 拿到的恢复命令（`claude --resume 7cd6dc01-…`，显式本机路径）开 `spike-resume-2`，屏幕完整显示原会话（checker 岗位说明 + 重启前被中断的那一轮的现场），空闲等待输入。回执在 `spikes/out/resume-after-restart/darwin/after.json` | 未运行 | 未运行 | 阶段 3：恢复命令来源 = `orca search`（本机）或拼 `claude --resume <id>`；`resume-after-restart.ts` 已改为 search + 会话文件兜底的自动探针（见下节） |
 | retained-reuse | **不成立**：同因（需要协调者终端） | **不成立（从普通 shell）**：与 adopt-terminal 同因 | **不成立**：同因 | 阶段 2 |
 
 verified-orca: >=1.4.214 <1.5.0   （实测 1.4.222 与 1.4.224 在范围内）
+
+## macOS 真机探查（2026-10-13，Orca 1.4.224，有界面，按下面「如何在真机上跑」的第 0–2、4 步执行）
+
+- `session-id` 探针结果：`RESULT session-id 不成立 sessionId=无 resume=无`，回执在 `spikes/out/session-id/darwin/terminal-show.json`（只有 `agentIdentity: "claude"`，与 Linux 一致）。
+- **会话 ID 来源找到了：`orca search <词> --agent claude --json`**。每条命中含 `sessionId`、`cwd`、`source.filePath`（`~/.claude/projects/<项目路径>/<会话ID>.jsonl`）和现成的 `resumeCommand`（形如 `cd '<cwd>' && claude --resume '<会话ID>'`）。注意：--text 不会提交，必须 `--text ... --enter` 才会真正发给 agent（第一次只发 `--text` 时字节写入了但 TUI 输入框是空的，未产生任何会话记录）。
+- **远端/配对环境扣留 resumeCommand**：本机 wingline worktree 的 claude 实际跑在 Lima VM 里（`limactl shell agent … claude-lima`），宿主机的 `orca search` 索引不到 VM 内的会话；加 `--environment lima-agent` 能搜到 VM 侧会话并给出 `sessionId`，但按 `search --help` 的说明，配对服务器会扣留 `resumeCommand` 和 `source.filePath`（返回 null/缺席）。恢复命令可按固定模式自行拼：`cd '<cwd>' && claude --resume '<sessionId>'`，且要在对应执行环境里跑（本例即 VM 内）。
+- **终端 → 会话的映射是启发式的**：search 命中里没有 Orca 终端 handle，只能按 `cwd` + `updatedAt` 最新来对应，多个同目录会话并存时不可靠。
+- 对本项目 MVP 的额外警示：此机器上对 Lima 内 claude 的 `terminal send --enter` 回执 `prompt.stages` 只有 `input_accepted`，`provider`/`observation` 为 `unsupported`（Orca 无法观测 VM 内 TUI 的投递），即 `wl send` 在这类环境会永远是 `send_unconfirmed`（退出码 3）——与岗位忙无关。
+- `resumeCommand` 已具备（模式可拼），`resume-after-restart` 在 macOS 真机上可以跑了，但 `resume-after-restart.ts` 目前只从 `terminal show` 读恢复命令，直接跑会输出「不成立」；需要先改成读 `orca search`（或接受环境变量传入恢复命令）。按约定在此停下，等人确认是否重启 Orca。
+- 收尾已完成：`spike-probe` 终端已关，`terminal list` 无 spike- 残留。
+
+### 重启验证（第二轮，同日完成）
+
+`resume-after-restart.ts` 已改成自动探针：启动 agent → 发标记消息让会话落盘 → `orca search` 取恢复命令（拿不到则退到读 `~/.claude/projects/<path>/` 最新 jsonl 自拼）→ 提示人重启 Orca → 重启后开 `spike-resume-2` 录屏幕到 `after.json`。
+
+- 不重启干跑（拒绝重启分支）成功拿到恢复命令 `cd '…/wingline' && claude --resume '7cd6dc01-…'`，无终端残留。
+- 真重启后验证**成立**：`after.json` 里屏幕完整恢复原会话（checker 岗位说明全文 + 重启前被中断的那一轮现场），终端空闲等待输入，agent 没有自动乱动。恢复后的会话没有接着干活，只是展示历史——这符合预期，`claude --resume` 是交互式恢复，等人输入。
+- 探针两次开关终端均无残留（每次结束都验证了 `terminal list` 无 `spike-`）。
 
 ## 如何在真机上跑 session-id 和 resume-after-restart
 
@@ -137,6 +155,13 @@ pnpm tsx spikes/resume-after-restart.ts
 7. `terminal send --retry-request <Orca 报告的 ID>` 用同一消息重发时返回同一个 requestId，屏幕上标记文本只出现一次，即回放而非重发（已验证；“未确认→确认”的转变没能制造出来，Claude 忙时会把输入排队并报 `turn_started`）。
 6. 岗位收到启动包后会立刻开始工作（实测 Claude 读仓库、跑命令），`tui-idle` 要等它做完。
 
+12. **`terminal create --command <agent名>` 走的是 Orca 的 agent 启动偏好，不是裸 shell 解析**（macOS 真机实测）：`--command claude` 实际执行的是用户在 Orca 里配置的启动命令——本机配的是 `claude-lima --dangerously-skip-permissions`，于是 claude 跑进了 Lima VM（证据：进程是 `limactl shell … claude-lima`，会话文件落在 VM 的 `~/.claude/projects/`，宿主 `type claude` 在 Orca 终端里解析的是本机原生二进制 `~/.local/bin/claude`）。**要跑本机 claude，team.yaml 里必须用显式 `launch`**：
+    ```yaml
+    launch: '/Users/liuweiping/.local/bin/claude --dangerously-skip-permissions'
+    ```
+    影响：`wl` 的 `agent: claude` 简写在不同机器上可能指向完全不同的执行环境（本机/VM/远端），spec 和文档需要写明这一点。
+13. **本机 claude × 2 跑 duo 团队，MVP 验收 1–5 全过**（macOS 真机，Orca 1.4.224，`vitest run --config vitest.live.config.ts`，`WINGLINE_LIVE_BUILDER_LAUNCH`/`WINGLINE_LIVE_CHECKER_LAUNCH` 都指到本机 claude，66 秒）：up 拉起、重复 up 不产生新终端、ps 为 live、send、down --close 后终端消失。两个岗位的会话文件都在宿主 `~/.claude/projects/-Users-liuweiping-workspace-dev-wingline/`，`orca search`（不加 `--environment`）能搜到并给出完整 `resumeCommand`——本地跑时 session-id 的来源问题自然消失。测试已自动 `down --close`，无残留终端。
+
 ## 只读核对（Linux，Orca 1.4.222，`orca-ide <命令> --help` 与 `status`/`terminal list`/`--version`）
 
 不创建任何资源，核对了 `OrcaClient` 用到的命令面：
@@ -152,3 +177,5 @@ pnpm tsx spikes/resume-after-restart.ts
 `orca-live` 工作流（手动触发，macOS 与 Windows，Orca 1.4.224，builder/checker 都用 `node -e "process.stdin.resume()"` 占位，`send` 预期 `send_unconfirmed`）：两个平台验收 1–5 全部通过。
 
 `pnpm test:live`（Linux；checker 用 Claude 代替本机没有的 codex，`WINGLINE_LIVE_CHECKER_LAUNCH=claude`）通过：验收 1–5 成立（up 拉起、再次 up 不产生新终端、ps 为 live、send、down --close 后终端消失）。send 一步：岗位忙时按设计为 `send_unconfirmed`，空闲时为 `delivered`。
+
+macOS 真机（Orca 1.4.224）以**本机 claude × 2**（builder 与 checker 都用显式 `launch` 指向本机 claude 二进制，见实测发现 12–13）跑同一验收，1–5 全部通过。
