@@ -70,8 +70,14 @@ function rejectReserved(raw: unknown, at: Located): void {
 }
 
 function parseYaml(specPath: string): { raw: unknown; at: Located } {
+  let source: string
+  try {
+    source = fs.readFileSync(specPath, 'utf8')
+  } catch (cause) {
+    throw new WinglineError('input', 'spec_not_found', `读不到团队规格 ${specPath}`, { cause })
+  }
   const lines = new LineCounter()
-  const doc = parseDocument(fs.readFileSync(specPath, 'utf8'), { lineCounter: lines })
+  const doc = parseDocument(source, { lineCounter: lines })
   const at = new Located(specPath, doc, lines)
   const err = doc.errors[0]
   if (err) {

@@ -5,7 +5,18 @@
     "composite": false,
     "declaration": false,
     "allowImportingTsExtensions": false,
-    "paths": { "@wingline/core": ["./packages/core/src/index.ts"] }
+    "paths": {
+      "@wingline/core": [
+        "./packages/core/src/index.ts"
+      ]
+    },
+    "resolveJsonModule": true
   },
-  "include": ["packages/*/src", "packages/*/test", "test", "spikes", "vitest.config.ts"]
+  "include": [
+    "packages/*/src",
+    "packages/*/test",
+    "test",
+    "spikes",
+    "vitest.config.ts"
+  ]
 }

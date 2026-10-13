@@ -90,3 +90,9 @@ test('paths with spaces and backslashes resolve', () => {
   expect(s.posts[0]!.briefPaths[0]).toBe(path.join(s.dir, 'briefs', 'builder.md'))
   expect(s.dir).toContain('with space')
 })
+
+test('a missing team.yaml is an input error naming the path', () => {
+  expect(() => loadTeamSpec('/nonexistent/team.yaml')).toThrow(
+    expect.objectContaining({ kind: 'input', code: 'spec_not_found', message: expect.stringContaining('/nonexistent/team.yaml') }),
+  )
+})
