@@ -308,3 +308,21 @@ orca orchestration worker-list --run <RUN> --json
 **macOS 真机 `wl send` 补测（2026-10-13，Orca 1.4.224，本机 claude × 2，显式 `launch`）**：`up` 后立刻对 checker 发送 → `send_unconfirmed`、退出码 3（岗位正在处理启动包，设计预期）；`terminal wait --for tui-idle` 满足后再发 → `outcome: delivered`、退出码 0。即本机 claude 上 `delivered` 路径成立，忙时不误报、不重发。收尾 `down --close` 两个岗位均 `closed`。
 
 macOS 真机（Orca 1.4.224）以**本机 claude × 2**（builder 与 checker 都用显式 `launch` 指向本机 claude 二进制，见实测发现 12–13）跑同一验收，1–5 全部通过。
+
+## 阶段 2 探针：orchestration task/dispatch/gate（2026-10-13，Linux 本机真实 Orca 1.4.222）
+
+背景：阶段 2A 原计划雁阵自建一套任务状态机（见已提交 spec 的第一版）。写 spec 过程中发现 `orca orchestration` 已有原生的 `task-create/task-list/task-update/dispatch/worker-start/gate-create/gate-resolve/send(worker_done)` 一整套编排命令（`orca-ide orchestration --help` 核对，1.4.222），遂在落子前跑了一轮探针（脚本 `spikes/task-dispatch-probe.ts`，原始回执见 `spikes/out/task-dispatch-probe/linux/`），验证能不能把雁阵阶段 2A 直接建在这套原生命令之上。
+
+**用法：** `WINGLINE_SPIKE_WORKTREE="path:/Users/liuweiping/workspace/dev/wingline" pnpm tsx spikes/task-dispatch-probe.ts`（脚本因未覆盖 gate-create 失败分支会在跑完关键步骤后抛错退出，已知；后续若要保留需修掉）。补充的手动命令记录在下方结论里。
+
+### 结论
+
+1. **`task-create` / `task-update` / `dispatch` 是"协调者专属"操作，但认证只看 `--from` 的值是否等于 `run.coordinator_handle`，不校验调用方进程是否真的跑在那个终端的 pty 里。** 证据：`run-create --from <T1>` 后，`task-create --run <id> --from <T2>`（T2 不是协调者）被拒，错误码 `consumer_fenced`，消息"This coordinator terminal is no longer bound to Run"；换成 `--from <T1>`（协调者）在同一个外部脚本进程（不在 T1 的 pty 里）里立刻成功。`task-update` 同理（`--from <T2>` 同样 `consumer_fenced`）。
+   **影响：** 雁阔只要在团队级别记住一个 `coordinator_handle`（阶段 2A 的 `wl up` 首次运行时建一个专用占位终端或复用 lead 终端来 `run-create`），之后任何岗位调用 `wl task create/claim/start` 时，雁阵内部都用这个记下来的 `coordinator_handle` 当 `--from` 去调 Orca——不要求真的在那个终端里敲命令，也不要求调用 `wl` 的就是 lead 本人。阶段 2B 的"调度员"不是必须先跑起来 task 系统才能用；调度员只是在同一个 Run 上再做 `run-use` 接管协调者身份、处理 `worker_done`/`escalation` 收件箱的那一层。
+2. **worker 对自己的 dispatch 自述完成/失败不受协调者限制：** 在被 dispatch 的终端（T2）上执行 `orchestration send --type worker_done --outcome succeeded|failed --task-id <id> --dispatch-id <id> --from <T2 自己的 handle>`，**直接把该任务状态改成 `completed`/`failed`**（`result` 字段自动写入 `provenance:"worker_report"`、`reportedBy`、`completedAt` 等），同时这条消息会进协调者的 `check` 收件箱（`type: worker_done`）。`--subject` 是必填项（`--help` 没写清楚，试了才知道）。
+   **影响：** `wl task done` 不需要通过协调者，post 自己的 `wl` 进程直接用自己的真实 handle 发 `worker_done` 就能完成/标记失败自己的任务——这正是"自服务"模型需要的原语。
+3. **`failed` 是终态，不是"可以再试"的状态：** 一旦发了 `outcome: failed`，任务进 `failed`、`completed_at` 被写入；要重开必须 `worker-start --retry-of <dispatch_id>`（没有测试这条，属于更重的机制）。**也不能对一个已经 `dispatched` 的任务再次 `dispatch`**（报错"Task ... is dispatched; only ready tasks can be dispatched"）。
+   **影响：** gate 失败的重试预算（`budgets.task.max_gate_failures`）不能指望"失败一次就在 Orca 里打个标记再重试"——雁阵必须把重试计数留在本地（`gate_failures` 只存在雁阵自己的扩展表里），只有重试预算耗尽时才真正对 Orca 发一次 `worker_done --outcome failed`（终态）。同理 `hands_to`（转交同一个任务给另一个岗位）不能靠"重新 dispatch 同一个 task"实现，只能是"原任务 `completed`，同时建一个 `--parent <原 id>` 的新任务 dispatch 给目标岗位"——和 `reviewed_by` 其实是同一套机制，只是新任务的标题/tags 不同。
+4. **`gate-create`/`gate-resolve`/`gate-list` 不接受 `--run`**（`task` 隐含了 run），其余符合预期：创建一个待决策问题挂在某任务上，`--options` 是 JSON 字符串数组；`gate-resolve --resolution <text>` 把状态改成 `resolved`；两步都只需要 `--from`（同样是"值匹配"authorization，这里用协调者 handle 一样成功）。**没有验证谁 resolve（是否限定协调者或人工）——下次如果要靠这个做"gate 失败预算耗尽后转人工决策"，这条还需要在 2B 设计前再核对一次。**
+5. **意外收获：Orca 在自己管理的终端里会设置 `ORCA_TERMINAL_HANDLE` 环境变量**（从一处 `no_active_sender_terminal` 的错误提示里看到：".. or run the command inside a live Orca terminal with ORCA_TERMINAL_HANDLE set"）。**这比雁阵自己注入 `WINGLINE_POST` 更进一步：岗位终端内的 `wl` 进程可以直接读 `ORCA_TERMINAL_HANDLE` 拿到自己当前真实、永远最新的 Orca handle，不需要雁阵自己再查一遍 `locatePost`。** `WINGLINE_POST`（雁阵自己要注入的那个，见 2A spec）仍然需要——它给的是逻辑地址 `<post>@<team>`，`ORCA_TERMINAL_HANDLE` 给的是 Orca 的终端 handle，两者互补，用途不同。
+6. 遗留：探针建的 Run（`run_9f6ad99c6230`）**没有被清理**——和阶段 0 一样，Orca CLI 没有删除 Run 的命令，已关闭两个占位终端，Run 本身需要在 Orca 界面里手动清理。
