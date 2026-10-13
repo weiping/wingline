@@ -325,4 +325,15 @@ macOS 真机（Orca 1.4.224）以**本机 claude × 2**（builder 与 checker �
    **影响：** gate 失败的重试预算（`budgets.task.max_gate_failures`）不能指望"失败一次就在 Orca 里打个标记再重试"——雁阵必须把重试计数留在本地（`gate_failures` 只存在雁阵自己的扩展表里），只有重试预算耗尽时才真正对 Orca 发一次 `worker_done --outcome failed`（终态）。同理 `hands_to`（转交同一个任务给另一个岗位）不能靠"重新 dispatch 同一个 task"实现，只能是"原任务 `completed`，同时建一个 `--parent <原 id>` 的新任务 dispatch 给目标岗位"——和 `reviewed_by` 其实是同一套机制，只是新任务的标题/tags 不同。
 4. **`gate-create`/`gate-resolve`/`gate-list` 不接受 `--run`**（`task` 隐含了 run），其余符合预期：创建一个待决策问题挂在某任务上，`--options` 是 JSON 字符串数组；`gate-resolve --resolution <text>` 把状态改成 `resolved`；两步都只需要 `--from`（同样是"值匹配"authorization，这里用协调者 handle 一样成功）。**没有验证谁 resolve（是否限定协调者或人工）——下次如果要靠这个做"gate 失败预算耗尽后转人工决策"，这条还需要在 2B 设计前再核对一次。**
 5. **意外收获：Orca 在自己管理的终端里会设置 `ORCA_TERMINAL_HANDLE` 环境变量**（从一处 `no_active_sender_terminal` 的错误提示里看到：".. or run the command inside a live Orca terminal with ORCA_TERMINAL_HANDLE set"）。**这比雁阵自己注入 `WINGLINE_POST` 更进一步：岗位终端内的 `wl` 进程可以直接读 `ORCA_TERMINAL_HANDLE` 拿到自己当前真实、永远最新的 Orca handle，不需要雁阵自己再查一遍 `locatePost`。** `WINGLINE_POST`（雁阵自己要注入的那个，见 2A spec）仍然需要——它给的是逻辑地址 `<post>@<team>`，`ORCA_TERMINAL_HANDLE` 给的是 Orca 的终端 handle，两者互补，用途不同。
-6. 遗留：探针建的 Run（`run_9f6ad99c6230`）**没有被清理**——和阶段 0 一样，Orca CLI 没有删除 Run 的命令，已关闭两个占位终端，Run 本身需要在 Orca 界面里手动清理。
+6. 遗留：探针建的 Run（`run_9f6ad99c6230`）**没有被清理**——和阶段 0 一样，Orca CLI 没有删除 Run 的命令，已关闭占位终端，Run 本身需要在 Orca 界面里手动清理。
+
+### 补充探针：`run-use` 接管 + `check`/`ack`（2026-10-13，紧接上面那轮，同一个 Run）
+
+为阶段 2B（调度员）追加验证了"调度员重启后怎么恢复"和"收件箱怎么用"：
+
+1. **`run-use --id <run> --from <新终端 handle>` 能在原协调者终端（T1）已经被关闭之后，把协调者身份转给一个全新建的终端（T3），且同样是值匹配、不要求 T3 真的在物理上执行过这条命令。** `run-show` 确认 `coordinator_handle` 变成 T3，`consumer_generation` 从 1 累加到 2。——这就是调度员重启恢复的完整机制：`wl dispatcher run <team>` 每次启动都无条件 `run-use --id <team.run_id> --from $ORCA_TERMINAL_HANDLE`，不用区分"第一次启动"还是"重启"，然后把新 handle 写回 `teams.coordinator_handle`。
+2. **`check` 的收件箱是 Run 级别持久的，不随协调者更换清空**：T3 接管后第一次 `check` 就收到了两条更早、T1 当协调者时产生的 `worker_done` 消息（之前一直没 `--ack`）。
+3. **不 `--ack` 就重复返回同一批**（`replayed: true`），`--ack <deliveryId>` 后收件箱清空，下一次 `check` 返回 `count: 0`。
+4. **`check --wait --timeout-ms <n>` 在没有新消息时干净地返回 `timedOut: true`，不报错**，即使 `--terminal` 指向的终端已经关闭——调度员主循环可以放心地用"要么拿到消息，要么超时"这两种结果驱动巡查节拍，不需要额外处理"终端已死"这类错误。
+
+原始回执见 `spikes/out/task-dispatch-probe/linux/`（手动命令，未写成脚本，回执直接贴在上面）。
