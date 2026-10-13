@@ -1,2 +1,6 @@
 export * from './errors.js'
 export * from './paths.js'
+export * from './log/call-log.js'
+export * from './orca/cmd-escape.js'
+export * from './orca/resolve.js'
+export * from './orca/run.js'
