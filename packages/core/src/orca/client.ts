@@ -1,3 +1,4 @@
+import { WinglineError } from '../errors.js'
 import type { OrcaRunner } from './run.js'
 import type { OrcaClient, SendStage } from './types.js'
 
@@ -56,11 +57,15 @@ export function createOrcaClient(runner: OrcaRunner): OrcaClient {
     },
 
     async terminalWait(a) {
-      const r = await runner.json<{ wait: { satisfied: boolean } }>(
-        ['terminal', 'wait', '--terminal', a.handle, '--for', a.forState, '--timeout-ms', String(a.timeoutMs)],
-        { timeoutMs: a.timeoutMs + WAIT_PROCESS_SLACK_MS },
-      )
-      return { satisfied: r.wait.satisfied }
+      const args = ['terminal', 'wait', '--terminal', a.handle, '--for', a.forState, '--timeout-ms', String(a.timeoutMs)]
+      try {
+        const r = await runner.json<{ wait: { satisfied: boolean } }>(args, { timeoutMs: a.timeoutMs + WAIT_PROCESS_SLACK_MS })
+        return { satisfied: r.wait.satisfied }
+      } catch (err) {
+        // 实测 Orca 把等待超时报成 ok:false、code 'timeout'，这只表示“条件没满足”
+        if (err instanceof WinglineError && err.kind === 'orca' && err.code === 'timeout') return { satisfied: false }
+        throw err
+      }
     },
 
     async terminalSend(a) {

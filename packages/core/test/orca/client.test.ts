@@ -1,4 +1,5 @@
 import { expect, test } from 'vitest'
+import { WinglineError } from '../../src/errors.js'
 import { createOrcaClient } from '../../src/orca/client.js'
 import type { OrcaRunner, RunOptions } from '../../src/orca/run.js'
 
@@ -96,4 +97,20 @@ test('terminalClose reads close.ptyKilled', async () => {
   const { client, calls } = clientWith({ 'terminal close': { close: { ptyKilled: true } } })
   expect(await client.terminalClose({ handle: 'h' })).toEqual({ ptyKilled: true })
   expect(calls[0]).toEqual(['terminal', 'close', '--terminal', 'h'])
+})
+
+test("terminalWait: Orca reports a wait timeout as an ok:false 'timeout' error, which means not satisfied", async () => {
+  const runner: OrcaRunner = {
+    async json() { throw new WinglineError('orca', 'timeout', 'timeout') },
+    async text() { return '' },
+  }
+  expect(await createOrcaClient(runner).terminalWait({ handle: 'h', forState: 'tui-idle', timeoutMs: 1 })).toEqual({ satisfied: false })
+})
+
+test('terminalWait: other Orca errors still propagate', async () => {
+  const runner: OrcaRunner = {
+    async json() { throw new WinglineError('orca', 'terminal_not_found', 'gone') },
+    async text() { return '' },
+  }
+  await expect(createOrcaClient(runner).terminalWait({ handle: 'h', forState: 'tui-idle', timeoutMs: 1 })).rejects.toMatchObject({ code: 'terminal_not_found' })
 })

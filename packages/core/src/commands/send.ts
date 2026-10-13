@@ -60,7 +60,8 @@ export async function send(deps: CommandDeps, args: { address: string; message: 
     deps.registry.finishRequest(id, confirmed(result) ? 'done' : 'uncertain', result)
     if (!confirmed(result)) {
       throw new WinglineError('uncertain', 'send_unconfirmed', `消息已输入 ${args.address}，但未确认被处理，不会自动重发`, {
-        hint: `确认后可重试：wl send ${args.address} "<同样的消息>"`,
+        hint: `先看 ${args.address} 的终端是否收到。Orca 请求 ID：${result.requestId ?? '未知'}；` +
+          '确认送达可对同一条 orca terminal send 加 --retry-request <ID> 重新发起，Orca 会回放回执而不会重复发送',
       })
     }
     return { address: args.address, outcome: 'delivered', handle }
