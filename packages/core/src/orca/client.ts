@@ -4,6 +4,10 @@ import type { OrcaClient, SendStage, TerminalSummary } from './types.js'
 /** terminal wait 自带超时；进程级超时多留一点余量，避免先于 Orca 自己的超时回执杀掉它。 */
 const WAIT_PROCESS_SLACK_MS = 15_000
 
+/**
+ * terminal create 没有 --retry-request（Orca 会以 invalid_argument 拒绝未知参数），
+ * 所以创建靠“按标题查找”保证幂等；其余变更类调用才带重试 id。
+ */
 export function createOrcaClient(runner: OrcaRunner): OrcaClient {
   return {
     async version() {
@@ -30,8 +34,7 @@ export function createOrcaClient(runner: OrcaRunner): OrcaClient {
 
     async terminalCreate(a) {
       const r = await runner.json<{ terminal: { handle: string } }>([
-        'terminal', 'create', '--worktree', a.worktree, '--title', a.title,
-        '--command', a.command, '--retry-request', a.retryRequest,
+        'terminal', 'create', '--worktree', a.worktree, '--title', a.title, '--command', a.command,
       ])
       return { handle: r.terminal.handle }
     },

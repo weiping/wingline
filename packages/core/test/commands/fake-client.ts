@@ -16,7 +16,7 @@ export class FakeOrca implements OrcaClient {
   waitSatisfied = true
   sendStages: SendResult['stages'] = ['input_accepted', 'turn_started']
   ptyKilled = true
-  created: Array<{ worktree: string; title: string; command: string; retryRequest: string }> = []
+  created: Array<{ worktree: string; title: string; command: string }> = []
   sent: SentMessage[] = []
   runCreates: Array<{ objective: string; retryRequest: string }> = []
   private n = 0
@@ -30,7 +30,7 @@ export class FakeOrca implements OrcaClient {
     this.calls.push('runCreate'); this.runCreates.push(a); return { runId: 'run-1' }
   }
   async terminalList() { this.calls.push('terminalList'); return this.terminals.map((t) => ({ ...t })) }
-  async terminalCreate(a: { worktree: string; title: string; command: string; retryRequest: string }) {
+  async terminalCreate(a: { worktree: string; title: string; command: string }) {
     this.calls.push('terminalCreate'); this.created.push(a)
     await this.onCreate?.()
     const handle = `term-${++this.n}`

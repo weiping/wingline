@@ -143,14 +143,15 @@ test('an over-long briefing fails before any orca call', async () => {
   expect(o.calls).toEqual([])
 })
 
-test('every mutating call carries the deterministic retry id', async () => {
+test('run-create and the briefing carry the deterministic retry id; terminal create has none to carry', async () => {
   const o = new FakeOrca()
   const p = duo()
   const hash = specHash(loadTeamSpec(p))
-  await up(mkDeps(o).deps, { specPath: p })
+  const { deps, registry } = mkDeps(o)
+  await up(deps, { specPath: p })
   expect(o.runCreates[0]).toMatchObject({ objective: 'wingline:duo', retryRequest: requestId('duo', '', 'run', hash) })
-  expect(o.created[0]!.retryRequest).toBe(`duo:builder:create:${hash.slice(0, 8)}`)
   expect(o.sent[0]!.retryRequest).toBe(`duo:builder:brief:${hash.slice(0, 8)}`)
+  expect(registry.getRequest(`duo:builder:create:${hash.slice(0, 8)}`)!.state).toBe('done')
 })
 
 test('requests table records pending before the call and done after', async () => {
@@ -180,7 +181,7 @@ test('an orca error on one post is reported and the other post still launches', 
   expect(registry.listPosts('duo')[0]!.status).toBe('offline')
 })
 
-test('a post whose previous terminal was closed is relaunched with a fresh request id', async () => {
+test('a post whose previous terminal was closed is relaunched with fresh request ids', async () => {
   const o = new FakeOrca()
   const { deps, registry } = mkDeps(o)
   const p = duo()
@@ -190,7 +191,8 @@ test('a post whose previous terminal was closed is relaunched with a fresh reque
   o.created.length = 0
   const r = await up(deps, { specPath: p })
   expect(r.posts.map((x) => x.outcome)).toEqual(['launched', 'launched'])
-  expect(o.created[0]!.retryRequest).toMatch(/-1$/)
+  expect(registry.getRequest(`duo:builder:create:${specHash(loadTeamSpec(p)).slice(0, 8)}-1`)!.state).toBe('done')
+  expect(o.sent.at(-1)!.retryRequest).toMatch(/-1$/)
 })
 
 test('duplicate terminals for a post are reported uncertain without touching them', async () => {

@@ -30,14 +30,13 @@ test('status reads runtime.reachable', async () => {
   expect(await client.status()).toEqual({ reachable: false })
 })
 
-test('terminalCreate builds argv and reads result.terminal.handle', async () => {
+test('terminalCreate builds argv (no --retry-request: Orca rejects it) and reads result.terminal.handle', async () => {
   const { client, calls } = clientWith({ 'terminal create': { terminal: { handle: 'term-7' } } })
   expect(
-    await client.terminalCreate({ worktree: 'current', title: 'builder@duo', command: 'claude --model opus', retryRequest: 'duo:builder:create:abcd1234' }),
+    await client.terminalCreate({ worktree: 'current', title: 'builder@duo', command: 'claude --model opus' }),
   ).toEqual({ handle: 'term-7' })
   expect(calls[0]).toEqual([
-    'terminal', 'create', '--worktree', 'current', '--title', 'builder@duo',
-    '--command', 'claude --model opus', '--retry-request', 'duo:builder:create:abcd1234',
+    'terminal', 'create', '--worktree', 'current', '--title', 'builder@duo', '--command', 'claude --model opus',
   ])
 })
 

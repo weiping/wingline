@@ -101,7 +101,7 @@ async function startPost(l: Launch, post: PostSpec, briefing: string, existingHa
   if (!handle) {
     const id = rid('create')
     const created = await recorded(registry, id, () =>
-      orca.terminalCreate({ worktree: post.worktree, title: address, command: post.launch, retryRequest: id }),
+      orca.terminalCreate({ worktree: post.worktree, title: address, command: post.launch }),
     )
     handle = created.value.handle
     registry.setPostHandle(address, handle)
