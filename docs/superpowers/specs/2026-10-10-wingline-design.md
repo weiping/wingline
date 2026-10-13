@@ -1,7 +1,7 @@
 # 雁阵 Wingline 设计总纲
 
 - 日期：2026-10-10
-- 状态：待评审
+- 状态：阶段 0+1 已实现；按 Linux 上 Orca 1.4.222 的实测修订（2026-10-13，见 `spikes/REPORT.md`）
 - 范围：全项目总纲（阶段 0–6）+ 首期（阶段 0、1）详细设计
 - 对照的 Orca 版本：stablyai/orca 提交 59631b8（1.4.214，2026-10-09）
 
@@ -30,7 +30,7 @@ Orca 擅长把多个 coding agent 放进各自的 worktree 并行运行，并用
 以下约束适用于所有阶段，后续阶段的 spec 不得违反：
 
 1. **只经由 Orca CLI 操作。** 雁阵不持有 agent 进程，不读写 Orca 的内部文件或数据库，不使用 Orca 的内部 RPC。所有动作都是 `orca … --json` 子进程调用。
-2. **一切改变状态的调用都幂等。** 每次调用带 `--retry-request <id>`；调用前先在注册表记下请求 ID 和“进行中”。
+2. **一切改变状态的调用都可恢复、不重复。** 调用前先在注册表记下“进行中”，调用后记结果。Orca 的 `--retry-request` 只接受 Orca 自己分配的 UUID（回执里的 `mutation.requestId`），不能自编，且 `terminal create` 没有该参数；所以：创建终端靠“按标题查找”幂等，发送类调用把 Orca 报告的请求 ID 存入注册表，需要确认时带着它对同一条命令重试（Orca 回放回执，不重复执行）。
 3. **不确定就不动手。** 沿用 Orca 编排的安全底线：没有明确的退出证据，不 close、不重试、不重建同一岗位。超时和查不到状态只算检查点。
 4. **三平台同等支持。** macOS、Linux、Windows 都在 CI 矩阵里。子进程一律以参数数组启动，不经过 shell；唯一例外是 Windows 上启动 `.cmd` 包装（见 7.3），其转义函数单独测试。
 5. **不走插件后门。** 不利用 Orca 插件 worker 缺少系统级沙箱这一点去执行子进程。
@@ -103,8 +103,8 @@ posts[].self_claim / posts[].tags / posts[].plan_first   # 阶段 2
 
 | 探针 | 验证的假设 | 不成立时的退路 | 是否阻塞 MVP |
 | --- | --- | --- | --- |
-| `adopt-terminal` | `worker-start --task <id> --terminal <handle>` 能接管 `terminal create` 建出的终端并注入 preamble | 岗位改由首次 `worker-start --agent` 建出，之后一直 retain | 否（影响阶段 2） |
-| `run-lifetime` | 多个 Run 可并存；Orca 重启后 Run 仍在；专用终端里的 `check --wait` 被认作协调者 | 每个工作批次开新 Run，团队状态只存注册表 | 部分：决定首期 `wl up` 是否创建 Run |
+| `adopt-terminal` | `worker-start --task <id> --terminal <handle>` 能接管 `terminal create` 建出的终端并注入 preamble（实测：必须由已绑定 Run 的协调者终端调用，从普通 shell 被拒；协调者终端内未测） | 岗位改由首次 `worker-start --agent` 建出，之后一直 retain | 否（影响阶段 2） |
+| `run-lifetime` | 多个 Run 可并存；Orca 重启后 Run 仍在；专用终端里的 `check --wait` 被认作协调者（实测：`run-create` 需要发送方终端——`--from <handle>` 或在 Orca 终端内——从普通 shell 失败） | 每个工作批次开新 Run，团队状态只存注册表 | 已决定：首期 `wl up` 不创建 Run |
 | `session-id` | 能拿到每个岗位的会话 ID 和 `resumeCommand`（会话历史开 / 关两种情况） | 读 agent 自己的会话文件 | 否（影响阶段 3） |
 | `resume-after-restart` | 杀掉 orcad 后，`terminal create --command "<恢复命令>"` 能接回原会话 | 恢复时报“已重启”并重发启动包 | 否（影响阶段 3） |
 | `retained-reuse` | 已 retain 的终端能连续接活两次；观察休眠对 handle 的影响 | 按标题重查 handle；建议团队 worktree 关闭休眠 | 否（影响阶段 2） |
@@ -145,7 +145,7 @@ wingline/
 
 | 单元 | 职责 | 对外接口 | 依赖 |
 | --- | --- | --- | --- |
-| `orca/` | 解析 Orca 可执行文件；以参数数组调用；解析 `--json` 回执；错误码映射 | `OrcaClient`：`status`、`runCreate`、`terminalCreate`、`terminalWait`、`terminalSend`、`terminalList`、`terminalClose`、`workerList`、`search` | `child_process` |
+| `orca/` | 解析 Orca 可执行文件；以参数数组调用；解析 `--json` 回执；错误码映射 | `OrcaClient`：`version`、`status`、`terminalList`、`terminalCreate`、`terminalWait`、`terminalSend`、`terminalClose`（Run 相关方法随阶段 2 加入） | `child_process` |
 | `spec/` | 读取并校验 `team.yaml`，展开 `norms`、`brief` 路径，报错带行号 | `loadTeamSpec(path): TeamSpec` | zod、yaml |
 | `registry/` | SQLite 注册表，表 `teams`、`posts`、`requests`；所有写操作在事务中 | `Registry` | `node:sqlite` |
 | `brief/` | 生成启动包文本 | `renderBriefing(spec, postId): string` | 无 |
@@ -199,7 +199,7 @@ teams(
   name TEXT PRIMARY KEY,
   spec_path TEXT NOT NULL,
   spec_hash TEXT NOT NULL,
-  run_id TEXT,                 -- 探针 run-lifetime 不成立时为 NULL
+  run_id TEXT,                 -- 首期恒为 NULL（不创建 Run），阶段 2 起使用
   status TEXT NOT NULL,        -- up | stopped
   updated_at TEXT NOT NULL
 )
@@ -214,9 +214,9 @@ posts(
   updated_at TEXT NOT NULL
 )
 requests(
-  id TEXT PRIMARY KEY,         -- <team>:<post>:<step>:<spec_hash 前 8 位>
+  id TEXT PRIMARY KEY,         -- 本地账本键 <team>:<post>:<step>:<hash 前 8 位>；岗位前一轮生命周期已完成（终端被关后重建）、或相同消息再次发送时加 -N 后缀。不发给 Orca
   state TEXT NOT NULL,         -- pending | done | uncertain | failed
-  receipt TEXT,                -- 回执 JSON，截断到 16 KB
+  receipt TEXT,                -- 回执 JSON，截断到 16 KB；含 Orca 分配的 mutation.requestId
   updated_at TEXT NOT NULL
 )
 ```
@@ -240,19 +240,19 @@ requests(
 **`wl up <team.yaml>`**
 
 1. 读取并校验规格，计算规格哈希。
-2. 查 `teams`：已存在且哈希相同 → 只补拉离线岗位；哈希不同 → 拒绝，提示先 `wl down`。
-3. 首次拉起时调用 `orca orchestration run-create --objective "wingline:<team>"`，记录 Run ID。若 `spikes/REPORT.md` 判定 `run-lifetime` 不成立，则改为不创建 Run，`run_id` 留空，`wl ps` 也不再查询 `worker-list`。
+2. 查 `teams`：已存在且哈希相同 → 只补拉离线岗位；哈希不同且团队仍为 up → 拒绝，提示先 `wl down`（已 stopped 的团队允许换规格重新拉起）。
+3. 首期不创建 Run（实测 `run-create` 需要发送方终端，见 6.1），`teams.run_id` 留空，`wl ps` 不查询 `worker-list`。
 4. 对每个岗位：
-   - `terminal list --json`，按标题 `<post>@<team>` 查找；找到 → 登记 handle，状态 live，跳过。
-   - 找不到 → `terminal create --worktree <sel> --title <post>@<team> --command <launch>` → `terminal wait --terminal <h> --for tui-idle --timeout-ms 60000` → `terminal send --terminal <h> --text <启动包> --enter --wait-submit 10`。
+   - `terminal list --include-visual-layouts --json`，按**标签页的自定义标题** `<post>@<team>` 查找（`list` 里的 `title` 是 shell 自己的窗口标题，自定义标题只在 `visualLayouts` 的标签页里，用 `tabId` 对应）；找到且这一轮启动已完成 → 登记 handle，状态 live，跳过（已在岗）。找到但上次启动没做完（有 create 记录、启动包未送达）→ 接着等待就绪并发送启动包，不重建。多个同名终端 → 不确定，不动它们。
+   - 找不到 → `terminal create --worktree <sel> --title <post>@<team> --command <launch>`（无 `--retry-request`）→ `terminal wait --terminal <h> --for tui-idle --timeout-ms 60000`（超时时 Orca 返回 `ok:false`、code `timeout`，视为未就绪）→ `terminal send --terminal <h> --text <启动包> --enter --wait-submit 10`（`result.send.accepted` 为 true 即视为启动包已送达；岗位收到后会立刻开始工作）。
    - 每步先写 `requests`（pending），再调用，结束后更新为 done / uncertain / failed。
 5. 输出每个岗位的结果：已在岗、已拉起、失败（附原因）、不确定（附重试命令）。
 
-**`wl ps [team]`**：调用 `terminal list` 与（有 Run 时）`orchestration worker-list --run <run>`，按地址合并，输出岗位、agent、状态、handle、worktree。只读；唯一的写入是 handle 变化时更新 `posts.handle`。
+**`wl ps [team]`**：调用 `terminal list --include-visual-layouts`，按标签页标题与注册表合并，输出岗位、agent、状态、handle、worktree：找不到 → offline；找到但未连接或同名多个 → uncertain；其余 live。只读；唯一的写入是 handle 变化时更新 `posts.handle`。（首期不查 `worker-list`；有 Run 后再加。）
 
-**`wl send <post@team> <message>`**：按标题解析 handle（`terminal_handle_stale` 时重查一次）→ `terminal send --text --enter --wait-submit 10`。回执含 `turn_started` 记“已送达”；仅 `input_accepted` 记“已输入，未确认”，退出码 3。不自动重发。消息超过 4,000 字符时报用户输入错误。
+**`wl send <post@team> <message> [--retry-request <id>]`**：按标题解析 handle（`terminal_handle_stale` 时重查一次）→ `terminal send --text --enter --wait-submit 10`，读 `result.send.accepted`、`result.send.prompt.stages` 与 `result.mutation.requestId`。`stages` 含 `turn_started` 记“已送达”；仅 `input_accepted`（常见于岗位正忙）记“已输入，未确认”（`send_unconfirmed`），退出码 3，提示里给出 Orca 的请求 ID 和确认命令。不自动重发。`--retry-request <id>` 用同一条消息、同一个 Orca 请求 ID 重新发起：Orca 回放回执并继续观察，不会重复发送。消息超过 4,000 字符时报用户输入错误。相同消息在上一次已送达后再次发送，视为新的一次发送。
 
-**`wl down <team> [--close]`**：默认只把团队标为 stopped，终端不动。`--close` 时逐岗位 `terminal close`；Orca 明确报告退出 → closed；否则 → uncertain，退出码 3。
+**`wl down <team> [--close]`**：默认只把团队标为 stopped，终端不动（不调用 Orca）。`--close` 时逐岗位 `terminal close`；Orca 明确报告退出 → closed；否则 → uncertain，退出码 3。
 
 ### 7.8 错误处理
 
@@ -260,12 +260,14 @@ requests(
 | --- | --- | --- | --- |
 | 用户输入错误 | 规格校验失败、岗位名重复、找不到 Orca 可执行文件、启动包过长 | 1 | 指明文件、行号和改法，不调用 Orca |
 | Orca 明确报错 | 回执 `ok:false`，如 `runtime_access_denied`、worktree 不存在 | 2 | 原样附上 Orca 错误码与信息；Orca 未运行时提示 `orca open`，不代为启动 |
-| 结果不确定 | `terminal wait` 超时、只拿到 `input_accepted`、退出状态查不清 | 3 | 注册表标 uncertain，输出带同一请求 ID 的重试命令，不自动重发、不关进程 |
+| 结果不确定 | `terminal wait` 超时、只拿到 `input_accepted`、退出状态查不清、同名终端多于一个 | 3 | 注册表标 uncertain，输出重试命令（`wl up` 可直接重跑；`wl send` 带 Orca 的请求 ID 确认），不自动重发、不关进程 |
 | 内部错误 | 回执无法解析、注册表写入失败 | 4 | 打印回执原文与日志路径，提示可能是 Orca 版本不兼容 |
 
 每条命令启动时执行一次 `orca --version` 读取版本（纯文本输出），不在已验证范围内时打印警告但继续；再执行 `orca status --json`，`result.runtime.reachable` 为 false 时按“Orca 明确报错”处理并提示 `orca open`。
 
-Orca `--json` 输出的统一信封（据 Orca 源码 `src/shared/runtime-rpc-envelope.ts`）：成功为 `{ id, ok: true, result, _meta }`，失败为 `{ id, ok: false, error: { code, message, data? } }`，失败时进程退出码为 1。
+Orca `--json` 输出的统一信封（据 Orca 源码 `src/shared/runtime-rpc-envelope.ts`，已在 1.4.222 上核对）：成功为 `{ id, ok: true, result, _meta }`，失败为 `{ id, ok: false, error: { code, message, data? } }`，失败时进程退出码为 1。
+
+实测的回执字段（Orca 1.4.222）：`terminal create` → `result.terminal.handle`；`terminal wait` → `result.wait.satisfied`（超时为 `ok:false`/`timeout`）；`terminal send` → `result.send.{accepted,prompt.stages}` 与 `result.mutation.requestId`；`terminal close` → `result.close.ptyKilled`；`terminal list` → `result.terminals[]` 加（带 `--include-visual-layouts` 时）`result.visualLayouts`。Orca 拒绝未知参数（`invalid_argument`）。
 
 日志写到 `~/.wingline/logs/`，每次 Orca 调用记录参数、耗时、回执（消息正文截断到 200 字符），按天滚动，保留 7 天。
 
@@ -305,7 +307,7 @@ CI：GitHub Actions，`macos-latest`、`ubuntu-latest`、`windows-latest` × Nod
 | Orca CLI 变化快，已有命令被标为 Retired | 回执解析或调用失败 | 契约测试；版本检查与警告；必要时读 `orca skills get` 的版本匹配指南 |
 | Windows 上 `.cmd` 包装的转义 | 参数被截断或注入 | 唯一经过 shell 的路径，转义函数独立测试，含引号、`%`、`^`、`&` 等用例 |
 | `node:sqlite` 在 Node 22 上为实验特性 | 启动时打印警告；接口可能小幅变化 | CLI 屏蔽该警告；注册表通过 `Registry` 封装，必要时可换实现 |
-| 探针结论与假设不符 | 后续阶段设计需要调整 | 第 6.1 节已为每个假设准备退路；首期只有 `run-lifetime` 影响 MVP |
+| 探针结论与假设不符 | 后续阶段设计需要调整 | 第 6.1 节已为每个假设准备退路；首期只有 `run-lifetime` 影响 MVP，已按退路实现（不创建 Run）。实测还纠正了 7.7 中的回执字段、标题查找和重试 ID 三处假设 |
 | `terminal send` 对单条文本可能有长度上限，文档未写明 | 启动包被截断或拒收 | 探针 `adopt-terminal` 顺带用 12,000 字符文本测一次；上限更低时把启动包写成文件，只发送“请先阅读 <路径>” |
 | Windows 上 Orca CLI 通常是 `.cmd` 包装，换行无法安全经过 `cmd.exe` | 多行启动包和消息无法发送 | 经 `.cmd` 时启动包写入 `~/.wingline/briefs/<team>/<post>.md`，只发送一行“请先完整阅读 <路径>”；含换行的 `wl send` 消息报输入错误，提示设置 `WINGLINE_ORCA` 指向 `orca.exe` |
 | `terminal wait --for tui-idle` 对部分 agent 不准 | 启动包在 agent 就绪前送出而丢失 | 超时即标 uncertain、不发送；集成测试覆盖 Claude Code 与 Codex |
