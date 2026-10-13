@@ -187,6 +187,7 @@ posts:
 
 - `launch` 缺省时，启动命令为 `agent` 字段的值；指定了 `model` 且未指定 `launch` 时，按 agent 生成：`claude --model <m>`、`codex --model <m>`，其他 agent 报“请用 launch 指定”。
 - `launch` 是一整条命令字符串，原样作为 `terminal create --command` 的一个参数传给 Orca，由 Orca 在终端的 shell 里执行；雁阵不切分、不改写它。
+- 注意：`--command` 里的裸 agent 名（如 `claude`）会被 Orca 按用户在 Orca 里配置的 agent 启动偏好解析，不是 shell 的 PATH 解析。同一份 team.yaml 在不同机器上可能跑进本机、VM 或远端（macOS 真机实测：`claude` 被解析成 `claude-lima …`，跑进了 Lima VM）。需要固定执行环境时，用 `launch` 写显式路径（见 `spikes/REPORT.md` 实测发现 12）。
 - 首期不接受 `links`、`gates`、`budgets`、`self_claim`、`tags`、`plan_first`，出现即报错并注明开放阶段。
 - 规格哈希：对规范化后的规格（字段排序、路径展开为相对 team.yaml 的形式、引用文件的内容哈希）取 SHA-256。
 
