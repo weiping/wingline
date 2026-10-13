@@ -1,8 +1,8 @@
 // 假设：worker-start --terminal <handle> 能接管 terminal create 建出的终端；terminal send 能收下 12,000 字符。
-import { finish, record, setup } from './lib.js'
+import { IDLE_COMMAND, finish, record, setup } from './lib.js'
 
 const { runner, client, worktree } = setup()
-const created = await client.terminalCreate({ worktree, title: 'spike-adopt', command: 'cat' })
+const created = await client.terminalCreate({ worktree, title: 'spike-adopt', command: IDLE_COMMAND })
 let adopt: 'ok' | 'rejected' = 'rejected'
 let long: 'ok' | 'rejected' = 'rejected'
 try {

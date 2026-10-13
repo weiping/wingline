@@ -1,8 +1,8 @@
 // 假设：已 retain 的终端能连续接活两次。
-import { finish, findString, record, setup } from './lib.js'
+import { IDLE_COMMAND, finish, findString, record, setup } from './lib.js'
 
 const { runner, client, worktree } = setup()
-const created = await client.terminalCreate({ worktree, title: 'spike-retain', command: 'cat' })
+const created = await client.terminalCreate({ worktree, title: 'spike-retain', command: IDLE_COMMAND })
 let served = 0
 try {
   await client.terminalWait({ handle: created.handle, forState: 'tui-idle', timeoutMs: 30_000 })

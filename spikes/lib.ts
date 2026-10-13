@@ -6,6 +6,9 @@ import {
   createCallLog, createOrcaClient, createOrcaRunner, resolveOrcaExecutable, winglineHome,
 } from '../packages/core/src/index.js'
 
+/** 占位进程：只挂着读 stdin，三个平台都有（Windows 没有 cat）。 */
+export const IDLE_COMMAND = 'node -e "process.stdin.resume()"'
+
 export type Verdict = '成立' | '不成立' | '部分成立'
 
 export function setup() {

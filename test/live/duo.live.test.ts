@@ -1,5 +1,6 @@
 // 真机集成测试：需要本机已安装并运行 Orca，并会在其中创建/关闭终端。
-// 运行：WINGLINE_LIVE_WORKTREE=<Orca worktree 选择器> [WINGLINE_LIVE_CHECKER_LAUNCH=<命令>] pnpm test:live
+// 运行：WINGLINE_LIVE_WORKTREE=<Orca worktree 选择器> [WINGLINE_LIVE_BUILDER_LAUNCH=<命令>] [WINGLINE_LIVE_CHECKER_LAUNCH=<命令>] pnpm test:live
+// 两个 LAUNCH 都换成非 agent 命令时，同时设 WINGLINE_LIVE_EXPECT_SEND=unconfirmed（非 agent 观察不到“开始处理”，send 只能是 send_unconfirmed）
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -19,6 +20,9 @@ function sandbox() {
   // 本机没有 codex 时，用 WINGLINE_LIVE_CHECKER_LAUNCH 换掉 checker 的启动命令
   const checker = process.env.WINGLINE_LIVE_CHECKER_LAUNCH
   if (checker) text = text.replace(/    launch: .*\n/, `    launch: '${checker}'\n`)
+  // CI 上没有已登录的 agent：用一个只读 stdin 的 node 进程占位 builder
+  const builder = process.env.WINGLINE_LIVE_BUILDER_LAUNCH
+  if (builder) text = text.replace('    agent: claude\n    model: opus\n', `    agent: claude\n    launch: '${builder}'\n`)
   fs.writeFileSync(yaml, text)
   return { yaml, env: { ...process.env, WINGLINE_HOME: path.join(dir, 'home') } }
 }
@@ -50,9 +54,10 @@ test('spec 7.10 acceptance 1–5: up → up again → ps → send → down --clo
   // 空闲时必须是 delivered（已用空闲的 Claude 单独验证过）。两种结果都证明 send 没有重发、没有误报。
   const deps = defaultMakeDeps(env, () => {})
   const checker = (await deps.orca.terminalList()).find((t) => t.title === 'checker@duo')!
+  const expectUnconfirmed = process.env.WINGLINE_LIVE_EXPECT_SEND === 'unconfirmed'
   const idle = (await deps.orca.terminalWait({ handle: checker.handle, forState: 'tui-idle', timeoutMs: 30_000 })).satisfied
   const sent = await wl(['send', 'checker@duo', '你好', '--json'], env)
-  if (idle) expect(sent.json).toMatchObject({ ok: true, result: { outcome: 'delivered' } })
+  if (idle && !expectUnconfirmed) expect(sent.json).toMatchObject({ ok: true, result: { outcome: 'delivered' } })
   else expect(sent.json).toMatchObject({ ok: false, error: { code: 'send_unconfirmed' } })
 
   const closed = await wl(['down', 'duo', '--close', '--json'], env)

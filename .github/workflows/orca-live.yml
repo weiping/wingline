@@ -1,0 +1,106 @@
+# 手动触发：在 macOS / Windows 运行器上安装并启动真实 Orca，跑 live 测试和不需要 agent 的探针。
+# 不放进每次 push 的 ci.yml：它要下载第三方安装包、启动桌面应用，而且可能不稳定。
+name: orca-live
+on:
+  workflow_dispatch:
+    inputs:
+      orca_version:
+        description: Orca 版本（stablyai/orca 的 release）
+        default: '1.4.224'
+
+jobs:
+  live:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ORCA_VERSION: ${{ inputs.orca_version }}
+      WINGLINE_HOME: ${{ runner.temp }}/wl-home
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 10 }
+      - uses: actions/setup-node@v4
+        with: { node-version: '24', cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+
+      - name: Install Orca (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p "$RUNNER_TEMP/orca"
+          gh release download "v$ORCA_VERSION" -R stablyai/orca -p "Orca-$ORCA_VERSION-arm64-mac.zip" -D "$RUNNER_TEMP/orca"
+          ditto -x -k "$RUNNER_TEMP/orca/Orca-$ORCA_VERSION-arm64-mac.zip" "$RUNNER_TEMP/orca/x"
+          mv "$RUNNER_TEMP/orca/x/Orca.app" /Applications/
+          xattr -dr com.apple.quarantine /Applications/Orca.app || true
+          echo "--- files named orca* (depth<=6)"
+          find /Applications/Orca.app -maxdepth 6 -iname 'orca*' | head -40
+          CLI=$(find /Applications/Orca.app -path '*/bin/orca' \( -type f -o -type l \) | head -1)
+          echo "CLI=$CLI"
+          echo "WINGLINE_ORCA=$CLI" >> "$GITHUB_ENV"
+
+      - name: Install Orca (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          mkdir -p "$RUNNER_TEMP/orca"
+          gh release download "v$ORCA_VERSION" -R stablyai/orca -p "orca-windows-setup.exe" -D "$RUNNER_TEMP/orca"
+          "$RUNNER_TEMP/orca/orca-windows-setup.exe" /S
+          sleep 20
+          echo "--- files named orca* under likely install roots"
+          for d in "$LOCALAPPDATA/Programs" "/c/Program Files" "/c/Program Files (x86)"; do
+            find "$d" -maxdepth 6 -iname 'orca*' 2>/dev/null | head -40
+          done
+          CLI=$(find "$LOCALAPPDATA/Programs" "/c/Program Files" -path '*bin*' \( -iname 'orca.cmd' -o -iname 'orca.exe' \) 2>/dev/null | head -1)
+          echo "CLI=$CLI"
+          echo "WINGLINE_ORCA=$(cygpath -w "$CLI")" >> "$GITHUB_ENV"
+
+      - name: Start Orca and register this repo
+        run: |
+          test -n "$WINGLINE_ORCA" || { echo "找不到 Orca CLI，见上一步列出的文件"; exit 1; }
+          "$WINGLINE_ORCA" --version
+          timeout 240 "$WINGLINE_ORCA" open || true
+          "$WINGLINE_ORCA" status --json
+          "$WINGLINE_ORCA" repo add --path "$GITHUB_WORKSPACE" --json
+          "$WINGLINE_ORCA" worktree list --json | head -60
+
+      - name: Live test (wl up / ps / send / down --close)
+        run: pnpm test:live
+        env:
+          WINGLINE_LIVE_WORKTREE: path:${{ github.workspace }}
+          WINGLINE_LIVE_BUILDER_LAUNCH: 'node -e "process.stdin.resume()"'
+          WINGLINE_LIVE_CHECKER_LAUNCH: 'node -e "process.stdin.resume()"'
+          WINGLINE_LIVE_EXPECT_SEND: unconfirmed
+
+      - name: Probe adopt-terminal
+        if: always()
+        continue-on-error: true
+        run: pnpm tsx spikes/adopt-terminal.ts
+        env: { WINGLINE_SPIKE_WORKTREE: 'path:${{ github.workspace }}' }
+
+      - name: Probe retained-reuse
+        if: always()
+        continue-on-error: true
+        run: pnpm tsx spikes/retained-reuse.ts
+        env: { WINGLINE_SPIKE_WORKTREE: 'path:${{ github.workspace }}' }
+
+      - name: Probe run-lifetime (first half only)
+        if: always()
+        continue-on-error: true
+        run: pnpm tsx spikes/run-lifetime.ts
+        env: { WINGLINE_SPIKE_WORKTREE: 'path:${{ github.workspace }}' }
+
+      - name: Upload receipts and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: orca-live-${{ runner.os }}
+          path: |
+            spikes/out
+            ${{ runner.temp }}/wl-home/logs
+          if-no-files-found: warn
