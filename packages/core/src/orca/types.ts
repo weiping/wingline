@@ -1,4 +1,4 @@
-/** title 是标签页的自定义标题（terminal create --title），不是 shell 自己设置的窗口标题。 */
+/** title 是标签页的自定义标题（terminal create --title）；有界面时取自布局，无界面时取终端自己的 title。 */
 export interface TerminalSummary {
   handle: string
   title: string | null

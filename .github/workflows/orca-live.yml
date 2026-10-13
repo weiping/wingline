@@ -53,7 +53,7 @@ jobs:
           # 静默安装器装完可能会把应用拉起来而不返回：放到后台，轮询 CLI 出现为止
           "$RUNNER_TEMP/orca/orca-windows-setup.exe" /S > "$RUNNER_TEMP/orca/installer.log" 2>&1 &
           for i in $(seq 1 60); do
-            CLI=$(find "$LOCALAPPDATA/Programs" "/c/Program Files" -path '*bin*' \( -iname 'orca.cmd' -o -iname 'orca.exe' \) 2>/dev/null | head -1)
+            CLI=$(find "$LOCALAPPDATA/Programs" "/c/Program Files" -maxdepth 6 -path '*bin*' \( -iname 'orca.cmd' -o -iname 'orca.exe' \) 2>/dev/null | head -1)
             [ -n "$CLI" ] && break
             sleep 5
           done

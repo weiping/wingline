@@ -8,6 +8,7 @@ const WAIT_PROCESS_SLACK_MS = 15_000
 interface RawTerminal {
   handle: string
   tabId: string
+  title: string | null
   connected: boolean
   worktreeId: string
 }
@@ -40,12 +41,13 @@ export function createOrcaClient(runner: OrcaRunner): OrcaClient {
     },
 
     async terminalList(a) {
-      // list 里的 title 是 shell 的窗口标题；--title 设的自定义标题只在 visualLayouts 的标签页里
+      // 有界面的标签页：list 里的 title 是 shell 窗口标题，--title 设的自定义标题只在 visualLayouts 里。
+      // 无界面（macOS CI 实测，tabId 形如 pty:10）的终端不在布局里，其 title 本身就是自定义标题。
       const args = ['terminal', 'list', '--include-visual-layouts', ...(a?.worktree ? ['--worktree', a.worktree] : [])]
       const r = await runner.json<{ terminals: RawTerminal[]; visualLayouts?: unknown[] }>(args)
       const titles = tabTitles(r.visualLayouts ?? [])
       return r.terminals.map((t) => ({
-        handle: t.handle, title: titles.get(t.tabId) ?? null, connected: t.connected, worktreeId: t.worktreeId,
+        handle: t.handle, title: titles.get(t.tabId) ?? t.title, connected: t.connected, worktreeId: t.worktreeId,
       }))
     },
 

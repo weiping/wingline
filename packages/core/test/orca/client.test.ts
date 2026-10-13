@@ -61,9 +61,17 @@ test('terminalList asks for visual layouts and resolves each terminal title from
   expect(calls[0]).toEqual(['terminal', 'list', '--include-visual-layouts', '--worktree', 'w'])
 })
 
-test('terminalList: a terminal whose tab has no layout entry has a null title', async () => {
-  const { client } = clientWith({ 'terminal list': { terminals: [{ handle: 'h', tabId: 'gone', title: 'zsh', connected: true, worktreeId: 'w' }], visualLayouts: [] } })
-  expect((await client.terminalList())[0]!.title).toBeNull()
+test("terminalList: a terminal whose tab is not in any layout (headless, tabId 'pty:…') keeps its own title, which then is the custom one", async () => {
+  const { client } = clientWith({
+    'terminal list': {
+      terminals: [
+        { handle: 'h1', tabId: 'pty:10', title: 'builder@duo', connected: true, worktreeId: 'w' },
+        { handle: 'h2', tabId: 'pty:11', title: 'user@host: ~/repo', connected: true, worktreeId: 'w' },
+      ],
+      visualLayouts: [],
+    },
+  })
+  expect((await client.terminalList()).map((t) => t.title)).toEqual(['builder@duo', 'user@host: ~/repo'])
 })
 
 test('terminalWait passes --for tui-idle --timeout-ms 60000 and widens the process timeout', async () => {

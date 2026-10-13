@@ -23,5 +23,7 @@ if (process.argv.includes('--verify')) {
   record('run-lifetime', 'run-list-before-restart', await runner.json<unknown>(['orchestration', 'run-list']))
   fs.mkdirSync(path.dirname(stateFile), { recursive: true })
   fs.writeFileSync(stateFile, JSON.stringify([a, b]))
+  const listed = JSON.stringify(await runner.json<unknown>(['orchestration', 'run-list']))
+  finish('run-lifetime', '部分成立', `两个 Run 并存=${listed.includes(a) && listed.includes(b)}；重启后是否保留未测`)
   console.log(`已创建 Run ${a}、${b}。请完全退出并重新打开 Orca，然后运行：pnpm tsx spikes/run-lifetime.ts --verify`)
 }

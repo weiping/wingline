@@ -36,31 +36,36 @@ async function wl(argv: string[], env: NodeJS.ProcessEnv) {
 
 test('spec 7.10 acceptance 1–5: up → up again → ps → send → down --close', async () => {
   const { yaml, env } = sandbox()
-  const titles = async () => (await defaultMakeDeps(env, () => {}).orca.terminalList()).map((t) => t.title)
+  try {
+    const titles = async () => (await defaultMakeDeps(env, () => {}).orca.terminalList()).map((t) => t.title)
 
-  const first = await wl(['up', yaml, '--json'], env)
-  expect(first.json.result.posts.map((p: any) => p.outcome)).toEqual(['launched', 'launched'])
-  expect(await titles()).toEqual(expect.arrayContaining(['builder@duo', 'checker@duo']))
+    const first = await wl(['up', yaml, '--json'], env)
+    expect(first.json.result.posts.map((p: any) => p.outcome)).toEqual(['launched', 'launched'])
+    expect(await titles()).toEqual(expect.arrayContaining(['builder@duo', 'checker@duo']))
 
-  const before = (await titles()).length
-  const second = await wl(['up', yaml, '--json'], env)
-  expect(second.json.result.posts.map((p: any) => p.outcome)).toEqual(['already_live', 'already_live'])
-  expect((await titles()).length).toBe(before)
+    const before = (await titles()).length
+    const second = await wl(['up', yaml, '--json'], env)
+    expect(second.json.result.posts.map((p: any) => p.outcome)).toEqual(['already_live', 'already_live'])
+    expect((await titles()).length).toBe(before)
 
-  const listed = await wl(['ps', 'duo', '--json'], env)
-  expect(listed.json.result.map((r: any) => r.status)).toEqual(['live', 'live'])
+    const listed = await wl(['ps', 'duo', '--json'], env)
+    expect(listed.json.result.map((r: any) => r.status)).toEqual(['live', 'live'])
 
-  // 岗位刚收到启动包时通常还在干活：此时只能“输入”而观察不到新一轮开始，wl send 按设计报 send_unconfirmed（退出码 3）。
-  // 空闲时必须是 delivered（已用空闲的 Claude 单独验证过）。两种结果都证明 send 没有重发、没有误报。
-  const deps = defaultMakeDeps(env, () => {})
-  const checker = (await deps.orca.terminalList()).find((t) => t.title === 'checker@duo')!
-  const expectUnconfirmed = process.env.WINGLINE_LIVE_EXPECT_SEND === 'unconfirmed'
-  const idle = (await deps.orca.terminalWait({ handle: checker.handle, forState: 'tui-idle', timeoutMs: 30_000 })).satisfied
-  const sent = await wl(['send', 'checker@duo', '你好', '--json'], env)
-  if (idle && !expectUnconfirmed) expect(sent.json).toMatchObject({ ok: true, result: { outcome: 'delivered' } })
-  else expect(sent.json).toMatchObject({ ok: false, error: { code: 'send_unconfirmed' } })
+    // 岗位刚收到启动包时通常还在干活：此时只能“输入”而观察不到新一轮开始，wl send 按设计报 send_unconfirmed（退出码 3）。
+    // 空闲时必须是 delivered（已用空闲的 Claude 单独验证过）。两种结果都证明 send 没有重发、没有误报。
+    const deps = defaultMakeDeps(env, () => {})
+    const checker = (await deps.orca.terminalList()).find((t) => t.title === 'checker@duo')!
+    const expectUnconfirmed = process.env.WINGLINE_LIVE_EXPECT_SEND === 'unconfirmed'
+    const idle = (await deps.orca.terminalWait({ handle: checker.handle, forState: 'tui-idle', timeoutMs: 30_000 })).satisfied
+    const sent = await wl(['send', 'checker@duo', '你好', '--json'], env)
+    if (idle && !expectUnconfirmed) expect(sent.json).toMatchObject({ ok: true, result: { outcome: 'delivered' } })
+    else expect(sent.json).toMatchObject({ ok: false, error: { code: 'send_unconfirmed' } })
 
-  const closed = await wl(['down', 'duo', '--close', '--json'], env)
-  expect(closed.json.result.posts.map((p: any) => p.outcome)).toEqual(['closed', 'closed'])
-  expect(await titles()).not.toEqual(expect.arrayContaining(['builder@duo']))
+    const closed = await wl(['down', 'duo', '--close', '--json'], env)
+    expect(closed.json.result.posts.map((p: any) => p.outcome)).toEqual(['closed', 'closed'])
+    expect(await titles()).not.toEqual(expect.arrayContaining(['builder@duo']))
+  } finally {
+    // 失败时也别把终端留在 Orca 里
+    await wl(['down', 'duo', '--close', '--json'], env).catch(() => {})
+  }
 }, 300_000)

@@ -16,7 +16,8 @@ try {
     record('adopt-terminal', 'send-12000', sent)
     const read = await runner.json<unknown>(['terminal', 'read', '--terminal', created.handle])
     record('adopt-terminal', 'read-after-send', read)
-    long = JSON.stringify(read).includes('x'.repeat(2000)) ? 'ok' : 'rejected'
+    // 屏幕回显只保留尾部若干行，不能要求整段 12,000 个字符都在，只看到明显的一串 x 即可
+    long = sent.accepted && JSON.stringify(read).includes('x'.repeat(80)) ? 'ok' : 'rejected'
   } catch (e) { record('adopt-terminal', 'send-12000-error', String(e)) }
 } finally {
   await client.terminalClose({ handle: created.handle })
