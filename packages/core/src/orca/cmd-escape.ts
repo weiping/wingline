@@ -10,7 +10,8 @@ export function escapeCmdArg(arg: string): string {
     })
   }
   const quoted = '"' + arg.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1') + '"'
-  return quoted.replace(CMD_META, '^$&').replace(/%/g, '%^')
+  // % 之后插入 ^，让 cmd 把 %^NAME% 当作未定义变量而不展开；结尾的 % 后面已是 ^"，不能再加，否则会多出一个字面 ^
+  return quoted.replace(CMD_META, '^$&').replace(/%(?!\^"$)/g, '%^')
 }
 
 /** Command line for `cmd.exe /d /s /c`; the outer quote pair is the one /s strips. */

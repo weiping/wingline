@@ -23,6 +23,12 @@ describe('escapeCmdArg (string form)', () => {
     expect(escapeCmdArg('')).toBe('^"^"')
   })
 
+  test('a percent sign gets a caret so cmd cannot expand it, except at the very end of the arg', () => {
+    expect(escapeCmdArg('a%b')).toBe('^"a%^b^"')
+    expect(escapeCmdArg('%PATH%')).toBe('^"%^PATH%^"')
+    expect(escapeCmdArg('50%')).toBe('^"50%^"')
+  })
+
   test('embedded quotes are backslash-escaped before caret-escaping', () => {
     expect(escapeCmdArg('a"b')).toBe('^"a\\^"b^"')
   })
