@@ -30,6 +30,78 @@ pnpm tsx spikes/retained-reuse.ts
 
 verified-orca: >=1.4.214 <1.5.0   （实测 1.4.222 与 1.4.224 在范围内）
 
+## 如何在真机上跑 session-id 和 resume-after-restart
+
+`session-id` 在 Linux 上已是“不成立”（`terminal show` 只有 `agentIdentity`，没有会话 ID 或恢复命令），`resume-after-restart` 依赖它，所以在其他平台直接重跑多半得到同样结论。建议先做第 2 步探查，找到会话 ID 的来源，再决定要不要跑第 3 步。
+
+### 0. 前提
+
+- 真机上已安装并运行 Orca，`claude` 已登录（探针会真实启动它并等待空闲，不发提示，基本不消耗 token）。
+- 仓库在本机，`pnpm install` 已完成。
+- 一个测试仓库的专用 worktree，并已登记进 Orca：
+
+  ```bash
+  orca repo add --path /path/to/test-repo
+  orca worktree list --json        # 记下选择器，形如 path:/path/to/test-repo
+  ```
+
+  Linux 上命令名是 `orca-ide`；Windows 上用 `orca.cmd`。
+
+- 设置环境变量（POSIX）：
+
+  ```bash
+  export WINGLINE_SPIKE_WORKTREE='path:/path/to/test-repo'
+  export WINGLINE_SPIKE_AGENT=claude        # 可选，默认 claude
+  ```
+
+  PowerShell：
+
+  ```powershell
+  $env:WINGLINE_SPIKE_WORKTREE = 'path:D:\work\test-repo'
+  # orca 不在 PATH 时：
+  $env:WINGLINE_ORCA = 'C:\Users\<你>\AppData\Local\Programs\orca\resources\bin\orca.cmd'
+  ```
+
+### 1. 跑 session-id
+
+```bash
+pnpm tsx spikes/session-id.ts
+```
+
+它开一个 `spike-session` 终端、启动 agent、等空闲、读 `terminal show`，然后关掉终端。输出一行 `RESULT session-id …`，回执在 `spikes/out/session-id/<平台>/terminal-show.json`。
+
+### 2. 探查会话 ID 到底在哪
+
+`terminal show` 没有的话，会话信息可能在别处。手动开一个 agent 终端后逐个看：
+
+```bash
+orca terminal create --worktree "$WINGLINE_SPIKE_WORKTREE" --title probe --command claude --json   # 记下 handle
+orca terminal show --terminal <handle> --json      # 已知：只有 agentIdentity
+orca search --help                                 # Orca 说它能搜 agent 会话全文，看是否带会话 ID
+orca orchestration worker-show --help              # 受监督 worker 的回执里可能有
+orca terminal close --terminal <handle>            # 探查完关掉
+```
+
+退路是读 agent 自己的会话文件：Claude Code 在 `~/.claude/projects/<项目路径>/*.jsonl`，文件名就是会话 ID，恢复命令是 `claude --resume <会话ID>`。找到来源后，把 `session-id.ts` 改成读那里，并把结论写回 spec 6.1 的“退路”。
+
+### 3. 跑 resume-after-restart
+
+只在第 1 或第 2 步拿到恢复命令后才有意义。**这一步会要求你自己重启 Orca，其中所有终端都会中断，包括正在用的会话，先保存工作。**
+
+```bash
+pnpm tsx spikes/resume-after-restart.ts
+```
+
+1. 脚本开 `spike-resume` 终端并读恢复命令；找不到就直接输出“不成立”并结束。
+2. 提示时输入 `yes`，然后完全退出 Orca 再重新打开（不是只关窗口）。
+3. Orca 就绪后再输入 `yes`，脚本用恢复命令开 `spike-resume-2`，等空闲，把屏幕输出存到 `spikes/out/resume-after-restart/<平台>/after.json`，再关掉终端。
+4. 它只会输出“部分成立”，需要人来看 `after.json`，判断是不是接回了原来的对话。
+
+### 4. 收尾
+
+- 把 `RESULT` 行和你的判断填进上面的结论表。
+- 清理残留终端：`orca terminal list --json`，再逐个 `orca terminal close --terminal <handle>`。探针开的终端标题都以 `spike-` 开头。
+
 ## 实测发现（计划和 spec 里是错的，代码已按实测修正）
 
 1. `terminal list` 的 `title` 是 shell 自己的窗口标题；`terminal create --title` 设的自定义标题只在 `--include-visual-layouts` 的 `visualLayouts[].root…tabs[].title` 里，用 `tabId` 与终端对应。按 `list` 的 title 找岗位永远找不到，`wl up` 会重复建终端。
