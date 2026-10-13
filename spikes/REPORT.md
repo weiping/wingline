@@ -1,6 +1,6 @@
 # 阶段 0 探针报告
 
-状态：**Linux（本机真实 Orca 1.4.222）、macOS 与 Windows（GitHub Actions `orca-live` 工作流，Orca 1.4.224）已运行。** `session-id` 在 Linux（1.4.222）与 macOS 真机（1.4.224，有界面）上跑过；`resume-after-restart` 在 macOS 真机完成重启验证（成立，见「重启验证」一节）。
+状态：**阶段 0 收尾。** Linux（本机真实 Orca 1.4.222）五个探针全部跑过；macOS 真机（1.4.224，有界面）五个探针全部跑过；Windows 只通过 GitHub Actions `orca-live` 工作流验证过 MVP 验收（1–5）与 `run-lifetime`、`retained-reuse` 两个探针，`adopt-terminal`、`session-id`、`resume-after-restart` 在 Windows 上保持“未运行”——这三个探针的结论本就不阻塞阶段 0+1 MVP（见 spec 6.1 的“是否阻塞 MVP”列），决定到此为止不再补。`session-id` 在 Linux（1.4.222）与 macOS 真机（1.4.224，有界面）上跑过；`resume-after-restart` 在 Linux 与 macOS 真机都完成了重启验证（均成立，见「重启验证」与「Linux headless 真机 resume-after-restart 补充验证」两节）。`orca-live` 工作流已完成它的验证使命，从仓库删除，不再保留。
 
 Linux 测试环境：把 wingline 仓库本身登记进 Orca（`orca repo add`，Orca CLI 没有 repo rm，需要时在界面里移除），worktree 选择器 `path:/Users/liuweiping/workspace/dev/wingline`。
 
@@ -25,7 +25,7 @@ pnpm tsx spikes/retained-reuse.ts
 | adopt-terminal | **部分成立**：`worker-start` 同样被拒（需要协调者终端）；12,000 字符 `terminal send` 收下 | **部分成立**：12,000 字符 `terminal send` 完整收下（`bytesWritten` 12001）；`worker-start --terminal` 被拒，需要“已绑定 Run 的协调者终端”，从普通 shell 不行；协调者终端内能否接管未验证 | 未运行 | 阶段 2：dispatcher 本来就是专用终端，需在那里重测 |
 | run-lifetime | **成立（需协调者终端）**：普通 shell 报 `no_active_sender_terminal`；用 `--from <终端 handle>` 或在 Orca 终端内 `run-create` 成功；Run 及其 `coordinator_handle` 绑定字符串在 Orca 完整重启后**保留**（实测 Orca 1.4.224 重启前 `ready`，重启后 Run 与绑定依然在，worker 自动置为 `abandoned`/`terminal_missing`，旧终端失效需重新认领）。详见待验证项 C | **不成立（从普通 shell）**：`run-create` 报 `no_active_sender_terminal`，需要 `--from <终端 handle>` 或在 Orca 终端内运行。多 Run 并存、重启后保留未测 | **部分成立**：同 macOS（`--from` 可行，两个 Run 并存，重启未测） | MVP：`wl up` 不创建 Run（`run_id` 留空，`ps` 不查 `worker-list`），即 spec 的退路 |
 | session-id | **不成立（`terminal show`）/ 另有来源**：真机 1.4.224 实测，`terminal show` 只有 `agentIdentity`；但 `orca search` 能给出 `sessionId` 和 `resumeCommand`（本机 agent 完整给出；配对环境的远端 agent 只给 `sessionId`，resumeCommand 被扣留）。详见「macOS 真机探查」 | **不成立（`terminal show`）/ 另有来源**：回执只有 `agentIdentity: "claude"`；但 `orca search --agent claude --json`（Orca 1.4.222）每条命中含 `sessionId`、`source.filePath`、完整 `resumeCommand`，与 macOS 一致。命中里没有终端 handle，终端↔会话仍只能按 `cwd` + `updatedAt` 启发式对应 | 未运行 | 阶段 3：会话 ID 来源已找到（`orca search` / agent 会话文件），见「macOS 真机探查」 |
-| resume-after-restart | **成立**（macOS 真机，Orca 1.4.224 完整重启后验证）：runtimeId 从 `707f62af…` 变为 `3154b9e7…` 确认是真重启；用 `orca search` 拿到的恢复命令（`claude --resume 7cd6dc01-…`，显式本机路径）开 `spike-resume-2`，屏幕完整显示原会话（checker 岗位说明 + 重启前被中断的那一轮的现场），空闲等待输入。回执在 `spikes/out/resume-after-restart/darwin/after.json` | 未运行 | 未运行 | 阶段 3：恢复命令来源 = `orca search`（本机）或拼 `claude --resume <id>`；`resume-after-restart.ts` 已改为 search + 会话文件兜底的自动探针（见下节） |
+| resume-after-restart | **成立**（macOS 真机，Orca 1.4.224 完整重启后验证）：runtimeId 从 `707f62af…` 变为 `3154b9e7…` 确认是真重启；用 `orca search` 拿到的恢复命令（`claude --resume 7cd6dc01-…`，显式本机路径）开 `spike-resume-2`，屏幕完整显示原会话（checker 岗位说明 + 重启前被中断的那一轮的现场），空闲等待输入。回执在 `spikes/out/resume-after-restart/darwin/after.json` | **成立**（本机 Orca 1.4.222，headless systemd 部署，由 Claude 代为执行，详见「Linux headless 真机 resume-after-restart 补充验证」一节）：只 `systemctl restart orca-serve.service` 不足以构成真重启——PTY 由独立的 `orca-daemon-<nonce>.scope`（user scope）持有，未随之重启，旧终端原样存活；额外停掉该 daemon scope 再重启后，runtimeId、daemon nonce、app pid 均变化，旧 handle 变 `terminal_handle_stale`，这才是等价的真重启。用 `orca search` 拿到的恢复命令（`claude --resume 21365ceb-…`）开 `spike-resume-2`，屏幕完整显示原会话（标记提示 + 回复），空闲等待输入。回执在 `spikes/out/resume-after-restart/linux/after.json` | 未运行 | 阶段 3：恢复命令来源 = `orca search`（本机）或拼 `claude --resume <id>`；`resume-after-restart.ts` 已改为 search + 会话文件兜底的自动探针（见下节）；Linux headless 部署下“重启”这个词本身有歧义，见补充验证一节 |
 | retained-reuse | **不成立**：同因（需要协调者终端） | **不成立（从普通 shell）**：与 adopt-terminal 同因 | **不成立**：同因 | 阶段 2 |
 
 verified-orca: >=1.4.214 <1.5.0   （实测 1.4.222 与 1.4.224 在范围内）
@@ -140,6 +140,22 @@ pnpm tsx spikes/resume-after-restart.ts
 4. 全程只创建、关闭标题以 spike- 开头的终端，结束时列出残留的并关掉。
 5. 把结果填进 REPORT 的结论表，只改 spikes/REPORT.md，不要改其他文件，不要提交也不要推送。
 ```
+
+## Linux headless 真机 resume-after-restart 补充验证（2026-10-13，Orca 1.4.222，由 Claude 代为执行）
+
+这台机器的 Orca 是 headless 部署：`orca-serve.service`（systemd 系统服务，`AppRun serve --port … --pairing-address 127.0.0.1`，配 Xvfb 虚拟屏）+ 一个独立的 `orca-daemon-<launch-nonce>.scope`（systemd **用户** scope，跑 `daemon-entry.js`）。这台机器上用户有免密 sudo，Claude 本身跑在 sshd 起的会话里，不在 Orca 的进程树下，可以安全地自己触发重启。
+
+步骤与发现：
+
+1. 开 `spike-resume` 终端（`--command claude`），等 `tui-idle`，发送标记消息“Reply with exactly: SPIKE_RESUME_MARKER”并等它答完。
+2. 用 `orca search '"SPIKE_RESUME_MARKER"' --agent claude --path <repo> --fresh --sort newest --limit 10 --json` 取恢复命令。**注意**：带引号的精确搜索仍然命中了 2 条——因为执行这次探针的 Claude Code 会话本身（这次对话）在它自己调用 `terminal send` 的 shell 命令里原样包含了这段标记文字，所以它自己的会话文件也被搜中，且因为消息更多、分数更高排在前面。靠 `messageCount`（新建的 spike 会话只有 2 条）才分清哪个是真正的探针会话。这是「待验证项 A」里“终端 ↔ 会话映射是启发式的”又一具体表现：连带引号的精确搜索也可能被“顺手发测试消息的那个会话”自己污染，排序不能照单全收，还需要按会话新鲜度/消息数等维度交叉核对。
+3. **第一次 `sudo systemctl restart orca-serve.service` 不足以构成「重启」**：重启后 app 的 pid 和 `runtimeId` 都变了（进程确实换了），但 `terminal list` 里原来的 handle 依然存在、`connected:true`、`incarnationId` 不变，`terminal read` 完整显示着重启前的屏幕内容（标记提示 + 回复）；底层 `claude` 进程其实已经换了新 pid，说明 Orca 把这个 headless 终端整个重新纳管（tab/pty 元数据）并重新拉起了同一条启动命令，但这并不等价于“杀掉 orcad、会话丢失、要用 `--resume` 找回”的场景。
+4. 追查发现：持有 PTY 的是独立的 `orca-daemon-<nonce>.scope`（systemd 用户 scope），它的生命周期与 `orca-serve.service` 这个系统服务不是一回事——第一次重启 `orca-serve.service` 时这个 daemon scope 根本没有被动到（同一个 launch-nonce、同一个 pid 一直在跑）。
+5. 额外执行 `systemctl --user stop orca-daemon-<nonce>.scope`（把 daemon 也杀掉）、确认其下的 `claude` 进程随之消失，再 `sudo systemctl restart orca-serve.service` 一次：这次 runtimeId、daemon nonce、app pid 全部换新，旧终端 handle 变成 `terminal_handle_stale`——这才是和 macOS“完全退出重开”对等的真重启。
+6. 在这之后用恢复命令 `claude --resume '21365ceb-…'` 开 `spike-resume-2`：**成立**，屏幕完整显示原会话（标记提示 + 回复），空闲等待输入，和 macOS 结论一致。收尾 `terminal close`，`terminal list` 无残留。
+7. 回执：`spikes/out/resume-after-restart/linux/{search,before,revive-create,after}.json`；`stray-respawned-terminal.json` 记录的是第 3 步里“只重启服务、daemon 未死”时那个被原样保留的终端内容，留作佐证。
+
+**对本项目的影响**：这是部署方式特有的细节，不改变 spec/plan 的结论——`wl` 从不自己重启 Orca，这段只是在给“怎样才算一次真重启”这件事留下一个可复现的反例，供以后在类似 headless/systemd 部署上验证阶段 3 的恢复设计时参考，避免拿“只重启前台进程”当作“Orca 整个重启”的充分验证。
 
 ## 待验证项的操作步骤（macOS / Linux，不含 Windows；均在测试 worktree 内，不用重启的先做）
 

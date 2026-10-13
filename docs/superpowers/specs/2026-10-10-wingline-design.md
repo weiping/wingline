@@ -103,10 +103,10 @@ posts[].self_claim / posts[].tags / posts[].plan_first   # 阶段 2
 
 | 探针 | 验证的假设 | 不成立时的退路 | 是否阻塞 MVP |
 | --- | --- | --- | --- |
-| `adopt-terminal` | `worker-start --task <id> --terminal <handle>` 能接管 `terminal create` 建出的终端并注入 preamble（实测：必须由已绑定 Run 的协调者终端调用，从普通 shell 被拒；协调者终端内未测） | 岗位改由首次 `worker-start --agent` 建出，之后一直 retain | 否（影响阶段 2） |
-| `run-lifetime` | 多个 Run 可并存；Orca 重启后 Run 仍在；专用终端里的 `check --wait` 被认作协调者（实测：`run-create` 需要发送方终端——`--from <handle>` 或在 Orca 终端内——从普通 shell 失败） | 每个工作批次开新 Run，团队状态只存注册表 | 已决定：首期 `wl up` 不创建 Run |
-| `session-id` | 能拿到每个岗位的会话 ID 和 `resumeCommand`（会话历史开 / 关两种情况） | 读 agent 自己的会话文件 | 否（影响阶段 3） |
-| `resume-after-restart` | 杀掉 orcad 后，`terminal create --command "<恢复命令>"` 能接回原会话 | 恢复时报“已重启”并重发启动包 | 否（影响阶段 3） |
+| `adopt-terminal` | `worker-start --task <id> --terminal <handle>` 能接管 `terminal create` 建出的终端并注入 preamble（实测：必须由已绑定 Run 的协调者终端调用，从普通 shell 被拒；协调者终端内**已验证成立**：`worker-start --from <协调者 handle> --terminal <handle> --run <id>` 返回 `ok:true`、`state:ready`，终端被 `reused`、`worker-list` 可见，关闭终端后转 `failed`，见 REPORT「待验证项」B） | 岗位改由首次 `worker-start --agent` 建出，之后一直 retain | 否（影响阶段 2） |
+| `run-lifetime` | 多个 Run 可并存；Orca 重启后 Run 元数据与 `coordinator_handle` 持久化保留，但绑定的终端 handle 随进程销毁、关联 worker 自动转为 `abandoned`/`terminal_missing`，须 `run-use` 重新认领协调者或新建 Run，不能假设旧终端仍可交互（实测：`run-create` 需要发送方终端——`--from <handle>` 或在 Orca 终端内——从普通 shell 失败；重启细节见 REPORT「待验证项」C） | 每个工作批次开新 Run，团队状态只存注册表 | 已决定：首期 `wl up` 不创建 Run |
+| `session-id` | 能拿到每个岗位的会话 ID 和 `resumeCommand`（实测：`terminal show` 不给，只有 `agentIdentity`；真正来源是 `orca search --agent <agent> --json`，命中含 `sessionId`、`source.filePath`、现成的 `resumeCommand`，macOS、Linux 一致；终端↔会话须用加引号的唯一标记精确搜索，裸词搜索会分词出多个命中，见 REPORT「待验证项」A；远程/配对环境的 `search` 会扣留 `resumeCommand` 和 `source.filePath`） | 远程环境下按固定模式拼 `claude --resume <sessionId>`，或读 agent 自己的会话文件（`~/.claude/projects/<path>/<sessionId>.jsonl`） | 否（影响阶段 3） |
+| `resume-after-restart` | 杀掉 orcad 后，`terminal create --command "<恢复命令>"` 能接回原会话（实测：macOS 真机完整重启后**成立**，`claude --resume <id>` 接回原会话，屏幕完整恢复历史现场，空闲等待输入，agent 不会自动乱动） | 恢复时报“已重启”并重发启动包 | 否（影响阶段 3） |
 | `retained-reuse` | 已 retain 的终端能连续接活两次；观察休眠对 handle 的影响 | 按标题重查 handle；建议团队 worktree 关闭休眠 | 否（影响阶段 2） |
 
 ### 6.2 报告
@@ -309,6 +309,7 @@ CI：GitHub Actions，`macos-latest`、`ubuntu-latest`、`windows-latest` × Nod
 | Windows 上 `.cmd` 包装的转义 | 参数被截断或注入 | 唯一经过 shell 的路径，转义函数独立测试，含引号、`%`、`^`、`&` 等用例 |
 | `node:sqlite` 在 Node 22 上为实验特性 | 启动时打印警告；接口可能小幅变化 | CLI 屏蔽该警告；注册表通过 `Registry` 封装，必要时可换实现 |
 | 探针结论与假设不符 | 后续阶段设计需要调整 | 第 6.1 节已为每个假设准备退路；首期只有 `run-lifetime` 影响 MVP，已按退路实现（不创建 Run）。实测还纠正了 7.7 中的回执字段、标题查找和重试 ID 三处假设 |
+| 阶段 2 调度员基于 Run 做协调者绑定，Orca 重启后旧终端 handle 悬空 | 调度员循环死在一个已失效的终端上 | `run-lifetime` 实测：Run 与 `coordinator_handle` 跨重启持久化，但终端随进程销毁；阶段 2 spec 设计调度员启动时必须先 `run-use` 重新认领协调者（或新建 Run），不能假设旧终端仍可交互，见 6.1 |
 | `terminal send` 对单条文本可能有长度上限，文档未写明 | 启动包被截断或拒收 | 探针 `adopt-terminal` 顺带用 12,000 字符文本测一次；上限更低时把启动包写成文件，只发送“请先阅读 <路径>” |
 | Windows 上 Orca CLI 只有 `.cmd` 包装（1.4.224 实测，没有 orca.exe），换行无法安全经过 `cmd.exe`，整条命令行有约 8191 字符上限 | 多行或过长的启动包和消息无法发送 | 经 `.cmd` 时启动包写入 `~/.wingline/briefs/<team>/<post>.md`，只发送一行“请先完整阅读 <路径>”；含换行或使命令行超限的 `wl send` 消息报输入错误，提示改成单行或写进文件后只发路径 |
 | `terminal wait --for tui-idle` 对部分 agent 不准 | 启动包在 agent 就绪前送出而丢失 | 超时即标 uncertain、不发送；集成测试覆盖 Claude Code 与 Codex |
