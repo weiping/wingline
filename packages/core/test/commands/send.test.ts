@@ -112,7 +112,7 @@ test('stale handle twice is reported, not looped', async () => {
 test('multiline message when multilineSafe is false is an input error with hint', async () => {
   const o = new FakeOrca()
   await expect(send(seeded(o, { multilineSafe: false }).deps, { address: 'checker@duo', message: 'a\nb' })).rejects.toMatchObject({
-    kind: 'input', code: 'multiline_unsupported', hint: expect.stringContaining('WINGLINE_ORCA'),
+    kind: 'input', code: 'multiline_unsupported', hint: expect.stringContaining('单行'),
   })
   expect(o.calls).toEqual([])
 })

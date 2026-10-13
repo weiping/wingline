@@ -19,7 +19,7 @@ function checkMessage(deps: CommandDeps, message: string): void {
   }
   if (!deps.multilineSafe && /[\r\n]/.test(message)) {
     throw new WinglineError('input', 'multiline_unsupported', '当前 Orca 命令经 Windows .cmd 包装，无法安全传递换行', {
-      hint: '设置 WINGLINE_ORCA 指向 orca.exe，或改写为单行消息',
+      hint: '改写成单行消息，或把内容写进文件后只发送路径（Orca 的 Windows 安装只提供 orca.cmd）',
     })
   }
 }

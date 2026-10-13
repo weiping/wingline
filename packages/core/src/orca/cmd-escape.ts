@@ -6,7 +6,7 @@ const CMD_META = /[\^&|<>()!"]/g
 export function escapeCmdArg(arg: string): string {
   if (arg.includes('\n') || arg.includes('\r')) {
     throw new WinglineError('input', 'cmd_newline_unsupported', 'Windows .cmd 包装无法安全传递换行', {
-      hint: '安装 orca.exe 或设置 WINGLINE_ORCA 指向 orca.exe',
+      hint: 'Orca 的 Windows 安装只提供 orca.cmd（1.4.224 实测），换行无法经 cmd.exe 传递：请改成单行，或把内容写进文件后只发送路径',
     })
   }
   const quoted = '"' + arg.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1') + '"'
@@ -14,7 +14,16 @@ export function escapeCmdArg(arg: string): string {
   return quoted.replace(CMD_META, '^$&').replace(/%(?!\^"$)/g, '%^')
 }
 
+// cmd.exe 的命令行上限是 8191 个字符，留出余量
+const CMD_LINE_LIMIT = 8000
+
 /** Command line for `cmd.exe /d /s /c`; the outer quote pair is the one /s strips. */
 export function buildCmdLine(cmdPath: string, args: string[]): string {
-  return `""${cmdPath}" ${args.map(escapeCmdArg).join(' ')}"`
+  const line = `""${cmdPath}" ${args.map(escapeCmdArg).join(' ')}"`
+  if (line.length > CMD_LINE_LIMIT) {
+    throw new WinglineError('input', 'cmd_line_too_long', `经 orca.cmd 的命令行有 ${line.length} 个字符，超过 cmd.exe 的上限`, {
+      hint: '内容太长：把它写进文件，只发送文件路径',
+    })
+  }
+  return line
 }

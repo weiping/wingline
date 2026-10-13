@@ -39,8 +39,15 @@ describe('escapeCmdArg (string form)', () => {
 
   test('newline is rejected with a hint', () => {
     expect(() => escapeCmdArg('a\nb')).toThrow(
-      expect.objectContaining({ kind: 'input', code: 'cmd_newline_unsupported', hint: expect.stringContaining('WINGLINE_ORCA') }),
+      expect.objectContaining({ kind: 'input', code: 'cmd_newline_unsupported', hint: expect.stringContaining('单行') }),
     )
+  })
+
+  test('a command line beyond cmd.exe\'s ~8191 character limit is rejected up front', () => {
+    expect(() => buildCmdLine('C:\\Orca\\orca.cmd', ['x'.repeat(8100)])).toThrow(
+      expect.objectContaining({ kind: 'input', code: 'cmd_line_too_long', hint: expect.stringContaining('文件') }),
+    )
+    expect(() => buildCmdLine('C:\\Orca\\orca.cmd', ['x'.repeat(4000)])).not.toThrow()
   })
 
   test('buildCmdLine wraps command and args in one outer quote pair for cmd /s', () => {
