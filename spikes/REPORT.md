@@ -357,3 +357,43 @@ macOS 真机（Orca 1.4.224）以**本机 claude × 2**（builder 与 checker �
 收尾：5 个新建终端已全部 `terminal close`（`ptyKilled:true`），`terminal list` 确认无 `spike` 残留；本轮新建的 Run `run_4ee13dec8229` 和之前历次探针一样无法用 CLI 删除，残留待人工在 Orca 界面清理。
 
 **补充核对（2026-10-14，紧接上面）：** 上面第 1 条列出的 `--help` 核对名单漏了 `gate-resolve`/`gate-list`/`reply`。补查 `orca-ide orchestration gate-resolve/gate-list/reply --help`：`gate-resolve` 和 `reply` 都带 `--retry-request`；`gate-list` 是只读查询，没有（符合预期，查询不需要幂等键）。即 2A/2B 涉及的编排写操作（`run-create`/`run-use`/`task-create`/`task-update`/`dispatch`/`send`/`gate-create`/`gate-resolve`/`reply`）全部支持 `--retry-request`，没有遗漏。
+### 补充探针三：重放语义 / 协调者换手 / gate 对任务状态的影响 / pane 身份（2026-10-14，Linux 本机真实 Orca 1.4.222，针对 Opus 第二次复审阶段 2 文档）
+
+背景：第二次复审指出，2A 的 `wl task done` 裸重跑安全性只在 `task-create` 上验证过重放（补充探针二 #1），`dispatch`/`worker_done` 在任务状态已经前进之后再重放、协调者换手之后再重放都从未验证；2A 的 `wl up` 与 2B 的调度员争夺协调者身份时会出现什么错误也只是推测；`run-use` 的直接回执、`completed_at` 的格式在计划里被写成"已实测"但 REPORT 里没有证据。本轮写了四个只用占位终端（不跑 agent、基本不消耗 token）的探针脚本逐条验证：`spikes/replay-probe.ts`、`spikes/gate-block-probe.ts`（含 `--part2`）、`spikes/orphan-probe.ts`、`spikes/pane-identity-probe.ts`，原始回执在 `spikes/out/<探针>/linux/`。用法同前：`WINGLINE_SPIKE_WORKTREE="path:/Users/liuweiping/workspace/dev/wingline" pnpm tsx spikes/<探针>.ts`。
+
+**A. 幂等重放是"先查账本"，与任务当前状态、调用方是否仍是协调者都无关（`replay-probe`）**
+
+1. 同一个调用方自生成的 `--retry-request` + 完全相同的参数重放，`task-create`、`dispatch`、`gate-create`、`run-create`、`send --type worker_done`（`succeeded` 和 `failed` 两种）全部返回 `mutation.replayed:true`，**包括任务已经前进到 `dispatched`/`completed`/`failed` 之后**：对已 `dispatched` 的任务重放 `dispatch`、对已 `completed`/`failed` 的任务重放 `worker_done`，都没有报"only ready tasks can be dispatched"或"already settled"一类状态错误，而是原样回放。
+2. **回放返回的是第一次调用当时的回执快照，不是当前状态**：任务已经 `dispatched` 之后重放 `task-create`，回执里的 `task.status` 仍是 `"ready"`。凡是要依据"当前状态"做决定的地方，不能信回放回执，必须另外 `task-list`。
+3. **协调者换手之后**（`run-use` 把协调者从 T1 换成 T3）：用同一个 id、**原来的** `--from T1` 重放第一次在 T1 名下成功过的 `task-create` → `replayed:true`（账本检查在协调者校验之前）；同一个 id 换成 `--from T3` → `request_mismatch`；一个**新** id 配 `--from T1` → `consumer_fenced`（"This coordinator terminal is no longer bound to Run"）。推论：**只要本地同时持久化了 id 和完整参数，用原参数重放时得到 `consumer_fenced`，就证明原调用从未落地**（落地过的话会先命中账本回放），此时换一个新 id、用当前协调者 handle 重发是安全的。
+4. 同一个 id、只改 `dispatch --to` → `request_mismatch`。即多个评审目标必须各用各的 id。
+5. `run-use` 的直接回执是 `{ run: { id, objective, coordinator_handle, consumer_generation, … }, mutation }`，与 `run-create` 同形（此前只在 `run-show` 上看到过这个字段，现在直接确认）。
+6. `check` 只认当前协调者：协调者换手后，`check --terminal <旧协调者>` 和 `check --terminal <worker>` 都报 `consumer_fenced`；`check --terminal <新协调者>` 正常。即任何人对同一个 Run 执行 `run-use`，正在跑的调度员的下一次 `check` 就会被 fence。
+7. `run-use --id <不存在的 run>` → `code: run_not_found`（"was not found or is inspect-only"），可以和其他错误明确区分。
+8. `worker_done` 的 `--from` 不是该 dispatch 的 assignee → `worker_identity_changed`（"… is not the exact process that owns Dispatch …"）。被拒的 `worker_done` 仍会作为一条 `type: worker_done` 的消息进协调者收件箱，`payload` 里带 `_orcaLifecycleRejection`。
+9. `check` 回执的真实字段：顶层 `runId`、`deliveryId`、`messages[]`、`count`、`replayed`、`acknowledged`、`timedOut`、`cancelled`、`connectionLost`、`mutation`；每条消息 `id`、`type`、**`from_handle`**（不是 `from`）、`to_handle`、`subject`、`body`、`payload`（JSON **字符串**）、`priority`、`thread_id`、`created_at`、`delivered_at`。
+
+**B. `gate-create` 会结束 dispatch，`gate-resolve` 会把任务放回 `ready`（`gate-block-probe`）**
+
+1. **对 `dispatched` 的任务 `gate-create`：任务立即变成 `blocked`，`task-list` 里的 `assignee_handle`/`dispatch_id` 消失；之后再发 `worker_done`（哪怕带原来的 dispatch id）→ `inactive_dispatch`（"it or task … is already settled"）。** 即 gate 不是"挂在任务上的一个附加问题"，而是会把正在进行的 dispatch 结束掉。对 `ready` 的任务、对已 `failed` 的任务 `gate-create`，任务同样变成 `blocked`（`failed` 任务的 `completed_at` 保留）。
+2. **`gate-resolve`（不论 `--resolution` 写什么）都把 `blocked` 的任务放回 `ready`**，三种来路（原本 `dispatched`、原本 `ready`、原本 `failed`）都一样；放回 `ready` 后可以正常再次 `dispatch`（新的 dispatch id；`completed_at` 仍是上一轮的旧值，不会被清空）。所以"`failed` 是终态"只在没有挂 gate 时成立：`worker_done(failed)` → `gate-create` → `gate-resolve` 是一条完整的"重开"路径，不需要 `worker-start --retry-of`。
+3. 先 `worker_done(failed)` 再 `gate-create` 两步都成功（任务 `failed` → `blocked`）。**反过来先 `gate-create` 再 `worker_done(failed)`，第二步必然 `inactive_dispatch`。**
+4. **已终态的任务在 `task-list` 里没有 `assignee_handle`/`dispatch_id`**（`completed` 的任务就没有这两个键），谁做完的只能从 `result` 字段（JSON **字符串**，含 `outcome`、`reportedBy`、`completedBy`、`completedAt`）里解析。
+5. **`completed_at` 是 ISO 8601（带毫秒、`Z`），如 `"2026-10-14T02:57:02.357Z"`**，和 `created_at` 的 `"2026-10-14 02:57:02"` 不是同一种格式。此前计划里"`completed_at` 实测是 `YYYY-MM-DD HH:MM:SS`"的说法是错的。
+6. 任务状态枚举里有 `blocked`，此前的 spec/plan 都只写了 `ready/dispatched/completed/failed`。
+
+**C. 失败不留痕、协调者终端死了照样认、assignee 终端关闭任务自动回 `ready`（`orphan-probe`）**
+
+1. `dispatch --inject` 被拒（`inject_rejected`，占位终端 `no recognized agent detected`）之后，任务仍是 `ready`、无 assignee——明确的 Orca 错误（`ok:false`，非 fence、非 mismatch）没有留下任何半成品状态。
+2. **协调者终端已经关闭之后，用它的 handle 当 `--from` 调 `task-create` 仍然成功**：值匹配连终端是否存活都不看。即 `teams.coordinator_handle` 指向一个已关闭的终端，2A 的协调者专属调用照样可用；协调者身份不需要"跟着活着的终端走"才能工作。（Orca **整个重启**之后旧 handle 字符串是否仍被接受未验证——共用机器上不能重启 Orca。）
+3. **把一个 `dispatched` 任务的 assignee 终端关掉，Orca 会自动把该任务放回 `ready`、清掉 assignee**（不需要 gate）。之后对它 `gate-create` → `blocked`，`gate-resolve` → `ready`，再 `dispatch` 给另一个终端也都成功。Orca 整个重启后在办任务是否同样自动回 `ready` 未验证（"待验证项" C 只看到 worker 变成 `abandoned`）。
+
+**D. pane 身份（`pane-identity-probe`）**
+
+1. **Orca 管理的 shell 终端里 `ORCA_TERMINAL_HANDLE` 确实存在，且等于该终端自己的 handle**（此前只是从一条报错提示里推断出来的）。
+2. **从另一个 Orca 终端（有自己的 pane 身份）里代 assignee 发 `worker_done --from <assignee handle>` 被接受**，任务转 `completed`，`result.reportedBy` 记的是 assignee 的 handle。注意本例的 assignee 是占位进程；`send --help` 写的是"只能从被派发的 pane 完成；拿不到稳定 pane 身份时 sender handle 必须与 assignee 精确一致"，assignee 是真实 agent pane 时是否同样放行未验证。
+3. **协调者不能发 `send --type escalation`**：`--to <普通终端 handle>` 和 `--to run:<id>` 都被拒，`code: sender_not_assignee`（"No active Dispatch belongs to this message sender"）。`escalation` 是 worker → 协调者方向的消息，2B 设计里"调度员用 `orchestration send --type escalation` 给牵头岗留痕"不成立。
+
+**对设计的影响（2A/2B spec 与 plan 已按此修订，见各文档 2026-10-14 第三次修订说明）：** `wl task done` 的 `escalated` 分支必须先 `worker_done(failed)` 再 `gate-create`（第二次修订把顺序颠倒过来是错的，见 B3）；`wl task escalate` 会把在办任务从岗位手里收回（B1）；`wl task resolve` 实际效果是"任务回到 `ready`"（B2）；在办任务的孤儿问题在终端被关闭的场景下由 Orca 自己兜底（C3）；重跑安全可以用"持久化 id + 完整参数、fence 即未落地"这一条规则闭环（A1–A3）；`wl up` 不需要每次 `run-use` 才能让 2A 工作（C2）；2B 的岗位级"闸门连败"不能靠 `task-list` 的 assignee 统计（B4）；2B 第 2 级升级不能用 `send --type escalation`（D3）；`check` 消息字段按 A9 映射。
+
+收尾：四个探针（含 `gate-block-probe --part2` 那一次）创建的 13 个占位/shell 终端全部 `terminal close`，`terminal list` 确认无 `spike` 残留；新建的 Run（`run_3d5ed139d275`、`run_f71a6e4eef35`、`run_9c7120774f16`、`run_1f026d2532be`、`run_fd1dea1933fc`）CLI 无法删除，残留待人工在 Orca 界面清理。
