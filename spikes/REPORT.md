@@ -355,3 +355,5 @@ macOS 真机（Orca 1.4.224）以**本机 claude × 2**（builder 与 checker �
    **影响：** 复审发现 #12（"lastOutputAt 格式与时区风险未验证"）解决：2B 的 `TerminalSummary.lastOutputAt` 类型应为 `number`（epoch ms），判断"多久没输出"直接用 `Date.now() - lastOutputAt`，不需要也不应该用 `Date.parse`，完全没有时区解析风险。另确认 `terminal list --include-visual-layouts --json` 的 `result.terminals[]` 每条也带 `lastOutputAt`（和单个 `terminal show` 同形），巡查可以一次 `terminal list` 拿到全团队所有岗位的值，不需要对每个岗位单独 `terminal show`。
 
 收尾：5 个新建终端已全部 `terminal close`（`ptyKilled:true`），`terminal list` 确认无 `spike` 残留；本轮新建的 Run `run_4ee13dec8229` 和之前历次探针一样无法用 CLI 删除，残留待人工在 Orca 界面清理。
+
+**补充核对（2026-10-14，紧接上面）：** 上面第 1 条列出的 `--help` 核对名单漏了 `gate-resolve`/`gate-list`/`reply`。补查 `orca-ide orchestration gate-resolve/gate-list/reply --help`：`gate-resolve` 和 `reply` 都带 `--retry-request`；`gate-list` 是只读查询，没有（符合预期，查询不需要幂等键）。即 2A/2B 涉及的编排写操作（`run-create`/`run-use`/`task-create`/`task-update`/`dispatch`/`send`/`gate-create`/`gate-resolve`/`reply`）全部支持 `--retry-request`，没有遗漏。
