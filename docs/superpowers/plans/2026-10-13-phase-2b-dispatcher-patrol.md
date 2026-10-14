@@ -8,7 +8,9 @@
 
 **Tech Stack：** TypeScript、vitest、`node:sqlite`（已用）、commander（已用）；不引入新运行时依赖。
 
-**Spec：** `docs/superpowers/specs/2026-10-13-phase-2b-dispatcher-patrol-design.md`（下称 spec）。实现者必须同时阅读 spec 全文。本计划的接口/字段/错误码均取自该 spec；本文档只在 spec 留了开放选择时才做出决定并在对应任务里注明。
+**Spec：** `docs/superpowers/specs/2026-10-13-phase-2b-dispatcher-patrol-design.md`（下称 spec）。实现者必须同时阅读 spec 全文，尤其第 3、4、5、6、8 节（2026-10-14 修订过）。本计划的接口/字段/错误码均取自该 spec；本文档只在 spec 留了开放选择时才做出决定并在对应任务里注明。
+
+> **2026-10-14 修订：** spec 经 Opus 复审和补充探针改过几处关键假设（`check --wait` 的进程级超时、巡查节拍和消息到达频率解耦、主循环的异常边界、`lastOutputAt` 的真实类型）后，本计划同步修正了 Task 1/3/6/7/8/9，并把本来写死的 `lastOutputAt` 测试夹具（字符串）全部换成真机确认的 Unix 毫秒数字。
 
 **前置依赖：** 本计划假定阶段 2A 的实现计划（`docs/superpowers/plans/2026-10-13-phase-2a-task-workflow.md`，下称 2A 计划）已经落地：`teams.coordinator_handle`/`teams.run_id`、`commands/task/{identity,query,create,claim,start,done,escalate}.ts`、`OrcaClient` 的 `runCreate/taskCreate/taskList/dispatch/workerDone/gateCreate/gateResolve` 均已按 2A 计划的签名存在。本计划里对这些文件的"Modify"均基于 2A 计划文档里给出的签名，不是基于当前仓库的真实文件（2A 尚未实现）；真正执行本计划时如果 2A 的落地签名有出入，以 2A 落地后的真实代码为准。
 
@@ -18,7 +20,9 @@
 - 子进程一律 `spawn(file, args, { shell: false })`；本阶段不新增任何 shell 执行（调度员只调用 Orca CLI 和雁阵自己的函数，没有 gate 之外的本地命令执行）。
 - Orca `--json` 信封、退出码四分类沿用总纲 7.8 节；本阶段新增的输入错误（`post_frozen`/`post_not_frozen`/`team_unknown`）均为退出码 1。
 - CI 矩阵不变：`macos-latest`、`ubuntu-latest`、`windows-latest` × Node `22.13`、`24`——新测试跨平台安全；调度员启动命令的路径拼接只用简单双引号包裹（不依赖 shell 内置语法），同一套字符串在 POSIX 和 cmd.exe 里都能被正确分词。
-- **已知未经真机核实的细节**（均已在对应任务里标注，不阻塞实现，但发版前应补一轮真机验证）：`check` 返回体里 `deliveryId`、消息对象的 `id`/`subject`/`body`/`from` 字段的确切大小写/命名，是本计划基于 spec 正文引用的 JSON 片段（`replayed`/`timedOut` 已确认，这两个是实测直接观察到的字段名）做的最佳推断；`run-use` 的返回体结构假定和 `run-create` 一致（`run.coordinator_handle`），未独立复核。
+- **已在 2026-10-14 补充探针中确认**（不再是未核实假设）：`lastOutputAt` 是 Unix 毫秒时间戳（`number`），`terminal list --include-visual-layouts` 的每个终端条目都带这个字段，不需要对每个岗位单独 `terminal show`；`run-use` 的返回体确实和 `run-create` 同形（`run.coordinator_handle`）；所有编排写调用（含本阶段用到的 `run-use`/`send --type escalation`）都接受调用方自生成的 UUID 当 `--retry-request`。
+- **已知仍未经真机核实的细节**（均已在对应任务里标注，不阻塞实现，但发版前应补一轮真机验证）：`check` 返回体里 `deliveryId`、消息对象的 `id`/`subject`/`body`/`from` 字段的确切大小写/命名，是本计划基于 spec 正文引用的 JSON 片段（`replayed`/`timedOut` 已确认，这两个是实测直接观察到的字段名）做的最佳推断。
+- **`check --wait` 的进程级超时必须留出余量**：和阶段 1 `terminalWait` 的 `WAIT_PROCESS_SLACK_MS` 同一个问题——`OrcaRunner` 的默认进程超时（120 秒）比调度员主循环用的 `--timeout-ms`（300 秒）更短，不单独处理的话每次长轮询都会先被雁阵自己的进程超时杀死。Task 1 的 `check()` 实现必须应用这个修正，不能像最初设计那样直接用默认超时。
 
 ## Review Focus
 
@@ -77,6 +81,8 @@ packages/cli/test/
 - Modify：`packages/core/src/orca/types.ts`、`packages/core/src/orca/client.ts`
 - Modify：`packages/core/test/orca/client.test.ts`、`packages/core/test/commands/fake-client.ts`
 
+> `client.test.ts` 里 2A 阶段就有的 `clientWith` 测试 helper 目前只返回 `{ client, calls }`（`calls` 只记 argv）。本任务需要断言 `runner.json(args, opts)` 的第二个参数（进程级超时覆盖值），helper 要追加返回 `runnerOpts: (RunOptions | undefined)[]`，按调用顺序记录每次传入的 `opts`。这是对已有测试 helper 的小扩展，不改变它现有的返回字段。
+
 **Interfaces:**
 - Consumes：`OrcaRunner`（已有）
 - Produces：
@@ -84,11 +90,17 @@ packages/cli/test/
   // types.ts
   export interface TerminalSummary {
     handle: string; title: string | null; connected: boolean; worktreeId: string
-    lastOutputAt: string | null   // 新增
+    lastOutputAt?: number | null   // 新增，可选；Unix 毫秒时间戳，实测确认不是字符串，不经过 Date.parse。
+    // 可选而不是必填，原因同 OrchestrationTask.completedAt：2A 计划里已经提交的 Task 5 等测试文件有
+    // 直接写 TerminalSummary 字面量但不带这个字段的用例（比如 resolveOwnHandle 的测试），必填会让那些
+    // 文件编译失败。`terminalList` 的实现读取处理 `?? null` 即可，不区分"缺省"和"显式 null"。
   }
   export interface OrchestrationTask {
     // 2A 已定义的字段不变，新增：
-    completedAt: string | null
+    completedAt?: string | null   // 可选——2A 计划已经提交的测试文件里大量 FakeOrca.tasks 字面量没有这个字段，
+                                   // 做成必填会让那些文件编译失败（这正是 Opus 复审点出的问题）。所有读取处
+                                   // 已经是 `t.completedAt ?? null` 的写法（见 Task 7/8 的实现描述），缺省值
+                                   // 和显式 null 处理方式完全一样，做成可选不需要额外改动读取逻辑。
   }
   export interface CheckMessage { id: string; type: string; from: string | null; subject: string | null; body: string | null }
   export interface CheckResult { count: number; messages: CheckMessage[]; deliveryId: string | null; replayed: boolean; timedOut: boolean }
@@ -98,11 +110,11 @@ packages/cli/test/
   sendEscalation(a: { to: string; from: string; subject: string; body: string; run: string }): Promise<void>
   ```
   argv：
-  - `runUse` → `['orchestration','run-use','--id',a.id,'--from',a.from]`，读 `r.run.coordinator_handle`（假定与 `run-create` 同一返回体形状，见 Global Constraints 的已知未核实项）
-  - `check` → `['orchestration','check','--terminal',a.terminal,'--run',a.run, ...(a.ack?['--ack',a.ack]:[]), ...(a.wait?['--wait']:[]), ...(a.timeoutMs!==undefined?['--timeout-ms',String(a.timeoutMs)]:[])]`，直接读顶层 `count`/`messages`/`deliveryId`/`replayed`/`timedOut`（`messages[]` 里缺失的 `from`/`subject`/`body` 缺省 `null`）
+  - `runUse` → `['orchestration','run-use','--id',a.id,'--from',a.from]`，读 `r.run.coordinator_handle`（已实测确认与 `run-create` 同一返回体形状）
+  - `check` → `['orchestration','check','--terminal',a.terminal,'--run',a.run, ...(a.ack?['--ack',a.ack]:[]), ...(a.wait?['--wait']:[]), ...(a.timeoutMs!==undefined?['--timeout-ms',String(a.timeoutMs)]:[])]`，直接读顶层 `count`/`messages`/`deliveryId`/`replayed`/`timedOut`（`messages[]` 里缺失的 `from`/`subject`/`body` 缺省 `null`）。**进程级超时**：`a.wait` 为真时，`runner.json` 调用必须传 `{ timeoutMs: (a.timeoutMs ?? 300_000) + WAIT_PROCESS_SLACK_MS }`（复用 `orca/client.ts` 里 `terminalWait` 已经定义的同一个常量，不要在这里重新定义一个新常量）；`a.wait` 为假（取批次/ack 这类不长轮询的调用）不加这个余量，直接用默认进程超时即可。
   - `sendEscalation` → `['orchestration','send','--type','escalation','--to',a.to,'--subject',a.subject,'--body',a.body,'--run',a.run,'--from',a.from]`（`--from` 放最后，与 2A `workerDone` 的既有惯例一致），不读返回值
-  - `terminalList` 的已有映射追加 `lastOutputAt: titles 同层的 RawTerminal.lastOutputAt ?? null`
-  - `taskList` 的已有映射追加 `completedAt: t.completed_at ?? null`
+  - `terminalList` 的已有映射追加 `lastOutputAt: titles 同层的 RawTerminal.lastOutputAt ?? null`（数字直接传递，不做任何格式转换）
+  - `taskList` 的已有映射追加 `completedAt: t.completed_at ?? null`（这个字段实测是 `"YYYY-MM-DD HH:MM:SS"` 形式的字符串，不是毫秒数字，和 `lastOutputAt` 不是同一种类型——`task_ext`/`taskList` 这边维持字符串类型不变，只有 `TerminalSummary.lastOutputAt` 需要改成数字。两者字符串排序对任务的时间先后判断仍然成立，不需要转成 `Date`）
 
 - [ ] **Step 1：写失败测试**
 
@@ -134,9 +146,16 @@ test('sendEscalation builds argv in the from-last convention', async () => {
   await client.sendEscalation({ to: 'term-1', from: 'coord-1', subject: 'patrol: no_progress', body: 'b', run: 'run-1' })
   expect(calls[0]).toEqual(['orchestration', 'send', '--type', 'escalation', '--to', 'term-1', '--subject', 'patrol: no_progress', '--body', 'b', '--run', 'run-1', '--from', 'coord-1'])
 })
-test('terminalList maps lastOutputAt, defaulting to null', async () => {
-  const { client } = clientWith({ 'terminal list': { terminals: [{ handle: 'term-1', tabId: 't1', title: 'x', connected: true, worktreeId: 'w', lastOutputAt: '2026-10-13T10:00:00Z' }] } })
-  expect((await client.terminalList())[0]).toMatchObject({ lastOutputAt: '2026-10-13T10:00:00Z' })
+test('terminalList maps lastOutputAt (a number), defaulting to null', async () => {
+  const { client } = clientWith({ 'terminal list': { terminals: [{ handle: 'term-1', tabId: 't1', title: 'x', connected: true, worktreeId: 'w', lastOutputAt: 1791941667225 }] } })
+  expect((await client.terminalList())[0]).toMatchObject({ lastOutputAt: 1791941667225 })
+})
+test('check --wait passes a process-level timeout with slack beyond --timeout-ms', async () => {
+  const { client, runnerOpts } = clientWith({ 'orchestration check': { count: 0, deliveryId: null, replayed: false, timedOut: true, messages: [] } })
+  await client.check({ terminal: 't', run: 'r', wait: true, timeoutMs: 300_000 })
+  expect(runnerOpts[0]!.timeoutMs).toBe(300_000 + 15_000)   // 15_000 = orca/client.ts 里 terminalWait 已经定义的 WAIT_PROCESS_SLACK_MS；check() 和 terminalWait 在同一个文件里，直接复用那个模块内常量，不需要导出
+  await client.check({ terminal: 't', run: 'r' })   // 不 --wait 时不加余量
+  expect(runnerOpts[1]).toBeUndefined()
 })
 test('taskList maps completed_at to completedAt, defaulting to null', async () => {
   const { client } = clientWith({ 'orchestration task-list': { tasks: [{ id: 't1', status: 'completed', task_title: 'x', spec: 's', parent_id: null, result: null, completed_at: '2026-10-13T10:00:00Z' }] } })
@@ -145,7 +164,7 @@ test('taskList maps completed_at to completedAt, defaulting to null', async () =
 ```
 
 - [ ] **Step 2：运行确认失败。**
-- [ ] **Step 3：实现。** 按 Interfaces 加三个方法；`terminalList`/`taskList` 的既有映射各加一行。`FakeOrca`（`fake-client.ts`）补：`runUseCalls`/`checkCalls`/`sendEscalationCalls` 记录数组；`checkResults: CheckResult[] = []`（按调用顺序消费，用完后重复最后一项；默认空数组时返回 `{ count: 0, messages: [], deliveryId: null, replayed: false, timedOut: true }`）；`coordinatorHandleAfterRunUse = 'coord-1'`；`terminals`/`tasks` 的元素类型分别补 `lastOutputAt`/`completedAt`（测试里直接 push 带这两个字段的对象）；已有的 `workerDone` 实现追加：成功/失败时把对应任务的 `completedAt` 设为 `new Date().toISOString()`。
+- [ ] **Step 3：实现。** 按 Interfaces 加三个方法；`check()` 和 `terminalWait` 写在同一个文件里，`a.wait` 为真时复用那里已有的 `WAIT_PROCESS_SLACK_MS` 常量传给 `runner.json` 的第二个参数，`a.wait` 为假不传；`terminalList`/`taskList` 的既有映射各加一行，`lastOutputAt` 原样传数字（不做 `new Date()`/格式转换）。`FakeOrca`（`fake-client.ts`）补：`runUseCalls`/`checkCalls`/`sendEscalationCalls` 记录数组；`checkResults: CheckResult[] = []`（按调用顺序消费，用完后重复最后一项；默认空数组时返回 `{ count: 0, messages: [], deliveryId: null, replayed: false, timedOut: true }`）；`coordinatorHandleAfterRunUse = 'coord-1'`；`terminals`/`tasks` 的元素类型分别补 `lastOutputAt`/`completedAt`（测试里直接 push 带这两个字段的对象）；已有的 `workerDone` 实现追加：成功/失败时把对应任务的 `completedAt` 设为 `new Date().toISOString()`。
 - [ ] **Step 4：运行确认通过** — `pnpm vitest run packages/core/test/orca` → PASS；`pnpm typecheck`。
 - [ ] **Step 5：提交** — `git commit -m "feat(core): run-use/check/send-escalation on OrcaClient"`
 
@@ -197,6 +216,7 @@ test('listPatrolState returns all rows across teams', () => {
 })
 test('freeze/unfreeze round trip; unfreeze also clears patrol_state', () => {
   const r = Registry.open(tmpFile())
+  r.upsertTeam({ name: 'duo', specPath: '/s', specHash: 'h'.repeat(64), runId: 'run-1', coordinatorHandle: 'c', status: 'up' })   // frozen_posts.team 有外键，必须先建团队行
   r.setPatrolState({ post: 'builder@duo', signal: 'no_progress', level: 3 })
   r.freezePost('builder@duo', 'duo', 'patrol: no_progress')
   expect(r.isFrozen('builder@duo')).toBe(true)
@@ -213,11 +233,11 @@ test('freeze/unfreeze round trip; unfreeze also clears patrol_state', () => {
 
 ---
 
-### Task 3：2A 三个命令打补丁——冻结拦截
+### Task 3：2A 四个命令打补丁——冻结拦截
 
 **Files:**
-- Modify：`packages/core/src/commands/task/create.ts`、`claim.ts`、`start.ts`（2A 已有文件；按 2A 计划 Task 7/8 落地后的真实代码定位插入点）
-- Modify：`packages/core/test/commands/task/create.test.ts`、`claim-start.test.ts`
+- Modify：`packages/core/src/commands/task/create.ts`、`claim.ts`、`start.ts`、`done.ts`（2A 已有文件；按 2A 计划 Task 7/8/9 落地后的真实代码定位插入点）
+- Modify：`packages/core/test/commands/task/create.test.ts`、`claim-start.test.ts`、`done.test.ts`
 
 **Interfaces:**
 - Consumes：`Registry.isFrozen`（Task 2）
@@ -242,10 +262,19 @@ test('claim by a frozen post is rejected', async () => {
   await expect(claimTask(deps, { id: 't1', as: 'builder@duo' })).rejects.toMatchObject({ code: 'post_frozen' })
 })
 test('start by a frozen post is rejected', async () => { /* 同上，换成已 claim 好的任务 + startTask */ })
+// done.test.ts
+test('done with reviewed_by pointing at a frozen checker still creates the linked task, but skips dispatch/inject', async () => {
+  const o = new FakeOrca(); const { deps, registry } = seedRunningTeam(o)   // team.yaml 变体：builder.links.reviewed_by = [checker]
+  registry.freezePost('checker@duo', 'duo', 'test')
+  const r = await doneTask(deps, { id: 't1', as: 'builder@duo' })
+  expect(o.taskCreateCalls).toHaveLength(1)   // 关联任务照建
+  expect(o.dispatchCalls).toEqual([])         // 但不派发
+  expect(r.linkedTasks).toHaveLength(1)
+})
 ```
 
 - [ ] **Step 2：运行确认失败。**
-- [ ] **Step 3：实现。** 三处均在各自函数解析出 actor/目标地址之后、发起任何 Orca 调用之前插入：`if (deps.registry.isFrozen(targetAddress)) throw new WinglineError('input', 'post_frozen', \`${targetAddress} 已被巡查冻结\`, { hint: '用 wl dispatcher unfreeze 解除' })`（`create.ts` 里 `targetAddress` 是 `args.post`，仅当给出时才检查；`claim.ts`/`start.ts` 里是解析出的 `actor`）。
+- [ ] **Step 3：实现。** `create.ts`/`claim.ts`/`start.ts` 三处均在各自函数解析出 actor/目标地址之后、发起任何 Orca 调用之前插入：`if (deps.registry.isFrozen(targetAddress)) throw new WinglineError('input', 'post_frozen', \`${targetAddress} 已被巡查冻结\`, { hint: '用 wl dispatcher unfreeze 解除' })`（`create.ts` 里 `targetAddress` 是 `args.post`，仅当给出时才检查；`claim.ts`/`start.ts` 里是解析出的 `actor`）。**`done.ts` 不一样，不是硬拒绝**（spec 第 7 节）：建关联任务的 `taskCreate` 调用照常发生；只在紧接着要 `orca.dispatch(...)` 之前检查 `deps.registry.isFrozen(目标地址)`，为真就跳过这次 `dispatch` 调用（新建的任务留在 Orca 的 `ready` 状态，`linkedTasks` 仍然收录这个新任务 id——调用方看得到任务建出来了，只是没有被派发）。
 - [ ] **Step 4：运行确认通过。**
 - [ ] **Step 5：提交** — `git commit -m "feat(core): reject task create/claim/start for frozen posts"`
 
@@ -406,6 +435,14 @@ test('escalation messages use the same relay, with a different verb', async () =
   // 同上，type: 'escalation'，断言文本里出现 "上报 escalation" 而不是 "问"
 })
 test('unknown sender handle falls back to "未知岗位" in the relayed text', async () => { /* from: 'term-ghost' */ })
+test('multiline body is collapsed to one line before relaying, when multilineSafe is false', async () => {
+  const o = new FakeOrca(); const { deps, registry } = seedRunningTeam(o, { multilineSafe: false })
+  o.terminals.push({ handle: 'term-1', title: 'builder@duo', connected: true, worktreeId: 'w', lastOutputAt: null })
+  const ok = await processBatch(deps, deps.registry.getTeam('duo')!, SPEC, [{ id: 'msg-1', type: 'question', from: null, subject: null, body: '第一行\n第二行' }])
+  expect(ok).toBe(true)
+  expect(o.sent[0]!.text).not.toMatch(/[\r\n]/)
+  expect(o.sent[0]!.text).toContain('第一行 第二行')
+})
 test('one failing send fails the whole batch (no ack upstream), later messages still get a chance to run', async () => {
   const o = new FakeOrca(); const { deps } = seedRunningTeam(o)
   o.failSendOnce = new Error('boom')
@@ -418,7 +455,7 @@ test('one failing send fails the whole batch (no ack upstream), later messages s
 ```
 
 - [ ] **Step 2：运行确认失败。**
-- [ ] **Step 3：实现。** `handles.ts` 按签名实现。`inbox.ts`：内部 `relayToLead(deps, team, spec, msg)`：`const leadAddress = postAddress(spec.lead, team.name)`；`const fromAddress = msg.from ? (addressOfHandle(deps, team.name, msg.from) ?? '未知岗位') : '未知岗位'`；`const verb = msg.type === 'question' ? '问' : '上报 escalation'`；`const text = \`${fromAddress} ${verb}：${msg.body ?? ''}（msg id: ${msg.id}，用 orca orchestration reply --id ${msg.id} --body "<回答>" 来回复）\``；`await send(deps, { address: leadAddress, message: text })`。`processBatch`：遍历消息，`type` 为 `question`/`escalation` 调用 `relayToLead`，其余类型不做任何事；每条用 `try/catch` 包裹，失败则 `deps.warn(...)` 并记 `ok = false`（不中断循环，继续处理后面的消息）；返回 `ok`。
+- [ ] **Step 3：实现。** `handles.ts` 按签名实现。`inbox.ts`：内部 `relayToLead(deps, team, spec, msg)`：`const leadAddress = postAddress(spec.lead, team.name)`；`const fromAddress = msg.from ? (addressOfHandle(deps, team.name, msg.from) ?? '未知岗位') : '未知岗位'`；`const verb = msg.type === 'question' ? '问' : '上报 escalation'`；`const rawBody = msg.body ?? ''`；`const body = deps.multilineSafe ? rawBody : rawBody.replace(/[\r\n]+/g, ' ')`（spec 第 4 节的换行兜底——`body` 是别的岗位写的，雁阵不能要求对方改成单行，只能自己把换行折成空格，内容不丢只是排版变了）；`const text = \`${fromAddress} ${verb}：${body}（msg id: ${msg.id}，用 orca orchestration reply --id ${msg.id} --body "<回答>" 来回复）\``；`await send(deps, { address: leadAddress, message: text })`。`processBatch`：遍历消息，`type` 为 `question`/`escalation` 调用 `relayToLead`，其余类型不做任何事；每条用 `try/catch` 包裹，失败则 `deps.warn(...)` 并记 `ok = false`（不中断循环，继续处理后面的消息）；返回 `ok`。
 - [ ] **Step 4：运行确认通过。**
 - [ ] **Step 5：提交** — `git commit -m "feat(core): dispatcher inbox relay for question/escalation messages"`
 
@@ -447,16 +484,16 @@ const NOW = new Date('2026-10-13T10:00:00Z')
 test('no_progress: exactly at the threshold does not trigger; one minute past does', async () => {
   const o = new FakeOrca(); const { deps, registry } = seedRunningTeam(o)
   registry.upsertPost({ address: 'builder@duo', team: 'duo', agent: 'claude', worktree: 'current', handle: 'term-1', status: 'live', isLead: true })
-  o.terminals.push({ handle: 'term-1', title: 'builder@duo', connected: true, worktreeId: 'w', lastOutputAt: '2026-10-13T09:40:00Z' }) // 恰好 20 分钟前
+  o.terminals.push({ handle: 'term-1', title: 'builder@duo', connected: true, worktreeId: 'w', lastOutputAt: NOW.getTime() - 20 * 60_000 }) // 恰好 20 分钟前
   o.tasks.push({ id: 't1', status: 'dispatched', title: 'a', spec: 's', parentId: null, assigneeHandle: 'term-1', dispatchId: 'ctx-1', result: null, completedAt: null })
   expect(await detectSignals(deps, deps.registry.getTeam('duo')!, SPEC, NOW)).toEqual([])
-  o.terminals[0]!.lastOutputAt = '2026-10-13T09:39:59Z' // 20 分钟零 1 秒前
+  o.terminals[0]!.lastOutputAt = NOW.getTime() - (20 * 60_000 + 1000) // 20 分钟零 1 秒前
   expect(await detectSignals(deps, deps.registry.getTeam('duo')!, SPEC, NOW)).toEqual([{ post: 'builder@duo', handle: 'term-1', signal: 'no_progress' }])
 })
 test('post_failure_streak: exactly N consecutive failures triggers; N-1 failures plus one success does not', async () => {
   const o = new FakeOrca(); const { deps, registry } = seedRunningTeam(o)   // SPEC.budgets 等默认；patrol.postFailureStreak 默认 3
   registry.upsertPost({ address: 'builder@duo', team: 'duo', agent: 'claude', worktree: 'current', handle: 'term-1', status: 'live', isLead: true })
-  o.terminals.push({ handle: 'term-1', title: 'builder@duo', connected: true, worktreeId: 'w', lastOutputAt: NOW.toISOString() })
+  o.terminals.push({ handle: 'term-1', title: 'builder@duo', connected: true, worktreeId: 'w', lastOutputAt: NOW.getTime() })
   o.tasks.push(
     { id: 'c1', status: 'failed', title: 'a', spec: 's', parentId: null, assigneeHandle: 'term-1', dispatchId: 'x1', result: null, completedAt: '2026-10-13T09:00:00Z' },
     { id: 'c2', status: 'failed', title: 'a', spec: 's', parentId: null, assigneeHandle: 'term-1', dispatchId: 'x2', result: null, completedAt: '2026-10-13T09:10:00Z' },
@@ -477,7 +514,7 @@ test('only posts with a currently dispatched task are scanned', async () => {
 ```
 
 - [ ] **Step 2：运行确认失败。**
-- [ ] **Step 3：实现。** `const tasks = await deps.orca.taskList({ run: team.runId! })`；`const dispatchedHandles = new Set(tasks.filter(t => t.status === 'dispatched' && t.assigneeHandle).map(t => t.assigneeHandle!))`；对每个 handle：no_progress — 从 `terminalList()` 找该 handle 的 `lastOutputAt`，`lastOutputAt` 为空或 `(now.getTime() - Date.parse(lastOutputAt)) / 60000 > spec.patrol.noProgressMinutes` → 命中；post_failure_streak — `tasks.filter(t => t.assigneeHandle === handle && (t.status === 'completed' || t.status === 'failed')).sort((a,b) => (b.completedAt ?? '').localeCompare(a.completedAt ?? '')).slice(0, spec.patrol.postFailureStreak)`，长度等于阈值且全部 `failed` → 命中；`post = addressOfHandle(deps, team.name, handle) ?? handle`。（本任务不读 `spec.patrol`，因为 2A 的 `TeamSpec` 还没有这个字段——留给 Task 8 之前先在本任务里顺带给 `spec/schema.ts`/`load.ts` 加 `patrol.no_progress_minutes`/`patrol.post_failure_streak`，见下方补充 Step。）
+- [ ] **Step 3：实现。** `const tasks = await deps.orca.taskList({ run: team.runId! })`；`const dispatchedHandles = new Set(tasks.filter(t => t.status === 'dispatched' && t.assigneeHandle).map(t => t.assigneeHandle!))`；对每个 handle：no_progress — 从 `terminalList()` 找该 handle 的 `lastOutputAt`（`number | null`，**不经过 `Date.parse`**——实测确认是 Unix 毫秒数字，`Date.parse` 对数字输入会得到 `NaN`），`lastOutputAt` 为空或 `(now.getTime() - lastOutputAt) / 60000 > spec.patrol.noProgressMinutes` → 命中；post_failure_streak — `tasks.filter(t => t.assigneeHandle === handle && (t.status === 'completed' || t.status === 'failed')).sort((a,b) => (b.completedAt ?? '').localeCompare(a.completedAt ?? '')).slice(0, spec.patrol.postFailureStreak)`，长度等于阈值且全部 `failed` → 命中；`post = addressOfHandle(deps, team.name, handle) ?? handle`。（本任务不读 `spec.patrol`，因为 2A 的 `TeamSpec` 还没有这个字段——留给 Task 8 之前先在本任务里顺带给 `spec/schema.ts`/`load.ts` 加 `patrol.no_progress_minutes`/`patrol.post_failure_streak`，见下方补充 Step。）
 - [ ] **Step 3b：补充——`team.yaml` 的 `patrol` 字段。** 修改 `packages/core/src/spec/schema.ts`：`teamSchema` 加 `patrol: z.object({ no_progress_minutes: z.number().int().positive().default(20), post_failure_streak: z.number().int().positive().default(3) }).strict().default({})`；`packages/core/src/spec/load.ts` 的 `loadTeamSpec` 返回值顶层加 `patrol: { noProgressMinutes: team.patrol.no_progress_minutes, postFailureStreak: team.patrol.post_failure_streak }`；对应测试加进 `packages/core/test/spec/load.test.ts`：`test('patrol defaults to 20/3; custom values parse', ...)`（写法同 2A 计划 Task 1 的 budgets 测试）。
 - [ ] **Step 4：运行确认通过。**
 - [ ] **Step 5：提交** — `git commit -m "feat(core): patrol signal detection (no_progress, post_failure_streak)"`
@@ -504,7 +541,7 @@ test('only posts with a currently dispatched task are scanned', async () => {
 test('first hit: level goes 0 → 1, sends the nudge to the post itself', async () => {
   const o = new FakeOrca(); const { deps, registry } = seedRunningTeam(o)
   registry.upsertPost({ address: 'builder@duo', team: 'duo', agent: 'claude', worktree: 'current', handle: 'term-1', status: 'live', isLead: true })
-  o.terminals.push({ handle: 'term-1', title: 'builder@duo', connected: true, worktreeId: 'w', lastOutputAt: '2026-10-13T09:00:00Z' })
+  o.terminals.push({ handle: 'term-1', title: 'builder@duo', connected: true, worktreeId: 'w', lastOutputAt: Date.parse('2026-10-13T09:00:00Z') })
   o.tasks.push({ id: 't1', status: 'dispatched', title: 'a', spec: 's', parentId: null, assigneeHandle: 'term-1', dispatchId: 'ctx-1', result: null, completedAt: null })
   await advancePatrol(deps, deps.registry.getTeam('duo')!, SPEC, new Date('2026-10-13T10:00:00Z'))
   expect(registry.getPatrolState('builder@duo')).toMatchObject({ signal: 'no_progress', level: 1 })
@@ -564,10 +601,15 @@ test('signal resolves (lastOutputAt refreshed, or the post no longer has a dispa
 - Produces：
   ```ts
   export async function connectDispatcher(deps: CommandDeps, team: string): Promise<TeamRow>
-  export interface TickResult { timedOut: boolean; messageCount: number }
-  export async function dispatcherTick(deps: CommandDeps, team: TeamRow, spec: TeamSpec, timeoutMs?: number): Promise<TickResult>
-  export async function runDispatcherLoop(deps: CommandDeps, team: string, opts?: { signal?: AbortSignal; timeoutMs?: number }): Promise<void>
+  export const PATROL_INTERVAL_MS = 300_000
+  export interface DispatcherState { lastScanAt: number }   // 调用方（runDispatcherLoop）持有并在多次 tick 之间原样复用的可变状态；不落盘，见 spec 第 3 节
+  export interface TickResult { timedOut: boolean; messageCount: number; scanned: boolean }
+  export async function dispatcherTick(deps: CommandDeps, team: TeamRow, spec: TeamSpec, state: DispatcherState, timeoutMs?: number): Promise<TickResult>
+  export async function runDispatcherLoop(deps: CommandDeps, team: string, opts?: { signal?: AbortSignal; timeoutMs?: number; errorBackoffMs?: number }): Promise<void>
+  // errorBackoffMs 默认 5000（spec 第 8 节："sleep 一小段时间，比如 5 秒"）；暴露成参数只是为了测试能把它调成一个极小值，不用真等 5 秒，生产调用不传时用默认值。
   ```
+
+  **巡查节拍和消息到达频率解耦（spec 2026-10-14 修订的核心变化）：** 最初设计是"每次 tick 都巡查一次"——如果收件箱消息密集，`check --wait` 会很快返回，tick 循环跑得比 5 分钟快得多，三级升级会在几秒内被错误地推完。`dispatcherTick` 现在收一个调用方持有的 `state: DispatcherState`，只有 `Date.now() - state.lastScanAt >= PATROL_INTERVAL_MS` 才真正调用 `advancePatrol` 并把 `state.lastScanAt` 刷新成当前时间；`TickResult.scanned` 告诉调用方这次 tick 有没有真的巡查过（主要供测试断言，生产代码不需要用这个字段做决策）。`state` 由 `runDispatcherLoop` 创建并在整个循环生命周期内持有同一个对象，每次调用 `dispatcherTick` 原样传入——这保证了"5 分钟"量的是真实墙钟时间，不是"循环跑了几次"。
 
 - [ ] **Step 1：写失败测试**
 
@@ -584,23 +626,39 @@ test('connectDispatcher calls run-use with its own resolved handle and persists 
 test('dispatcherTick with messages: processes then acks with the batch deliveryId', async () => {
   const o = new FakeOrca(); const { deps } = seedRunningTeam(o)
   o.checkResults = [{ count: 1, deliveryId: 'dlv-1', replayed: false, timedOut: false, messages: [{ id: 'm1', type: 'worker_done', from: null, subject: null, body: null }] }]
-  const r = await dispatcherTick(deps, deps.registry.getTeam('duo')!, SPEC)
-  expect(r).toEqual({ timedOut: false, messageCount: 1 })
+  const r = await dispatcherTick(deps, deps.registry.getTeam('duo')!, SPEC, { lastScanAt: 0 })
+  expect(r).toMatchObject({ timedOut: false, messageCount: 1 })
   expect(o.checkCalls[1]).toMatchObject({ ack: 'dlv-1' })
 })
-test('dispatcherTick on timeout: no ack call, patrol scan still runs', async () => {
+test('dispatcherTick on timeout: no ack call', async () => {
   const o = new FakeOrca(); const { deps } = seedRunningTeam(o)
   o.checkResults = [{ count: 0, deliveryId: null, replayed: false, timedOut: true, messages: [] }]
-  const r = await dispatcherTick(deps, deps.registry.getTeam('duo')!, SPEC)
-  expect(r).toEqual({ timedOut: true, messageCount: 0 })
+  const r = await dispatcherTick(deps, deps.registry.getTeam('duo')!, SPEC, { lastScanAt: 0 })
+  expect(r).toMatchObject({ timedOut: true, messageCount: 0 })
   expect(o.checkCalls).toHaveLength(1)   // 只有取批次那一次调用，没有 ack 调用
 })
 test('dispatcherTick does not ack when processBatch reports a failure', async () => {
   const o = new FakeOrca(); const { deps } = seedRunningTeam(o)
   o.failSendOnce = new Error('boom')
   o.checkResults = [{ count: 1, deliveryId: 'dlv-1', replayed: false, timedOut: false, messages: [{ id: 'm1', type: 'question', from: null, subject: null, body: 'x' }] }]
-  await dispatcherTick(deps, deps.registry.getTeam('duo')!, SPEC)
+  await dispatcherTick(deps, deps.registry.getTeam('duo')!, SPEC, { lastScanAt: 0 })
   expect(o.checkCalls).toHaveLength(1)
+})
+test('a fresh state (lastScanAt: 0) always scans on the first tick; a recent lastScanAt skips the scan', async () => {
+  const o = new FakeOrca(); const { deps, registry } = seedRunningTeam(o)
+  registry.upsertPost({ address: 'builder@duo', team: 'duo', agent: 'claude', worktree: 'current', handle: 'term-1', status: 'live', isLead: true })
+  o.tasks.push({ id: 't1', status: 'dispatched', title: 'a', spec: 's', parentId: null, assigneeHandle: 'term-1', dispatchId: 'ctx-1', result: null, completedAt: null })
+  o.checkResults = [{ count: 0, deliveryId: null, replayed: false, timedOut: true, messages: [] }]
+  const r1 = await dispatcherTick(deps, deps.registry.getTeam('duo')!, SPEC, { lastScanAt: 0 })
+  expect(r1.scanned).toBe(true)
+  const freshState = { lastScanAt: Date.now() }
+  const r2 = await dispatcherTick(deps, deps.registry.getTeam('duo')!, SPEC, freshState)
+  expect(r2.scanned).toBe(false)
+})
+test('a dense inbox (many consecutive non-timeout ticks) does not drive the escalation level past one step per real PATROL_INTERVAL_MS window', async () => {
+  // 连续多次 dispatcherTick（每次都立刻返回消息，不 timedOut），共用同一个 state 对象：
+  // 断言 advancePatrol 实际只被真正调用了一次（可以数 o.sendEscalationCalls/registry 的 level 变化，或给 patrol.ts 加一个可观测的调用计数钩子）
+  // 这是本次修订要钉住的核心 bug：之前的设计会在这种场景下几秒内把 level 从 0 推到 3
 })
 test('runDispatcherLoop connects once, then ticks until the signal aborts', async () => {
   const o = new FakeOrca(); const { deps } = seedRunningTeam(o)
@@ -612,10 +670,41 @@ test('runDispatcherLoop connects once, then ticks until the signal aborts', asyn
   expect(o.runUseCalls).toHaveLength(1)
   expect(o.checkCalls.length).toBeGreaterThanOrEqual(2)
 })
+test('an exception thrown mid-tick does not stop the loop (only a run-use failure at connect time would)', async () => {
+  const o = new FakeOrca(); const { deps } = seedRunningTeam(o)
+  o.terminals.push({ handle: 'term-9', title: 'dispatcher@duo', connected: true, worktreeId: 'w', lastOutputAt: null })
+  const ac = new AbortController()
+  let calls = 0
+  o.onCheck = () => { calls++; if (calls === 1) throw new Error('boom'); if (calls >= 3) ac.abort() }
+  o.checkResults = [{ count: 0, deliveryId: null, replayed: false, timedOut: true, messages: [] }]
+  await runDispatcherLoop(deps, 'duo', { signal: ac.signal, errorBackoffMs: 1 })   // 调成 1ms，测试不用真等 5 秒
+  expect(calls).toBeGreaterThanOrEqual(3)   // 第一次抛错之后循环继续跑，没有整体退出
+})
 ```
 
 - [ ] **Step 2：运行确认失败。**
-- [ ] **Step 3：实现。** `connectDispatcher`：`const team = mustTeamReady(deps, teamName)`；`const handle = await resolveOwnHandle(deps, postAddress('dispatcher', teamName))`；`const { coordinatorHandle } = await deps.orca.runUse({ id: team.runId!, from: handle })`；`deps.registry.upsertTeam({ ...team, coordinatorHandle })`；返回 `{ ...team, coordinatorHandle }`。`dispatcherTick`：`const handle = await resolveOwnHandle(deps, postAddress('dispatcher', team.name))`；`const batch = await deps.orca.check({ terminal: handle, run: team.runId!, wait: true, timeoutMs: timeoutMs ?? 300_000 })`；若 `batch.messages.length > 0`：`const ok = await processBatch(deps, team, spec, batch.messages)`；`ok && batch.deliveryId` 才调用 `deps.orca.check({ terminal: handle, run: team.runId!, ack: batch.deliveryId })`；无论如何都 `await advancePatrol(deps, team, spec)`；返回 `{ timedOut: batch.timedOut, messageCount: batch.messages.length }`。`runDispatcherLoop`：`const team = await connectDispatcher(deps, teamName)`；`const spec = loadTeamSpec(team.specPath)`；`while (!opts?.signal?.aborted) await dispatcherTick(deps, team, spec, opts?.timeoutMs)`。`FakeOrca.check` 补一个 `onCheck?: () => void` 钩子，在记录调用之后、返回结果之前调用（本任务顺带给 Task 1 的 `FakeOrca.check` 实现补这一行，不单独起任务）。
+- [ ] **Step 3：实现。** `connectDispatcher`：`const team = mustTeamReady(deps, teamName)`；`const handle = await resolveOwnHandle(deps, postAddress('dispatcher', teamName))`；`const { coordinatorHandle } = await deps.orca.runUse({ id: team.runId!, from: handle })`；`deps.registry.upsertTeam({ ...team, coordinatorHandle })`；返回 `{ ...team, coordinatorHandle }`。
+
+  `dispatcherTick`：`const handle = await resolveOwnHandle(deps, postAddress('dispatcher', team.name))`；`const batch = await deps.orca.check({ terminal: handle, run: team.runId!, wait: true, timeoutMs: timeoutMs ?? 300_000 })`；若 `batch.messages.length > 0`：`const ok = await processBatch(deps, team, spec, batch.messages)`；`ok && batch.deliveryId` 才调用 `deps.orca.check({ terminal: handle, run: team.runId!, ack: batch.deliveryId })`；`const now = Date.now(); const scanned = now - state.lastScanAt >= PATROL_INTERVAL_MS`；`scanned` 为真才 `await advancePatrol(deps, team, spec)` 并把 `state.lastScanAt = now`；返回 `{ timedOut: batch.timedOut, messageCount: batch.messages.length, scanned }`。
+
+  `runDispatcherLoop`：
+  ```ts
+  export async function runDispatcherLoop(deps, teamName, opts) {
+    const team = await connectDispatcher(deps, teamName)   // 失败则整个函数直接抛出，不在下面的 try/catch 范围内——这是唯一会让调度员真正退出的情形
+    const spec = loadTeamSpec(team.specPath)
+    const state: DispatcherState = { lastScanAt: 0 }
+    const backoff = opts?.errorBackoffMs ?? 5000
+    while (!opts?.signal?.aborted) {
+      try {
+        await dispatcherTick(deps, team, spec, state, opts?.timeoutMs)
+      } catch (err) {
+        deps.warn(`调度员循环出现异常，已记录并继续：${err}`)
+        await new Promise((res) => setTimeout(res, backoff))
+      }
+    }
+  }
+  ```
+  这个 `try/catch` 是整个循环唯一的异常边界（spec 第 8 节修订）：任何 `dispatcherTick` 内部抛出的异常（含 `check --wait` 自己的意外超时、JSON 解析失败等）都只记日志、等一小段时间再继续下一轮，**不会**让 `runDispatcherLoop` 整体退出。`FakeOrca.check` 补一个 `onCheck?: () => void` 钩子，在记录调用之后、返回结果之前调用，调用方可以让它抛错来模拟"tick 中途出现意外异常"（本任务顺带给 Task 1 的 `FakeOrca.check` 实现补这一行，不单独起任务）。
 - [ ] **Step 4：运行确认通过。**
 - [ ] **Step 5：提交** — `git commit -m "feat(core): dispatcher main loop (connect, tick, run)"`
 
@@ -682,7 +771,7 @@ test('full flow: dispatcher connects, acks a worker_done, then two consecutive f
 
   // 一条 worker_done：tick 应该 ack 掉，不触发任何 send
   o.checkResults = [{ count: 1, deliveryId: 'dlv-1', replayed: false, timedOut: false, messages: [{ id: 'm1', type: 'worker_done', from: 'term-1', subject: 's', body: null }] }]
-  await dispatcherTick(deps, team0, spec)
+  await dispatcherTick(deps, team0, spec, { lastScanAt: 0 })
   expect(o.sent).toEqual([])
 
   // 两次连续失败的历史 dispatch + 一个当前 dispatched 任务，驱动两次巡查扫描直到冻结
@@ -713,4 +802,5 @@ test('full flow: dispatcher connects, acks a worker_done, then two consecutive f
 - **spec 覆盖：** spec 第 2 节（命令）→ Task 4/5/9/10；第 3 节（主循环）→ Task 9；第 4 节（收件箱）→ Task 6；第 5 节（巡查信号）→ Task 7；第 5.3 节（`team.yaml` 新字段）→ Task 7 的补充 Step；第 6 节（三级升级）→ Task 8；第 7 节（冻结效果）→ Task 2/3；第 8 节（错误处理）→ Task 6/9（批处理失败不 ack，CallLog 已由 `OrcaRunner` 自动记录，无需本阶段新增代码）；第 9 节（测试分层）→ Task 1（契约）、Task 2/6/7/8（单元）、Task 11（集成）。
 - **类型一致性：** `TeamRow`/`TeamSpec`/`CheckMessage`/`CheckResult`/`PatrolHit`/`PatrolStateRow`/`FrozenPostRow` 在定义任务与使用任务中签名一致（已核对 Task 1→6/7/9，Task 2→3/5/8 的消费点）。
 - **Review Focus：** 5 条均已在对应任务里有专门测试（见上文 Review Focus 小节的任务标注）。
-- **与 spec 的已知偏离/判断（均为实现判断，已在对应任务里注明理由）：** 一岗位同时命中两个信号时的优先级选择（Task 8，因为 `patrol_state` 的主键设计决定了一岗位只能追踪一个信号）；`worker_done` 的"每 10 条批量提醒牵头岗"被判定为纯 YAGNI 可选项，本计划不实现（Task 6，`processBatch` 对 `worker_done` 只 ack 不发送）；`check`/消息对象的部分字段名未经独立真机核实（见 Global Constraints，已标注发版前需补验证）。
+- **与 spec 的已知偏离/判断（均为实现判断，已在对应任务里注明理由）：** 一岗位同时命中两个信号时的优先级选择（Task 8，因为 `patrol_state` 的主键设计决定了一岗位只能追踪一个信号）；`worker_done` 的"每 10 条批量提醒牵头岗"被判定为纯 YAGNI 可选项，本计划不实现（Task 6，`processBatch` 对 `worker_done` 只 ack 不发送）；`check`/消息对象的部分字段名未经独立真机核实（见 Global Constraints，已标注发版前需补验证）；`runDispatcherLoop` 的异常退避时长做成可选参数 `errorBackoffMs`（Task 9），纯粹是为了测试不用真等 5 秒，生产默认值仍是 spec 写的 5 秒。
+- **2026-10-14 修订带来的新增产物/修正：** `check()` 对 `--wait` 调用加进程级超时余量，复用 `terminalWait` 已有的 `WAIT_PROCESS_SLACK_MS`（Task 1——这是本计划最初版本的一处真实缺陷：不修的话调度员主循环第一次空闲就会被雁阵自己的进程超时杀死）；`TerminalSummary.lastOutputAt` 的类型从最初设计的 `string | null` 改为实测确认的 `number | null`，牵连 Task 1/7/8/9/11 的测试夹具和 Task 7 `detectSignals` 里 `Date.parse` 的误用一并修正；`dispatcherTick` 新增 `DispatcherState`/`PATROL_INTERVAL_MS`，把巡查扫描的节拍从"每次 tick"改成"真实墙钟时间每 5 分钟一次"（Task 9——这是本计划最初版本的另一处真实缺陷：收件箱消息密集时会让三级升级在几秒内跑完）；`runDispatcherLoop` 的 `try/catch` 从只包单条消息处理扩大到包住整个循环体（Task 9），否则任何意外异常都会让调度员进程永久退出而没有任何自动恢复；Task 3 新增对 `done.ts` 链接派发的冻结检查（跳过 dispatch 而不是硬拒绝，和 `create`/`claim`/`start` 三处的"硬拒绝"不是同一种处理）；Task 6 的 `relayToLead` 对转述内容做 Windows 换行兜底。
