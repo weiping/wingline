@@ -13,6 +13,8 @@
 > **2026-10-14 修订：** 按 spec 修订同步修正 Task 1/3/6/7/8/9（`check --wait` 进程级超时、巡查节拍与消息频率解耦、主循环异常边界、`lastOutputAt` 为数字）。
 >
 > **2026-10-14 第三次修订（本版）：** 按 spec 第三次修订与"补充探针三"重写：Task 1 不再声明 `runUse`（由 2A 计划 Task 3 提供，本计划只消费），删掉 `sendEscalation`（协调者发不了 escalation）与 `completedAt`（闸门连败改用 2A 的本地 `task_done`），`check` 消息按实测字段 `from_handle`/`payload` 映射；Task 3 的 `done` 补丁定义了 `skipped_frozen` 的记录方式并把冻结检查放在解析 handle 之前；Task 4 的启动命令按平台拼写；Task 6 改成"永远 ack、转述尽力而为"并钉住刷屏/毒消息两种故障；Task 7 改按 `claimed_by` 与 `task_done`；Task 8 每个岗位的升级互相隔离；Task 9 加进程锁、启动重试（仅 `run_not_found` 致命）、被 fence 后自愈、ack 随下一次 `check` 发出；Task 11 修掉两个终端 handle 撞号。
+>
+> **2026-10-14 第四次修订：** 跟随 2A 计划第四次修订的两处接口变化：Task 10 改用 `main.test.ts` 已有的 `cmds`/`exec` helper（2A 计划此前写的 `fakeCommands`/`runWith` 并不存在）；Task 11 按 `UpResult.run` 变为可选写 `run?.outcome`。2A spec 第 9.1 节账本删行规则的收紧对本计划没有影响（调度员不经账本调用 `run-use`/`check`）。
 
 **前置依赖（2A 计划已落地的、本计划直接使用的东西；以 2A 落地后的真实代码为准）：**
 
@@ -707,21 +709,21 @@ wl dispatcher freeze <post@team> --reason <text> [--json]
 wl dispatcher unfreeze <post@team> [--json]
 ```
 
-- [ ] **Step 1：写失败测试**（复用 2A 计划 Task 12 加的 `fakeCommands`/`runWith`）
+- [ ] **Step 1：写失败测试**（用 `main.test.ts` 已有的 `cmds`/`exec`，见 2A 计划 Task 12 的说明；`cmds` 的默认对象为本任务新加的 5 个字段各补一个抛 `未注入：<字段名>` 的默认实现，否则 `pnpm typecheck` 失败）
 
 ```ts
 test('wl dispatcher up --json prints the outcome', async () => {
-  const r = await runWith(['dispatcher', 'up', 'duo', '--json'], fakeCommands({ dispatcherUp: async () => ({ address: 'dispatcher@duo', outcome: 'launched' }) }))
+  const r = await exec(['dispatcher', 'up', 'duo', '--json'], cmds({ dispatcherUp: async () => ({ address: 'dispatcher@duo', outcome: 'launched' }) }))
   expect(JSON.parse(r.out).result.outcome).toBe('launched')
 })
 test('wl dispatcher freeze requires --reason', async () => {
-  expect((await runWith(['dispatcher', 'freeze', 'builder@duo'], fakeCommands({}))).code).toBe(1)
+  expect((await exec(['dispatcher', 'freeze', 'builder@duo'], cmds())).code).toBe(1)
 })
 test('wl dispatcher run awaits runDispatcherLoop with the team; a team_busy error exits 1', async () => {
   let team: string | undefined
-  await runWith(['dispatcher', 'run', 'duo'], fakeCommands({ runDispatcherLoop: async (_d, t) => { team = t } }))
+  await exec(['dispatcher', 'run', 'duo'], cmds({ runDispatcherLoop: async (_d, t) => { team = t } }))
   expect(team).toBe('duo')
-  const r = await runWith(['dispatcher', 'run', 'duo'], fakeCommands({ runDispatcherLoop: async () => { throw new WinglineError('input', 'team_busy', 'busy') } }))
+  const r = await exec(['dispatcher', 'run', 'duo'], cmds({ runDispatcherLoop: async () => { throw new WinglineError('input', 'team_busy', 'busy') } }))
   expect(r.code).toBe(1)
 })
 ```
@@ -750,7 +752,7 @@ test('dispatcher takes the coordinator, wl up leaves it alone, inbox is acked, a
   const team = await connectDispatcher(dsp, 'duo', 'term-dsp')
   expect(team.coordinatorHandle).toBe('term-dsp')
 
-  expect((await up(deps, { specPath })).run.outcome).toBe('kept')    // 2A spec 5.2：不从活着的调度员身上拿走身份
+  expect((await up(deps, { specPath })).run?.outcome).toBe('kept')    // 2A spec 5.2：不从活着的调度员身上拿走身份
   expect(registry.getTeam('duo')!.coordinatorHandle).toBe('term-dsp')
 
   const spec = loadTeamSpec(specPath); const state = { lastScanAt: Date.now(), pendingAck: null, lastRelayedDelivery: null }

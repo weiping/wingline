@@ -13,12 +13,14 @@
 > **2026-10-14 修订：** 按 spec 二次修订同步修正 Task 2/3/4/7/9/11。
 >
 > **2026-10-14 第三次修订（本版）：** spec 按 Opus 第二次复审与"补充探针三"重新设计后，本计划整体重写：新增 Task 4（账本 `ledgered`/`oneShot`）与 `dispatchTo`（Task 8）；Task 2 改为 `requests` 两列 + `task_done` + `epoch`/`kind`，所有本地插入 `ON CONFLICT DO NOTHING`；Task 3 的 `FakeOrca` 改为模拟 Orca 实测语义（账本先于 fence、gate 结束 dispatch、关闭终端回 `ready` 等），重跑安全由 Task 10 的可执行测试钉住（不再是注释）；Task 5（`wl up`）去掉 `WINGLINE_POST`，只在协调者终端不存活时 `run-use`，并列出它改动的已提交阶段 1 测试；Task 6 身份解析区分显式/隐式；`start --as` 会注入；`escalate`/`resolve` 的幂等方式明确；CLI 暴露 `--retry-request`。
+>
+> **2026-10-14 第四次修订：** 按 spec 第四次修订（Opus 第三次复审的 4 个必修问题 + "补充探针四"）同步：Task 3 `FakeOrca` 加 `transport` 故障（账本检查之前）与 `match` 谓词、失败不进账本、`dispatch` 错误码改为实测的 `task_not_startable`；Task 4 账本区分新行/旧行（旧行只在 `task_not_startable`/`inactive_dispatch` 上删行，其余保留 id 报 3），`oneShot` 改为以 `oneshot:<id>` 落盘、重试原样重放首次的 `--from`、`request_mismatch` 单独报 `retry_request_mismatch`；Task 8 `dispatchTo` 以本轮账本行为准、`epoch` 只在任务确实回 `ready` 时加一；Task 9 `start` 自己拦"已派给别人"；Task 10 每个连接目标落 `delivered` 记录并加"一个评审方已做完、另一个还在途"的重跑测试；Task 2 列出 `registry.test.ts` 里会因 `getRequest` 多两个字段而坏掉的已提交断言；Task 5 把 `UpResult.run` 改为可选并列出 `main.test.ts` 受影响的地方；Task 12 改正 `main.test.ts` 已有 helper 的名字与默认行为。
 
 ## Global Constraints
 
 - Node ≥ 22.13；不新增运行时依赖。
 - 子进程一律 `spawn(file, args, { shell: false })`，**唯一两个例外**：Windows `.cmd` 包装（阶段 1 已有）和 gate 命令执行（`shell: true`，严格限定在 `runGate`，spec 第 3 节约束 6）。
-- 退出码四分类沿用总纲 7.8：新增的输入类错误为 1；Orca 明确报错为 2；**编排调用超时/失联为 3（`uncertain`），P1 提示"原样重跑同一条命令"，P2 提示带 `--retry-request <id>`**（spec 第 9、11 节）。
+- 退出码四分类沿用总纲 7.8：新增的输入类错误为 1；Orca 明确报错为 2；**编排调用超时/失联为 3（`uncertain`），可能已发出过的账本行收到未证实先后的 Orca 错误（含 `runtime_unavailable`）也是 3；P1 提示"原样重跑同一条命令"，P2 提示带 `--retry-request <id>` 与本次用的 `--from`**（spec 第 9.1、11 节）。
 - 规格哈希：新字段参与 `specHash`，沿用阶段 1 规则。
 - CI 矩阵不变：`macos-latest`、`ubuntu-latest`、`windows-latest` × Node `22.13`、`24`。gate 测试一律 `node -e "..."`，通过环境变量传路径，不在命令字符串里嵌 Windows 路径。
 - **编排写调用的幂等（spec 第 9 节）——每个调用点用哪种模式是固定的，测试断言必须与之一致：**
@@ -28,12 +30,12 @@
   | `runCreate`（`wl up`） | `<team>:run-create` | P1 | 总是带，来自账本 |
   | `runUse` | — | — | **不带**（`runUse` 签名里没有这个字段） |
   | `runShow` | — | 只读 | 无 |
-  | `taskCreate`（`wl task create`） | — | P2 | 总是带：`--retry-request` 参数或新 UUID |
+  | `taskCreate`（`wl task create`） | `oneshot:<id>` | P2 | 总是带：`--retry-request` 参数或新 UUID（即键里的 id；fence 重发后换成新 id，键不变） |
   | `dispatch` | `dispatch:<task>:<epoch>` | P1 | 总是带 |
   | `workerDone` | `done:<task>:<epoch>:report` | P1 | 总是带 |
   | `taskCreate`（连接子任务） | `done:<task>:<epoch>:link:<目标>` | P1 | 总是带 |
   | `gateCreate`（`done` escalate） | `done:<task>:<epoch>:gate` | P1 | 总是带 |
-  | `gateCreate`（`wl task escalate`） | — | P2 | 总是带 |
+  | `gateCreate`（`wl task escalate`） | `oneshot:<id>` | P2 | 总是带（同上） |
   | `gateResolve` | `resolve:<gate>` | P1 | 总是带 |
 
   所以测试里对这些调用的精确断言要么写出 `retryRequest: expect.any(String)`，要么用 `toMatchObject` 只断言关心的字段；**不允许出现"漏掉 `retryRequest` 的 `toEqual`"**（复审 M5 指出的旧断言就是这么坏掉的）。
@@ -41,8 +43,8 @@
 
 ## Review Focus
 
-1. **`wl task done` 重跑安全**：上报已落地但超时、子任务已建但派发超时、escalate 中途中断、全部完成后再跑、两次尝试之间协调者被换走——每种都必须"原样重跑同一条命令"即收敛，且 gate 不被重跑、Orca 侧不出现重复对象 → Task 10。
-2. **账本四种结果分支**：成功记 done 且再次调用不碰 Orca；`consumer_fenced` 换新 id 刷新协调者重试；明确错误删行；不确定保留 id → Task 4。
+1. **`wl task done` 重跑安全**：上报已落地但超时、子任务已建但派发超时、escalate 中途中断、全部完成后再跑、两次尝试之间协调者被换走、两个评审目标里一个已经做完另一个还在途——每种都必须"原样重跑同一条命令"即收敛，且 gate 不被重跑、Orca 侧不出现重复对象 → Task 10。
+2. **账本结果分支**：成功记 done 且再次调用不碰 Orca；`consumer_fenced` 换新 id 刷新协调者重试；**新行**被明确拒绝删行；**旧行**只在 `task_not_startable`/`inactive_dispatch` 上删行，其他错误码（含 `runtime_unavailable`）保留 id、报不确定；不确定保留 id；P2 以 `oneshot:<id>` 落盘、重试原样重放首次的 `--from` → Task 4。
 3. **`--as` 的 handle 解析**：显式 `--as` 一律 `locatePost`，即使调用方自己设置了 `ORCA_TERMINAL_HANDLE`；`start --as <别人>` 要等空闲并 `--inject` → Task 6、Task 9。
 4. **协调者归属**：`wl up` 不把协调者从存活终端上拿走；只在不存活时 `run-use` → Task 5。
 5. **预算边界**：WIP 恰好等于上限拒绝；gate 失败次数恰好等于上限转 `escalated` → Task 9、Task 10。
@@ -87,7 +89,7 @@ packages/core/test/
   orca/client.test.ts                           # 改：9 个编排方法的 argv/映射用例
   commands/task/*.test.ts                       # 新：ledger、identity、gate-exec、query、dispatch、create、claim-start、done、escalate、flow
 packages/cli/test/
-  main.test.ts                                  # 改：wl task CLI 用例
+  main.test.ts                                  # 改：up 的 Run 步骤退出码用例（Task 5）；wl task CLI 用例（Task 12）
 ```
 
 > 任务命令放在 `commands/task/` 子目录：文件多、彼此共享 `mustTeamReady`/`resolveActor`/`dispatchTo`/账本这类专属逻辑。测试目录镜像同样结构。
@@ -168,14 +170,16 @@ test('hash changes when tags/gate/links/budgets change', () => {
 **Files:**
 - Modify：`packages/core/src/registry/migrations.ts`、`packages/core/src/registry/registry.ts`
 - Modify：`packages/core/src/commands/up.ts`（仅 `registerTeam` 里 `upsertTeam` 补 `coordinatorHandle: existing?.coordinatorHandle ?? null`）
-- Modify（已提交的阶段 1 测试，只补字段）：`packages/core/test/registry/registry.test.ts`（文件顶部 `const team: TeamRow` 补 `coordinatorHandle: null`）、`packages/core/test/commands/down.test.ts`、`send.test.ts`、`ps.test.ts`（各自 `upsertTeam({...})` 字面量补 `coordinatorHandle: null`）
+- Modify（已提交的阶段 1 测试，只补字段）：
+  - `packages/core/test/registry/registry.test.ts`：①文件顶部 `const team: TeamRow` 补 `coordinatorHandle: null`（同文件 `'team and post round trip'` 里的 `expect(r.getTeam('duo')).toEqual(team)` 因此仍成立，不用改）；②用例 `'request lifecycle and 16KB truncation'` 里 `expect(r.getRequest('a')).toEqual({ state: 'pending', receipt: null })` 改为 `toEqual({ state: 'pending', receipt: null, retryRequest: null, args: null })`——`getRequest` 多返回两列，值是 `null` 不是 `undefined`，`toEqual` 不会忽略它们，不改这一行 Step 4 就会失败。这是全仓库唯一一处对 `getRequest` 整个返回值做 `toEqual` 的断言（其余用法——`up.ts`/`deps.ts`/`send.ts` 与 `up.test.ts`/`send.test.ts`——都只读 `.state`/`.receipt` 或判 `null`，已逐个核对）。
+  - `packages/core/test/commands/down.test.ts`、`send.test.ts`、`ps.test.ts`（各自 `upsertTeam({...})` 字面量补 `coordinatorHandle: null`）
 
 **Interfaces:**
 - Produces：
   ```ts
   export interface TeamRow { name: string; specPath: string; specHash: string; runId: string | null; coordinatorHandle: string | null; status: 'up' | 'stopped' }
   export interface RequestRow { state: RequestState; receipt: string | null; retryRequest: string | null; args: string | null }
-  getRequest(id: string): RequestRow | null           // 扩展返回字段；阶段 1 调用点只读 state/receipt，不受影响
+  getRequest(id: string): RequestRow | null           // 扩展返回字段；阶段 1 生产代码只读 state/receipt，不受影响（已提交测试里的一处 toEqual 要改，见 Files）
   openIntent(id: string, retryRequest: string, args: unknown): void    // INSERT … ON CONFLICT(id) DO NOTHING，state='pending'
   reissueIntent(id: string, retryRequest: string, args: unknown): void // UPDATE：换 id 与参数，state='pending'，receipt=NULL
   dropRequest(id: string): void
@@ -387,18 +391,18 @@ test('gateCreate / gateResolve argv', async () => {
 - [ ] **Step 2：运行确认失败。**
 - [ ] **Step 3：实现 `types.ts`/`client.ts`。**
 - [ ] **Step 4：`FakeOrca` 编排模型（`fake-client.ts`）。** 2A 的重跑安全只有在假客户端忠实模拟 spec 第 2 节的实测语义时才测得出来（复审 M1f），所以本步不是"记录调用、回显参数"，而是一个小模型：
-  - 状态：`coordinator: string | null`、`tasks: OrchestrationTask[]`（内部保留 assignee/dispatch，`taskList()` 对 `blocked`/`completed`/`failed` 输出 null）、`gates: Map<string, { taskId: string; status: 'pending' | 'resolved' }>`、`ledger: Map<string, { input: string; result: unknown }>`、`injectRejected: Set<string>`（这些 handle 上 `--inject` 被拒）、`faults: Array<{ method: string; when: 'before' | 'after'; error: Error }>`（按方法名取第一条匹配并移除）、`orch: Array<{ m: string; a: Record<string, unknown> }>`（除只读的 `taskList` 之外每次编排调用的入参——写调用、`runUse`/`runShow`，以及 2B 加的 `check`；`taskList` 只进 `calls`，这样"不该有 Orca 写调用"的断言可以直接写 `expect(o.orch).toEqual([])`），`callsOf(m)` 返回该方法的入参数组。每个编排方法同时往阶段 1 已有的 `calls` 字符串数组推方法名，测试可以用 `calls` 断言跨方法顺序（不再另设 `callOrder`）。
-  - 写调用统一经 `mutate(m, a, { coordinatorOnly }, exec)`：①有 `retryRequest` 且账本里有 → 入参（去掉 `retryRequest` 后 `JSON.stringify`）不同则抛 `orca`/`request_mismatch`，相同则返回存下的**快照** + `replayed: true`（**账本检查在协调者校验之前**，R3-A3）；②取 `before` 故障；③`coordinatorOnly` 且 `a.from !== coordinator` → `consumer_fenced`；④`exec()`；⑤有 `retryRequest` 则存账本（`structuredClone` 快照）；⑥取 `after` 故障（模拟"已落地但调用方看到超时"）；返回结果 + `replayed: false`。
+  - 状态：`coordinator: string | null`、`tasks: OrchestrationTask[]`（内部保留 assignee/dispatch，`taskList()` 对 `blocked`/`completed`/`failed` 输出 null）、`gates: Map<string, { taskId: string; status: 'pending' | 'resolved' }>`、`ledger: Map<string, { input: string; result: unknown }>`、`injectRejected: Set<string>`（这些 handle 上 `--inject` 被拒）、`faults: Array<{ method: string; when: 'transport' | 'before' | 'after'; error: Error; match?: (a: Record<string, unknown>) => boolean }>`（按方法名、`when` 与可选的 `match(入参)` 取第一条匹配的并移除；`match` 用来只让某一个目标的调用出故障，Task 10 的两评审目标测试要用）、`orch: Array<{ m: string; a: Record<string, unknown> }>`（除只读的 `taskList` 之外每次编排调用的入参——写调用、`runUse`/`runShow`，以及 2B 加的 `check`；`taskList` 只进 `calls`，这样"不该有 Orca 写调用"的断言可以直接写 `expect(o.orch).toEqual([])`），`callsOf(m)` 返回该方法的入参数组。每个编排方法同时往阶段 1 已有的 `calls` 字符串数组推方法名，测试可以用 `calls` 断言跨方法顺序（不再另设 `callOrder`）。
+  - 写调用统一经 `mutate(m, a, { coordinatorOnly }, exec)`：⓪入参记入 `orch`/`calls`（在任何故障之前，所以被故障打断的调用也能用 `callsOf` 看到），取 `transport` 故障（模拟请求根本没到运行时、在账本检查之前就失败，如 `runtime_unavailable`，spec 第 2 节事实 10）；①有 `retryRequest` 且账本里有 → 入参（去掉 `retryRequest` 后 `JSON.stringify`）不同则抛 `orca`/`request_mismatch`，相同则返回存下的**快照** + `replayed: true`（**账本检查在协调者校验与一切状态校验之前**，R3-A1/A3、R4-3/4）；②取 `before` 故障；③`coordinatorOnly` 且 `a.from !== coordinator` → `consumer_fenced`；④`exec()`；⑤有 `retryRequest` 则存账本（`structuredClone` 快照）——**只有走到这一步的成功调用才进账本**，②③④抛出的失败一律不存（R4-1：失败的调用不进 Orca 账本，同 id 重放是重新执行）；⑥取 `after` 故障（模拟"已落地但调用方看到超时"）；返回结果 + `replayed: false`。
   - `runCreate`：`coordinator = from`，返回 `run-1`。`runUse`（不经账本，但同样先取 `before` 故障，供 2B 测启动重试）：`coordinator = from`。`runShow`：返回 `coordinator`。
   - `taskCreate`（coordinatorOnly）：推一条 `ready` 任务，id `task-N`。
-  - `dispatch`（coordinatorOnly）：任务不是 `ready` → `orca`/`invalid_state`；`inject && injectRejected.has(to)` → `orca`/`inject_rejected`（不改状态，R3-C1）；否则 `dispatched`、`assigneeHandle = to`、`dispatchId = ctx-N`，`injected = !!inject`。
+  - `dispatch`（coordinatorOnly）：任务不是 `ready` → `orca`/`task_not_startable`（真实错误码，R4-2）；`inject && injectRejected.has(to)` → `orca`/`inject_rejected`（不改状态，R3-C1）；否则 `dispatched`、`assigneeHandle = to`、`dispatchId = ctx-N`，`injected = !!inject`。
   - `workerDone`（非 coordinatorOnly）：任务不是 `dispatched` 或 dispatchId 不符 → `inactive_dispatch`；`from !== assigneeHandle` → `worker_identity_changed`；否则按 `outcome` 转 `completed`/`failed`，`result = JSON.stringify({ outcome, reportedBy: from })`。
   - `gateCreate`（coordinatorOnly）：`gate-N` pending，任务 → `blocked`（R3-B1）。`gateResolve`（coordinatorOnly）：gate 不存在 → `gate_not_found`；→ resolved，任务 → `ready`（R3-B2）。
   - `terminalClose` 追加：把 assignee 为该 handle 的 `dispatched` 任务放回 `ready`（R3-C3）。
   - `mkDeps` 默认 `env: {}`（可被 `over` 覆盖）。
   - 新 helper `seedRunningTeam(o, over?: Partial<CommandDeps> & { yaml?: string })`：`mkDeps` → `registry.upsertTeam({ name: 'duo', specPath: mkTeam(over?.yaml ?? DUO_YAML), specHash: 'h'.repeat(64), runId: 'run-1', coordinatorHandle: 'coord-1', status: 'up' })`，`o.coordinator = 'coord-1'`，登记两个岗位 `builder@duo`（handle `term-b`，lead）与 `checker@duo`（handle `term-c`），并往 `o.terminals` 推两条对应终端（title 即地址）。`specPath` 必须是真实的临时文件（Task 9/10 会 `loadTeamSpec` 它）。
 
-  `FakeOrca` 自身的语义用少量测试钉住（`test/commands/fake-client.test.ts`，新文件）：同 id 同参数回放返回旧快照、同 id 不同参数 `request_mismatch`、换协调者后旧 `from` 重放仍回放而新 id 被 fence、`gateCreate` 让 `dispatched` 变 `blocked` 且之后 `workerDone` 抛 `inactive_dispatch`、`terminalClose` 让任务回 `ready`。每条三五行，这里不逐字列出——它们是 spec 第 2 节事实 3、7 的逐条翻译。
+  `FakeOrca` 自身的语义用少量测试钉住（`test/commands/fake-client.test.ts`，新文件）：同 id 同参数回放返回旧快照、同 id 不同参数 `request_mismatch`、换协调者后旧 `from` 重放仍回放而新 id 被 fence、一次失败的调用（如被 fence）在条件变化后同 id 重放是重新执行而不是回放失败、`transport` 故障在账本检查之前（已落地的 id 也照样抛）、`gateCreate` 让 `dispatched` 变 `blocked` 且之后 `workerDone` 抛 `inactive_dispatch`、`terminalClose` 让任务回 `ready`。每条三五行，这里不逐字列出——它们是 spec 第 2 节事实 3、7、10 的逐条翻译。
 - [ ] **Step 5：运行确认通过** — `pnpm vitest run packages/core/test` → PASS；`pnpm typecheck`。
 - [ ] **Step 6：提交** — `git commit -m "feat(core): orchestration methods on OrcaClient and a FakeOrca that models Orca's replay/fence/gate semantics"`
 
@@ -418,11 +422,22 @@ test('gateCreate / gateResolve argv', async () => {
     team: string                                   // 团队名：fence 时刷新它的 coordinator_handle
     build: (team: TeamRow) => A | Promise<A>       // 完整参数（不含 retryRequest）；只在首次和 fence 重发时调用
     call: (a: A & { retryRequest: string }) => Promise<R>
+    id?: string                                    // 新行用的幂等 id，缺省 randomUUID()（oneShot 传入）
+    assumeSent?: boolean                           // 没有本地行时也按"旧行"处理（oneShot 带 --retry-request 而本地无记录）
+    hint?: (a: A, id: string) => string            // 结果不确定时的提示；缺省"原样重跑同一条命令即可：幂等 id <id> 已记录…"
   }
+  /** spec 第 2 节事实 10：已证实产生在 Orca 账本检查之后的错误码——"旧行"收到它们才允许删行。consumer_fenced 另走换 id 重发。 */
+  export const LEDGER_CHECKED_CODES: ReadonlySet<string>   // new Set(['task_not_startable', 'inactive_dispatch'])
+  export function fenced(err: unknown): boolean            // kind==='orca' && code==='consumer_fenced'；2B 计划 Task 9 复用
   /** spec 第 9.1 节 P1。返回值：done 行直接返回存下的结果（不调用 Orca）。 */
   export async function ledgered<A extends object, R>(deps: CommandDeps, c: LedgerCall<A, R>): Promise<R>
-  /** spec 第 9.1 节 P2：retryRequest 缺省时新生成；不落盘；超时类错误的 hint 由 retryHint(id) 给出。 */
-  export async function oneShot<A extends object, R>(deps: CommandDeps, c: Omit<LedgerCall<A, R>, 'key'> & { retryRequest?: string; retryHint: (id: string) => string }): Promise<R>
+  /** spec 第 9.1 节 P2：id = retryRequest ?? id ?? randomUUID()，键 oneshot:<id>，其余按 P1；重试原样重放首次参数（含 from）。 */
+  export async function oneShot<A extends { from: string }, R>(deps: CommandDeps, c: {
+    team: string; retryRequest?: string
+    build: LedgerCall<A, R>['build']; call: LedgerCall<A, R>['call']
+    id?: string                                    // 调用方预先生成的 id（create.ts 要在 hint 里用它）；retryRequest 只表示"用户在命令行给了 --retry-request"
+    retryHint: (id: string) => string              // 可直接复制的重试命令（不含 --from 说明，oneShot 自己补）
+  }): Promise<R>
   export async function refreshCoordinator(deps: CommandDeps, team: string): Promise<TeamRow>
   ```
 
@@ -481,31 +496,113 @@ test('a landed call replays even after the coordinator changed (ledger is checke
   expect(o.tasks).toHaveLength(1)
   expect(registry.getRequest('k')!.state).toBe('done')
 })
-test('a definite Orca error drops the row so the next attempt starts fresh', async () => {
+test('a definite Orca error on a NEW row (the id\'s only attempt) drops the row so the next attempt starts fresh', async () => {
   const o = new FakeOrca(); const { deps, registry } = seedRunningTeam(o)
   o.faults.push({ method: 'taskCreate', when: 'before', error: new WinglineError('orca', 'inject_rejected', 'x') })
   await expect(createCall(deps, o)).rejects.toMatchObject({ kind: 'orca', code: 'inject_rejected' })
   expect(registry.getRequest('k')).toBeNull()
 })
-test('oneShot: generates an id unless given; an uncertain failure prints it in the hint', async () => {
-  const o = new FakeOrca(); const { deps } = seedRunningTeam(o)
+// 第三次复审必修 #1：上一次超时但其实已落地；重跑时 Orca 正在重启（runtime_unavailable 产生在账本检查之前）。
+// 旧逻辑在这里删行，下一次重跑换新 id 建出第二个对象。
+test('an OLD row is never dropped on an unproven error: landed+timeout → runtime_unavailable keeps the id (exit-3 kind) → next rerun replays, no duplicate', async () => {
+  const o = new FakeOrca(); const { deps, registry } = seedRunningTeam(o)
   o.faults.push({ method: 'taskCreate', when: 'after', error: timeout() })
-  const run = (retryRequest?: string) => oneShot(deps, {
-    team: 'duo', retryRequest, retryHint: (id) => `wl task create duo --title t --retry-request ${id}`,
-    build: (t) => ({ spec: 's', taskTitle: 't', run: t.runId!, from: t.coordinatorHandle! }), call: (a) => o.taskCreate(a),
-  })
-  const err = await run().catch((e) => e)
+  await expect(createCall(deps, o)).rejects.toMatchObject({ kind: 'uncertain' })
+  const id = registry.getRequest('k')!.retryRequest
+  o.faults.push({ method: 'taskCreate', when: 'transport', error: new WinglineError('orca', 'runtime_unavailable', 'Start the Orca app first') })
+  await expect(createCall(deps, o)).rejects.toMatchObject({ kind: 'uncertain', code: 'runtime_unavailable', hint: expect.stringContaining('原样重跑') })
+  expect(registry.getRequest('k')).toMatchObject({ state: 'uncertain', retryRequest: id })
+  await createCall(deps, o)
+  expect(o.callsOf('taskCreate').map((a) => a.retryRequest)).toEqual([id, id, id])
+  expect(o.tasks).toHaveLength(1)
+  expect(registry.getRequest('k')!.state).toBe('done')
+})
+test('an OLD row is dropped only on codes proven to come after Orca\'s ledger check', async () => {
+  for (const [code, dropped] of [['task_not_startable', true], ['inactive_dispatch', true], ['inject_rejected', false], ['worker_identity_changed', false], ['something_new', false]] as const) {
+    const o = new FakeOrca(); const { deps, registry } = seedRunningTeam(o)
+    o.faults.push({ method: 'taskCreate', when: 'before', error: timeout() })      // 旧行：上一次没确认
+    await expect(createCall(deps, o)).rejects.toMatchObject({ kind: 'uncertain' })
+    o.faults.push({ method: 'taskCreate', when: 'before', error: new WinglineError('orca', code, 'x') })
+    await expect(createCall(deps, o)).rejects.toMatchObject({ kind: dropped ? 'orca' : 'uncertain', code })
+    expect(registry.getRequest('k') === null).toBe(dropped)
+  }
+})
+
+// —— oneShot（P2）——
+const oneShotCreate = (deps: CommandDeps, o: FakeOrca, retryRequest?: string, title = 't') => oneShot(deps, {
+  team: 'duo', retryRequest, retryHint: (id) => `wl task create duo --title ${title} --retry-request ${id}`,
+  build: (t) => ({ spec: 's', taskTitle: title, run: t.runId!, from: t.coordinatorHandle! }), call: (a) => o.taskCreate(a),
+})
+const handOver = async (o: FakeOrca, registry: Registry) => {        // 两次尝试之间协调者被换走（调度员启动、或 wl up 收回）
+  await o.runUse({ id: 'run-1', from: 'coord-2' })
+  registry.upsertTeam({ ...registry.getTeam('duo')!, coordinatorHandle: 'coord-2' })
+}
+test('oneShot: generates an id unless given, stores it under oneshot:<id>; an uncertain failure prints the id AND the --from it used', async () => {
+  const o = new FakeOrca(); const { deps, registry } = seedRunningTeam(o)
+  o.faults.push({ method: 'taskCreate', when: 'after', error: timeout() })
+  const err = await oneShotCreate(deps, o).catch((e) => e)
   const id = o.callsOf('taskCreate')[0]!.retryRequest as string
   expect(err).toMatchObject({ kind: 'uncertain', hint: expect.stringContaining(`--retry-request ${id}`) })
-  await run(id)
+  expect(err.hint).toContain('--from coord-1')
+  expect(registry.getRequest(`oneshot:${id}`)).toMatchObject({ state: 'uncertain', retryRequest: id })
+  await oneShotCreate(deps, o, id)
+  expect(o.tasks).toHaveLength(1)
+})
+// 第三次复审必修 #3：旧逻辑在重试时按"此刻的"协调者重新推导 --from，同 id 不同参数 → request_mismatch。
+test('oneShot retry after a coordinator handover, original landed: replays with the ORIGINAL --from, no request_mismatch, one task', async () => {
+  const o = new FakeOrca(); const { deps, registry } = seedRunningTeam(o)
+  o.faults.push({ method: 'taskCreate', when: 'after', error: timeout() })
+  await oneShotCreate(deps, o).catch(() => {})
+  const id = o.callsOf('taskCreate')[0]!.retryRequest as string
+  await handOver(o, registry)
+  const r = await oneShotCreate(deps, o, id)
+  expect(o.callsOf('taskCreate').at(-1)).toMatchObject({ retryRequest: id, from: 'coord-1' })
+  expect(o.tasks).toHaveLength(1); expect(r.id).toBe(o.tasks[0]!.id)
+})
+test('oneShot retry after a coordinator handover, original never landed: original --from is fenced → reissued with the current coordinator, one task', async () => {
+  const o = new FakeOrca(); const { deps, registry } = seedRunningTeam(o)
+  o.faults.push({ method: 'taskCreate', when: 'before', error: timeout() })
+  await oneShotCreate(deps, o).catch(() => {})
+  const id = o.callsOf('taskCreate')[0]!.retryRequest as string
+  await handOver(o, registry)
+  await oneShotCreate(deps, o, id)
+  expect(o.callsOf('taskCreate').map((a) => a.from)).toEqual(['coord-1', 'coord-1', 'coord-2'])
+  expect(o.tasks).toHaveLength(1)
+})
+test('oneShot: the same --retry-request with different arguments → retry_request_args_changed before any Orca call', async () => {
+  const o = new FakeOrca(); const { deps } = seedRunningTeam(o)
+  o.faults.push({ method: 'taskCreate', when: 'after', error: timeout() })
+  await oneShotCreate(deps, o).catch(() => {})
+  const id = o.callsOf('taskCreate')[0]!.retryRequest as string
+  await expect(oneShotCreate(deps, o, id, '另一个标题')).rejects.toMatchObject({ kind: 'input', code: 'retry_request_args_changed' })
+  expect(o.callsOf('taskCreate')).toHaveLength(1)
+})
+test('oneShot with no local record (other WINGLINE_HOME) and an id that landed under another --from → retry_request_mismatch (exit-3 kind), nothing new created', async () => {
+  const o = new FakeOrca(); const { deps, registry } = seedRunningTeam(o)
+  o.faults.push({ method: 'taskCreate', when: 'after', error: timeout() })
+  await oneShotCreate(deps, o).catch(() => {})
+  const id = o.callsOf('taskCreate')[0]!.retryRequest as string
+  registry.dropRequest(`oneshot:${id}`)                  // 模拟换了机器/注册表
+  await handOver(o, registry)
+  await expect(oneShotCreate(deps, o, id)).rejects.toMatchObject({ kind: 'uncertain', code: 'retry_request_mismatch', hint: expect.stringContaining('wl task list') })
   expect(o.tasks).toHaveLength(1)
 })
 ```
 
-> 第一条测试用到 `FakeOrca.onMutate?: () => void`（在 `mutate` 的第②步之前调用），已列入 Task 3 的模型，用来观察"调用发生时账本行的状态"。
+> 第一条测试用到 `FakeOrca.onMutate?: () => void`（在 `mutate` 的第②步之前调用），已列入 Task 3 的模型，用来观察"调用发生时账本行的状态"。`when: 'transport'` 故障（在 Orca 账本检查之前抛出，模拟 `runtime_unavailable`）也在 Task 3 的模型里：用 `'before'` 的话，第二个测试里已落地的 id 会先命中假账本被回放，故障根本不会触发——这正是"`runtime_unavailable` 不经过账本"与"handler 级错误在账本之后"的区别。
 
 - [ ] **Step 2：运行确认失败。**
-- [ ] **Step 3：实现。** `ledgered`：读行；`done` → `JSON.parse(receipt)`；无行 → `openIntent(key, randomUUID(), await build(team))` 后重读；调用 `call({ ...JSON.parse(args), retryRequest })`。捕获：`fenced`（`kind==='orca' && code==='consumer_fenced'`）且尚未重发 → `const t = await refreshCoordinator(...)`、`reissueIntent(key, randomUUID(), await build(t))`、重来一次；其他 `kind==='orca'` → `dropRequest(key)` 后上抛；`kind==='uncertain'` → `finishRequest(key, 'uncertain', { error })`，上抛 `new WinglineError('uncertain', err.code, err.message, { hint: \`原样重跑同一条命令即可：幂等 id ${retryRequest} 已记录，不会重复执行\`, cause: err })`；其余（内部错误）原样上抛。成功 → `finishRequest(key, 'done', value)`。`oneShot`：同样的 fence 重试（换新 id），不读写 `requests`；`uncertain` 时 hint 用 `retryHint(id)`。`refreshCoordinator`：`runShow({ id: team.runId! })` → `upsertTeam({ ...team, coordinatorHandle })` → 返回新行。三个函数各自 ≤50 行；`ledgered` 的错误分类抽成 `classify(err)`。
+- [ ] **Step 3：实现。**
+  - `ledgered`：读行；`done` → `JSON.parse(receipt)`；`sent = row !== null || !!c.assumeSent`（**旧行**：进入本次调用时就在、且不是 `done`——之前某个进程可能已经发出并落地；spec 9.1）；无行 → `openIntent(key, c.id ?? randomUUID(), await build(team))` 后重读；调用 `call({ ...JSON.parse(args), retryRequest })`。捕获后按 `classify(err, sent, reissued)`：
+    - `fenced(err)` 且尚未重发 → `const t = await refreshCoordinator(...)`、`reissueIntent(key, randomUUID(), await build(t))`、`sent = false`（换出来的 id 是新行）、重来一次；
+    - `kind==='orca'` 且（`!sent` 或 `LEDGER_CHECKED_CODES.has(code)`；重发后又被 fence 也落在这里，因为那时 `sent` 已是 false）→ `dropRequest(key)` 后原样上抛（退出码 2）；
+    - `kind==='orca'` 的其他情况（旧行 + 未证实先后的错误码，含 `runtime_unavailable`）→ `finishRequest(key, 'uncertain', { error: { code, message } })`，上抛 `new WinglineError('uncertain', err.code, \`Orca 返回 ${err.code}（${err.message}），但这个幂等 id 此前可能已经发出并落地，结果不确定\`, { hint, cause: err })`——**不删行**；
+    - `kind==='uncertain'` → `finishRequest(key, 'uncertain', { error })`，上抛 `new WinglineError('uncertain', err.code, err.message, { hint, cause: err })`；
+    - 其余（内部错误）原样上抛，行保持 `pending`。
+    两处 `hint` 都是 `c.hint?.(args, retryRequest) ?? \`原样重跑同一条命令即可：幂等 id ${retryRequest} 已记录，不会重复执行\``。成功 → `finishRequest(key, 'done', value)`。
+  - `oneShot`：`id = c.retryRequest ?? c.id ?? randomUUID()`，`key = \`oneshot:${id}\``；行已存在 → `fresh = await c.build(当前团队行)`，与落盘的 `args` 去掉 `from` 后比较（`JSON.stringify`），不同 → `input`/`retry_request_args_changed`（不调用 Orca）；然后 `ledgered(deps, { key, team, id, assumeSent: !!c.retryRequest && !row, build, call, hint: (a) => \`${c.retryHint(id)}（本次协调者 --from ${a.from}）\` })`——行已存在时 `ledgered` 原样重放首次落盘的参数（含首次的 `from`），这正是协调者换手后不会 `request_mismatch` 的原因。捕获 `code === 'request_mismatch'`（只可能出现在本地无记录、按当前状态推导了参数的情形）→ 上抛 `new WinglineError('uncertain', 'retry_request_mismatch', '这个 --retry-request 上一次已经成功执行过，但用的参数（很可能是当时的协调者 --from）和这次不一样，不能安全地用同一个 id 重放', { hint: '先用 wl task list 确认要的东西是不是已经建出来了；确认没有，再去掉 --retry-request 重跑一次', cause: err })`。
+  - `refreshCoordinator`：`runShow({ id: team.runId! })` → `upsertTeam({ ...team, coordinatorHandle })` → 返回新行。
+  - 各函数 ≤50 行；`ledgered` 的错误分类抽成 `classify`。
 - [ ] **Step 4：运行确认通过。**
 - [ ] **Step 5：提交** — `git commit -m "feat(core): persisted intent ledger for orchestration writes"`
 
@@ -515,11 +612,13 @@ test('oneShot: generates an id unless given; an uncertain failure prints it in t
 
 **Files:**
 - Modify：`packages/core/src/commands/up.ts`
-- Modify：`packages/cli/src/cli.ts`（`exitCodeOfUp`：`r.run?.outcome === 'failed'` → 2，`'uncertain'` → 3，与岗位结果取最严重者）、`packages/cli/src/output.ts`（`renderUp` 多一行 Run 步骤）
+- Modify：`packages/cli/src/cli.ts`（`exitCodeOfUp` 的参数类型从 `{ posts: Array<{ outcome: string }> }` 扩成 `{ posts: Array<{ outcome: string }>; run?: { outcome: string } }`；`r.run?.outcome === 'failed'` → 2，`'uncertain'` → 3，与岗位结果取最严重者）、`packages/cli/src/output.ts`（`renderUp`：`r.run` 存在时多一行 Run 步骤，不存在时与阶段 1 输出一字不差）
 - Modify（**已提交的阶段 1 测试，有断言要改**）：`packages/core/test/commands/up.test.ts`
   - 用例 `'fresh up does create → wait → brief per post'`：`o.calls` 的精确序列末尾追加 `'runCreate'`；`getTeam('duo')` 的期望从 `{ status: 'up', runId: null }` 改为 `{ status: 'up', runId: 'run-1', coordinatorHandle: 'term-1' }`。这是预期内的行为变化（阶段 2A 起 `wl up` 建 Run），不是回归。
   - 其余已有用例不受影响：启动命令保持原样（本计划不再注入 `WINGLINE_POST`，`'terminal is created with title, worktree and launch command'` 不用改）；其他用例没有对 `calls` 做精确断言或检查 `runId`。实现后跑一遍整个文件确认。
-- Modify：`packages/cli/test/main.test.ts`（`up` 的退出码用例补一条 `run.outcome === 'uncertain'` → 3）
+- Modify：`packages/cli/test/main.test.ts`
+  - 新增一条用例：`run.outcome === 'uncertain'` 而岗位全部 `launched` → 退出码 3（见 Step 1 末尾）。
+  - **已有的三处 `UpResult` 字面量都不带 `run`，不用改**：`cmds()` 默认的 `up`（返回 `{ team: 'duo', posts: [{ address: 'builder@duo', outcome: 'launched' }] }`）、`'up with an uncertain post exits 3; with a failed post exits 2'` 里的 `mk`、`'up human output names each post outcome and the retry command'`。原因是 `run` 在类型上是**可选**的（下面 Interfaces）。若改成必填，这三处字面量会让 `pnpm typecheck` 失败（`tsconfig.typecheck.json` 的 `include` 含 `packages/*/test`），而它们表达的"只看岗位结果"的退出码/渲染行为本身没有变。
 
 **Interfaces:**
 - Consumes：`ledgered`（Task 4）、`runCreate`/`runUse`/`terminalList`（Task 3）
@@ -528,9 +627,10 @@ test('oneShot: generates an id unless given; an uncertain failure prints it in t
   export interface UpResult {
     team: string
     posts: Array<{ address: string; outcome: UpOutcome; reason?: string; retry?: string }>
-    run: { outcome: 'created' | 'kept' | 'reclaimed' | 'deferred' | 'failed' | 'uncertain'; runId: string | null; reason?: string; retry?: string }
+    run?: { outcome: 'created' | 'kept' | 'reclaimed' | 'deferred' | 'failed' | 'uncertain'; runId: string | null; reason?: string; retry?: string }
   }
   ```
+  `run` 可选是有意的，与 2B 计划 `TerminalSummary.lastOutputAt?` 同一种做法：不让新字段破坏阶段 1 已提交的类型字面量。它不丢失任何保证——`up()` 每次都填 `run`（没轮到建 Run 时是 `deferred`），下面每条 `up.test.ts` 新用例都对 `r.run` 做精确断言；消费方（`exitCodeOfUp`、`renderUp`、2B 计划 Task 11）一律写 `r.run?.…`。
 
 - [ ] **Step 1：写失败测试（`up.test.ts` 新增）**
 
@@ -578,14 +678,24 @@ test('the Run is reused after wl down and a spec change', async () => {
   await up(deps, { specPath: duo() })
   registry.upsertTeam({ ...registry.getTeam('duo')!, status: 'stopped' })
   const r = await up(deps, { specPath: mkTeam(DUO_YAML.replace('model: opus', 'model: sonnet')) })
-  expect(r.run.runId).toBe('run-1')
+  expect(r.run?.runId).toBe('run-1')
   expect(o.callsOf('runCreate')).toHaveLength(1)
+})
+```
+
+```ts
+// packages/cli/test/main.test.ts（沿用文件里已有的 cmds / exec）
+test('up exits 3 when the Run step is uncertain even though every post launched', async () => {
+  const c = cmds({ up: async () => ({ team: 'duo', posts: [{ address: 'builder@duo', outcome: 'launched' }], run: { outcome: 'uncertain', runId: null, reason: 't', retry: 'wl up x' } }) })
+  const r = await exec(['up', 'x'], c)
+  expect(r.code).toBe(3)
+  expect(r.out).toContain('wl up x')
 })
 ```
 
 - [ ] **Step 2：运行确认失败。**
 - [ ] **Step 3：实现。** `up()` 在 posts 循环后调用新函数 `ensureRun(l, posts)`：lead 结果不是 `launched`/`already_live` → `{ outcome: 'deferred', runId: team.runId }`；`leadHandle = registry.getPost(leadAddress)!.handle!`；无 `runId` → `ledgered(deps, { key: \`${name}:run-create\`, team: name, build: () => ({ objective: \`wingline:${name}\`, from: leadHandle }), call: (a) => orca.runCreate(a) })`，写回 `runId`/`coordinatorHandle`，`created`；有 `runId` → `terminalList()` 里有 `coordinatorHandle` → `kept`，否则 `runUse({ id, from: leadHandle })` 写回，`reclaimed`。捕获 `WinglineError`：`orca` → `failed`（`reason`）；`uncertain` → `uncertain`（`reason`、`retry: \`wl up ${specPath}\``）；`input`/`internal` 照旧上抛。`ensureRun` 保持在团队锁内执行（`up()` 已有的 `withTeamLock`）。`runUse` 不带 `--retry-request`（Global Constraints）。
-- [ ] **Step 4：运行确认通过** — `pnpm vitest run packages/core/test/commands/up.test.ts packages/cli` → PASS（含按 Files 修改过的那一条已有用例）。
+- [ ] **Step 4：运行确认通过** — `pnpm vitest run packages/core/test/commands/up.test.ts packages/cli` → PASS（含按 Files 修改过的那一条已有用例）；`pnpm typecheck`（确认 `main.test.ts` 里不带 `run` 的三处字面量照过）。
 - [ ] **Step 5：提交** — `git commit -m "feat(core): wl up establishes the orchestration Run and keeps the coordinator per the ownership rule"`
 
 ---
@@ -797,6 +907,36 @@ test('task returned to ready after its terminal closed: next dispatch bumps epoc
   expect(registry.getRequest(`dispatch:${id}:1`)!.state).toBe('done')
   expect(o.tasks.find((t) => t.id === id)).toMatchObject({ status: 'dispatched', assigneeHandle: 'term-c2' })
 })
+// 第三次复审必修 #2：本轮账本行已 done，任务此后往前走了（这里是对方已经做完）→ 已完成，不是 task_not_open，也不加 epoch
+test('this round\'s dispatch row is done and the task has since completed: returns the stored result, no Orca write, epoch unchanged', async () => {
+  const o = new FakeOrca(); const { deps, registry } = seedRunningTeam(o)
+  const id = await readyTask(o, deps)
+  const first = await dispatchTo(deps, 'duo', id, { address: 'checker@duo', handle: 'term-c' })
+  await o.workerDone({ taskId: id, dispatchId: first.dispatchId, outcome: 'succeeded', subject: 's', run: 'run-1', from: 'term-c' })
+  o.orch.length = 0
+  expect(await dispatchTo(deps, 'duo', id, { address: 'checker@duo', handle: 'term-c' })).toEqual(first)
+  expect(o.orch).toEqual([])
+  expect(registry.getTaskExt(id)!.epoch).toBe(0)
+})
+test('a replayed dispatch whose task has since moved on (not back to ready) is accepted as is: no epoch bump, no second dispatch', async () => {
+  const o = new FakeOrca(); const { deps, registry } = seedRunningTeam(o)
+  const id = await readyTask(o, deps)
+  o.faults.push({ method: 'dispatch', when: 'after', error: new WinglineError('uncertain', 'orca_timeout', 't') })   // 落地了，调用方看到超时
+  await expect(dispatchTo(deps, 'duo', id, { address: 'checker@duo', handle: 'term-c' })).rejects.toMatchObject({ kind: 'uncertain' })
+  const t = o.tasks.find((x) => x.id === id)!
+  await o.workerDone({ taskId: id, dispatchId: t.dispatchId!, outcome: 'succeeded', subject: 's', run: 'run-1', from: 'term-c' })   // 对方做完了
+  const r = await dispatchTo(deps, 'duo', id, { address: 'checker@duo', handle: 'term-c' })
+  expect(r.dispatchId).toBe('ctx-1')
+  expect(o.callsOf('dispatch')).toHaveLength(2)                // 第二次是同一个 id 的回放
+  expect(registry.getTaskExt(id)!.epoch).toBe(0)
+  expect(registry.getRequest(`dispatch:${id}:0`)!.state).toBe('done')
+})
+test('no ledger row and the task is not ready → task_not_open', async () => {
+  const o = new FakeOrca(); const { deps } = seedRunningTeam(o)
+  const id = await readyTask(o, deps)
+  await o.gateCreate({ task: id, question: 'q', from: 'coord-1' })   // → blocked
+  await expect(dispatchTo(deps, 'duo', id, { address: 'checker@duo', handle: 'term-c' })).rejects.toMatchObject({ code: 'task_not_open' })
+})
 
 // create.test.ts
 test('create without --post: task-create via P2, ready, task_ext kind work, spec prefixed by actor or human', async () => {
@@ -824,6 +964,19 @@ test('create --post: dispatch timed out → hint carries --retry-request; rerun 
   await createTask(deps, { team: 'duo', title: 't', post: 'checker@duo', retryRequest: id })
   expect(o.tasks).toHaveLength(1)
   expect(o.tasks[0]).toMatchObject({ status: 'dispatched', assigneeHandle: 'term-c' })
+  expect(o.callsOf('taskCreate')).toHaveLength(1)              // 重跑时 oneshot:<id> 已 done，不再调用 task-create
+})
+// 第三次复审必修 #3：task-create 超时（已落地）后调度员启动、run-use 换走了协调者，人工带 --retry-request 重试
+test('create timed out, then the coordinator changed: --retry-request replays with the original --from, no request_mismatch, one task', async () => {
+  const o = new FakeOrca(); const { deps, registry } = seedRunningTeam(o)
+  o.faults.push({ method: 'taskCreate', when: 'after', error: new WinglineError('uncertain', 'orca_timeout', 't') })
+  const err = await createTask(deps, { team: 'duo', title: 't' }).catch((e) => e)
+  const id = o.callsOf('taskCreate')[0]!.retryRequest as string
+  expect(err.hint).toContain('--from coord-1')
+  await o.runUse({ id: 'run-1', from: 'term-dsp' }); registry.upsertTeam({ ...registry.getTeam('duo')!, coordinatorHandle: 'term-dsp' })
+  const r = await createTask(deps, { team: 'duo', title: 't', retryRequest: id })
+  expect(o.callsOf('taskCreate').at(-1)).toMatchObject({ retryRequest: id, from: 'coord-1' })
+  expect(o.tasks).toHaveLength(1); expect(r.id).toBe(o.tasks[0]!.id)
 })
 test('create --post on an offline post fails before task-create', async () => {
   const o = new FakeOrca(); const { deps } = seedRunningTeam(o)
@@ -844,8 +997,13 @@ test('planTask writes the plan under the team lock; terminal tasks are rejected'
 - [ ] **Step 2：运行确认失败。**
 - [ ] **Step 3：实现。**
   - `query.ts` 按签名；`listTasks` 的 `mine` 用 `requireActor(deps, a.as)` 的地址比 `claimedBy`。
-  - `dispatch.ts` 的 `dispatchTo`（spec 第 9.3 节）：读 `task_ext`；`taskList` 取当前任务；键 `dispatch:<id>:<epoch>` 已 `done` 且任务 `ready` → `bumpEpoch(id, getVerdict(id, epoch)?.verdict === 'escalate')`，换键；任务 `dispatched` 且 `assigneeHandle === target.handle` 且键已 `done` → 返回存下的结果；任务既不是 `ready` 又没有未完成的账本行 → `task_not_open`；无账本行时才决定注入（`isOwnTerminal` → 不等不注；否则 `terminalWait({ handle, forState: 'tui-idle', timeoutMs: INJECT_IDLE_WAIT_MS })` 的 `satisfied`）；`ledgered(deps, { key, team, build: (t) => ({ task: id, to: target.handle, from: t.coordinatorHandle!, inject }), call: (a) => orca.dispatch(a) })`；若 `replayed`，再 `taskList` 确认任务 `dispatched` 给了目标，否则 `bumpEpoch` 后重走一次（最多一次）。返回 `{ delivery: self ? 'self' : injected ? 'injected' : 'not_notified', dispatchId }`。拆成 `currentEpochKey`、`decideInject`、`confirmDispatched` 三个小函数保持 ≤50 行。
-  - `create.ts`：`mustTeamReady`；给了 `post` 先 `locatePost`（无 → `post_offline`，在任何 Orca 写调用之前）；`actor = await resolveActor(deps, a.as)`；`oneShot(deps, { team, retryRequest: a.retryRequest, retryHint: (id) => \`${重建出的同一条 wl task create 命令} --retry-request ${id}\`, build: (t) => ({ spec: \`${actor?.address ?? 'human'}: ${a.title}\`, taskTitle: a.title, run: t.runId!, from: t.coordinatorHandle!, ...(a.parent ? { parent: a.parent } : {}) }), call: (x) => orca.taskCreate(x) })`；`insertTaskExt({ taskId, team, tags, kind: 'work', claimedBy: a.post ?? null })`；给了 `post` → `dispatchTo(...)`。P2 的 id 在 `create.ts` 里先生成（`a.retryRequest ?? randomUUID()`）再传给 `oneShot`，所以 `dispatchTo` 抛出的 `uncertain` 错误可以在这里**改写 hint**，换成同一条 `wl task create … --retry-request <这个 id>`（复审 W4：派发超时后重跑整条命令必须带同一个 id 才不会建出第二个任务）。
+  - `dispatch.ts` 的 `dispatchTo`（spec 第 9.3 节）。**本轮派发是否已完成以账本行 `dispatch:<id>:<epoch>` 为准，不按任务此刻的状态再推一遍**（第三次复审必修 #2）：读 `task_ext`；`taskList` 取当前任务；
+    - 键已 `done`：任务 `ready` → `bumpEpoch(id, getVerdict(id, epoch)?.verdict === 'escalate')`，换键往下走；任务是其他任何状态（`dispatched` 不论给谁、`blocked`、`completed`、`failed`）→ 直接返回存下的 `{ delivery, dispatchId }`，不调用 Orca、不报错；
+    - 键无行且任务不是 `ready` → `task_not_open`；键 `pending`/`uncertain` → 不看任务状态，往下原样重放；
+    - 无账本行时才决定注入（`isOwnTerminal` → 不等不注，`self = true`；否则 `terminalWait({ handle, forState: 'tui-idle', timeoutMs: INJECT_IDLE_WAIT_MS })` 的 `satisfied`）；`ledgered(deps, { key, team, build: (t) => ({ task: id, to: target.handle, from: t.coordinatorHandle!, inject, self }), call: async ({ self, ...a }) => { const r = await orca.dispatch(a); return { dispatchId: r.dispatchId, delivery: self ? 'self' : r.injected ? 'injected' : 'not_notified', replayed: r.replayed } } })`——`self` 随参数落盘但不传给 Orca，于是账本行存的结果里就有 `delivery`，上面"键已 done"那一支才能原样返回它；
+    - `confirmDispatched`：只在本次结果 `replayed` 时运行，再 `taskList` 一次——`dispatched` 给了目标 → 成功；**`ready` → 这才是"回放的那次派发已经结束"**（如目标终端被关闭，R4-3），`bumpEpoch` 后重走一次（最多一次）；其他状态（`blocked`/`completed`/`failed`/派给了别人）→ 那次派发确实落地过、任务此后往前走了，返回回放的结果，**不 `bumpEpoch`**（旧版在这里不分情况一律加 epoch，任务没回 `ready` 也会多出一轮）。
+    返回 `{ delivery, dispatchId }`。拆成 `currentEpochKey`、`decideInject`、`confirmDispatched` 三个小函数保持 ≤50 行。
+  - `create.ts`：`mustTeamReady`；给了 `post` 先 `locatePost`（无 → `post_offline`，在任何 Orca 写调用之前）；`actor = await resolveActor(deps, a.as)`；`id = a.retryRequest ?? randomUUID()`；`oneShot(deps, { team, retryRequest: a.retryRequest, id, retryHint: (rid) => \`${重建出的同一条 wl task create 命令} --retry-request ${rid}\`, build: (t) => ({ spec: \`${actor?.address ?? 'human'}: ${a.title}\`, taskTitle: a.title, run: t.runId!, from: t.coordinatorHandle!, ...(a.parent ? { parent: a.parent } : {}) }), call: (x) => orca.taskCreate(x) })`；`insertTaskExt({ taskId, team, tags, kind: 'work', claimedBy: a.post ?? null })`；给了 `post` → `dispatchTo(...)`。`id` 在这里先生成再传给 `oneShot`（`retryRequest` 仍只传用户在命令行给的那个，`oneShot` 据此判断要不要按"旧行"处理），所以 `dispatchTo` 抛出的 `uncertain` 错误可以在这里**改写 hint**，换成同一条 `wl task create … --retry-request <这个 id>（本次协调者 --from <handle>）`（复审 W4：派发超时后重跑整条命令必须带同一个 id 才不会建出第二个任务；重跑时 `oneshot:<id>` 已 `done`，直接拿回同一个任务 id，不再调用 `task-create`）。
   - `plan.ts`：`findTaskAnywhere` → `registry.withTeamLock(team, …)` 内检查状态并 `setTaskPlan`。
 - [ ] **Step 4：运行确认通过。**
 - [ ] **Step 5：提交** — `git commit -m "feat(core): task queries, dispatchTo, wl task create and plan"`
@@ -922,6 +1080,12 @@ test('start --as builder from the lead\'s (checker\'s) terminal: dispatched to b
   expect(await startTask(deps, { id, as: 'builder@duo' })).toEqual({ delivery: 'injected' })
   expect(o.callsOf('dispatch')[0]).toMatchObject({ to: 'term-b', inject: true })
 })
+test('start on a task already dispatched to another handle → task_not_open (dispatchTo would treat this round as done)', async () => {
+  const { o, deps, registry, add } = seed()
+  const id = await add([], 'builder@duo'); registry.setTaskPlan(id, 'p')
+  await o.dispatch({ task: id, to: 'term-c', from: 'coord-1' })
+  await expect(startTask(deps, { id, as: 'builder@duo' })).rejects.toMatchObject({ code: 'task_not_open' })
+})
 test('start rerun after success is a no-op', async () => {
   const { o, deps, registry, add } = seed()
   const id = await add([], 'builder@duo'); registry.setTaskPlan(id, 'p')
@@ -933,7 +1097,7 @@ test('start rerun after success is a no-op', async () => {
 > `withTeamLock` 只看持锁 pid 是否存活，同一进程内第二次获取同样 `team_busy`——阶段 1 `up.test.ts` 的 `'concurrent up on the same team → team_busy'` 就是这么测的，这里沿用。
 
 - [ ] **Step 2：运行确认失败。**
-- [ ] **Step 3：实现。** `claim.ts`：`requireActor` → 团队 → `loadTeamSpec(mustTeamReady(...).specPath)` 找岗位（无 → `post_unknown`）→ `!selfClaim` → `self_claim_disabled` → `withTeamLock(team, async () => { findTask；status !== 'ready' || claimedBy → task_not_open；tags 不相交 → tags_mismatch；setTaskClaimedBy })`。`start.ts`：解析同上；`ext.claimedBy !== actor.address` → `not_claimed_by_you`；`planFirst && !ext.plan` → `plan_required`；`handle = await resolveHandle(deps, actor)`；`findTask`：`dispatched` 且 assignee 是 `handle` → 直接返回（不检查 WIP、不调 Orca——`dispatchTo` 也会处理，这里提前返回只为不误算 WIP）；`blocked`/终态 → `task_not_open`；`fetchTasks` 数 `claimedBy === actor && status === 'dispatched'` ≥ 上限 → `wip_budget_exceeded`；`dispatchTo(deps, team, id, { address: actor.address, handle })`。
+- [ ] **Step 3：实现。** `claim.ts`：`requireActor` → 团队 → `loadTeamSpec(mustTeamReady(...).specPath)` 找岗位（无 → `post_unknown`）→ `!selfClaim` → `self_claim_disabled` → `withTeamLock(team, async () => { findTask；status !== 'ready' || claimedBy → task_not_open；tags 不相交 → tags_mismatch；setTaskClaimedBy })`。`start.ts`：解析同上；`ext.claimedBy !== actor.address` → `not_claimed_by_you`；`planFirst && !ext.plan` → `plan_required`；`handle = await resolveHandle(deps, actor)`；`findTask`：`dispatched` 且 assignee 是 `handle` → 直接返回（不检查 WIP、不调 Orca）；`dispatched` 给**另一个** handle、`blocked`/终态 → `task_not_open`（前者 hint"已派给 <handle>：先 wl task show <id>"；`dispatchTo` 对"本轮账本行已 done"一律当完成返回，所以这道拦截必须在 `start` 里做，spec 第 10 节）；`fetchTasks` 数 `claimedBy === actor && status === 'dispatched'` ≥ 上限 → `wip_budget_exceeded`；`dispatchTo(deps, team, id, { address: actor.address, handle })`。
 - [ ] **Step 4：运行确认通过。**
 - [ ] **Step 5：提交** — `git commit -m "feat(core): wl task claim and start"`
 
@@ -1094,6 +1258,31 @@ test('rerun after everything finished reports the stored result (replayed) and m
   expect(await doneTask(deps, { id })).toEqual({ ...first, replayed: true })
   expect(o.orch).toEqual([])
 })
+// 第三次复审必修 #2：两个评审目标；auditor 那一项派发超时；重跑之前 checker 已经把它的评审做完。
+// 旧逻辑重跑时对 checker 再走一遍派发，按"子任务既不是 ready 也不是派给 checker 的"判 task_not_open，永远收不了尾。
+test('two reviewers: one target\'s child dispatch timed out, the other target finished its review before the rerun → rerun finishes, the finished target is not touched', async () => {
+  const yaml3 = DUO_YAML + '  - id: auditor\n    agent: claude\n    worktree: current\n'
+  const o = new FakeOrca(); const s = seedRunningTeam(o, { yaml: yaml3 + `gates:\n  builder: '${GATE.replace(/'/g, "''")}'\nlinks:\n  builder:\n    reviewed_by: [checker, auditor]\n`, env: { ORCA_TERMINAL_HANDLE: 'term-b' } })
+  s.registry.upsertPost({ address: 'auditor@duo', team: 'duo', agent: 'claude', worktree: 'current', handle: 'term-a', status: 'live', isLead: false })
+  o.terminals.push({ handle: 'term-a', title: 'auditor@duo', connected: true, worktreeId: 'w' })
+  const { id } = await o.taskCreate({ spec: 's', taskTitle: '实现登录', run: 'run-1', from: 'coord-1' })
+  s.registry.insertTaskExt({ taskId: id, team: 'duo', tags: [], kind: 'work', claimedBy: 'builder@duo' })
+  await o.dispatch({ task: id, to: 'term-b', from: 'coord-1' })
+  o.faults.push({ method: 'dispatch', when: 'before', error: timeout(), match: (a) => a.to === 'term-a' })
+  await expect(doneTask(s.deps, { id })).rejects.toMatchObject({ kind: 'uncertain' })
+  const checkerChild = o.tasks.find((t) => t.parentId === id && t.assigneeHandle === 'term-c')!
+  await o.workerDone({ taskId: checkerChild.id, dispatchId: checkerChild.dispatchId!, outcome: 'succeeded', subject: 's', run: 'run-1', from: 'term-c' })   // checker 评审做完
+  o.orch.length = 0
+  const r = await doneTask(s.deps, { id })
+  expect(r.outcome).toBe('done')
+  expect(r.linkedTasks!.map((l) => [l.target, l.delivery])).toEqual([['checker@duo', 'injected'], ['auditor@duo', 'injected']])
+  expect(o.callsOf('dispatch').map((d) => d.to)).toEqual(['term-a'])        // checker 那一项不再派发
+  expect(o.callsOf('taskCreate')).toEqual([])                               // 两个子任务的 link 行都已 done：不再调用 task-create
+  expect(s.registry.getTaskExt(checkerChild.id)!.epoch).toBe(0)              // 没有凭空多出一轮
+  expect(o.tasks.filter((t) => t.parentId === id)).toHaveLength(2)
+  expect(gateRuns()).toBe(1)
+  expect(s.registry.getVerdict(id, 0)!.finishedAt).not.toBeNull()
+})
 test('coordinator changed between attempts: the child\'s task-create is reissued with the new coordinator', async () => {
   const { o, deps, registry, id } = await dispatched(REVIEW)
   o.faults.push({ method: 'taskCreate', when: 'before', error: timeout() })
@@ -1124,7 +1313,11 @@ test('when multilineSafe is false, a multi-line gate output goes to a file and -
   - 入口：`requireActor` → 团队 → `ext = getTaskExt(id)`（无 → `task_not_found`）→ `ext.claimedBy !== actor.address` → `not_your_task` → `v = getVerdict(id, ext.epoch)`：`v?.finishedAt` → `{ ...JSON.parse(v.result!), replayed: true }`；`!v` → `decide()`（可能直接返回 `gate_failed`）。
   - `decide()`：`findTask` 必须 `dispatched`（`ready` 时错误 hint 写"上一轮派发已结束，先 `wl task start <id>`"）；`handle = await resolveHandle(actor)`；`task.assigneeHandle !== handle` → `not_dispatched_to_you`；`gate = await runGate(post.gate, a.cwd ?? process.cwd())`；不通过且 `ext.gateFailures + 1 < max` → `incrementGateFailures`，返回 `gate_failed`；否则 `recordVerdict({ taskId, epoch: ext.epoch, post: actor.address, verdict, gateFailures: 不通过 ? ext.gateFailures + 1 : ext.gateFailures, dispatchId: task.dispatchId!, reportFrom: handle, body: toBody(...) })`。
   - `report(v)`：`ledgered(key \`done:${id}:${epoch}:report\`, build: () => ({ taskId: id, dispatchId: v.dispatchId, outcome: v.verdict === 'passed' ? 'succeeded' : 'failed', subject: v.verdict === 'passed' ? 'gate passed' : 'gate failed', ...(v.body ? { body: v.body } : {}), run: team.runId!, from: v.reportFrom }), call: workerDone)`。
-  - `passed` → `report` → `ext.kind === 'work'` 时 `linkAll`：对 `post.reviewedBy`（`kind: 'review'`，前缀"评审"）或 `post.handsTo`（`kind: 'work'`，前缀"交接"）的每个目标 `linkOne`：`ledgered(key \`done:${id}:${epoch}:link:${target}\`, build: (t) => ({ spec: \`${label}（${target}）：${id}\`, taskTitle: \`${label}：${task.title}\`, run: t.runId!, from: t.coordinatorHandle!, parent: id }), call: taskCreate)` → `insertTaskExt({ taskId: child, team, tags: [], kind, claimedBy: target })` → `locatePost(target)` 为空 → `skipped_offline`；否则 `dispatchTo(deps, team, child, { address: target, handle })`。任务标题在重跑时从 `findTask` 再取（终态任务仍在 `task-list` 里）。
+  - `passed` → `report` → `ext.kind === 'work'` 时 `linkAll`：对 `post.reviewedBy`（`kind: 'review'`，前缀"评审"）或 `post.handsTo`（`kind: 'work'`，前缀"交接"）的每个目标 `linkOne`：
+    1. **先查这个目标的交付记录** `registry.getRequest(\`done:${id}:${epoch}:delivered:${target}\`)`：`done` → 直接返回 `JSON.parse(receipt)`（`{ target, taskId, delivery }`），**不调用 Orca、不看子任务此刻的状态、不再查冻结/在线**（第三次复审必修 #2）。
+    2. 否则 `ledgered(key \`done:${id}:${epoch}:link:${target}\`, build: (t) => ({ spec: \`${label}（${target}）：${id}\`, taskTitle: \`${label}：${task.title}\`, run: t.runId!, from: t.coordinatorHandle!, parent: id }), call: taskCreate)` → `insertTaskExt({ taskId: child, team, tags: [], kind, claimedBy: target })` → `locatePost(target)` 为空 → `skipped_offline`；否则 `dispatchTo(deps, team, child, { address: target, handle })`（崩溃窗口——派发已成功、交付记录还没写——由 `dispatchTo` 的"本轮账本行已 done 即已完成"兜住，不会 `task_not_open`）。
+    3. 得到这一项后**立刻**写交付记录：`registry.beginRequest(key)` + `registry.finishRequest(key, 'done', entry)`（阶段 1 已有的两个方法，和阶段 1 记 `wait` 步骤一样是非写调用的步骤记录；`skipped_*` 也记）。不新增 registry 方法。
+    任务标题在重跑时从 `findTask` 再取（终态任务仍在 `task-list` 里）。
   - `escalate` → `report` → `escalateGate`：`ledgered(key \`done:${id}:${epoch}:gate\`, build: (t) => ({ task: id, question: \`连续 ${v.gateFailures} 次 gate 失败。resolve 后任务回到 ready：原岗位 wl task start 即重试；改派用 wl task resolve <gate> --reassign <地址>；不想继续就不要 resolve\`, from: t.coordinatorHandle! }), call: gateCreate)` → `recordGate(gateId, team, id)`。
   - 最后 `finishVerdict(id, epoch, result)` 并返回 `result`。
   - `toBody(output)`：空 → `null`；`multilineSafe` 或无换行 → 截断到 `GATE_OUTPUT_LIMIT`；否则写 `path.join(home, 'logs', team, \`gate-${id}-${epoch}.txt\`)`（`mkdirSync recursive`），写之前删除同目录下修改时间早于 7 天的 `gate-*.txt`，返回 `gate 输出见 <路径>`。
@@ -1172,6 +1365,19 @@ test('escalate timed out: hint carries --retry-request; rerunning with it create
   await escalateTask(deps, { id, reason: 'x', retryRequest: rid })
   expect(o.gates.size).toBe(1)
 })
+// 第三次复审必修 #3：两次尝试之间协调者被换走（如 wl up 按 spec 5.2 收回、调度员 run-use）
+test('escalate timed out, then the coordinator changed: --retry-request replays the original --from, no request_mismatch, one gate', async () => {
+  const o = new FakeOrca(); const { deps, registry } = seedRunningTeam(o)
+  const id = await dispatchedTask(o, deps)
+  o.faults.push({ method: 'gateCreate', when: 'after', error: new WinglineError('uncertain', 'orca_timeout', 't') })
+  const err = await escalateTask(deps, { id, reason: 'x' }).catch((e) => e)
+  const rid = o.callsOf('gateCreate')[0]!.retryRequest as string
+  expect(err.hint).toContain('--from coord-1')
+  await o.runUse({ id: 'run-1', from: 'coord-2' }); registry.upsertTeam({ ...registry.getTeam('duo')!, coordinatorHandle: 'coord-2' })
+  expect(await escalateTask(deps, { id, reason: 'x', retryRequest: rid })).toEqual({ gateId: 'gate-1', status: 'blocked' })
+  expect(o.callsOf('gateCreate').at(-1)).toMatchObject({ retryRequest: rid, from: 'coord-1' })
+  expect(o.gates.size).toBe(1)
+})
 test('escalate on an unknown task → task_not_found', async () => {
   await expect(escalateTask(mkDeps(new FakeOrca()).deps, { id: 'ghost', reason: 'x' })).rejects.toMatchObject({ code: 'task_not_found' })
 })
@@ -1197,7 +1403,7 @@ test('resolve on an unrecorded gate → gate_unknown', async () => {
 ```
 
 - [ ] **Step 2：运行确认失败。**
-- [ ] **Step 3：实现。** `escalateTask`：`findTaskAnywhere` → `oneShot(gateCreate, retryHint: (rid) => \`wl task escalate ${id} --reason <同一个理由> --retry-request ${rid}\`)` → `recordGate` → `taskList` 读回任务当前状态（不用回执）返回。`resolveGate`：`getGate`（无 → `gate_unknown`）→ `ledgered(key \`resolve:${gateId}\`, build: (t) => ({ id: gateId, resolution, from: t.coordinatorHandle! }), call: gateResolve)` → `reassign` 时 `setTaskClaimedBy` → `taskList` 读回状态返回。`resolveGate` 不碰 `epoch`/`gate_failures`：下次派发时 `dispatchTo` 按 spec 9.3 处理（这样在 Orca 界面里直接 resolve 也走同一条路）。
+- [ ] **Step 3：实现。** `escalateTask`：`findTaskAnywhere` → `oneShot(deps, { team, retryRequest: a.retryRequest, build: (t) => ({ task: id, question: a.reason, from: t.coordinatorHandle! }), call: gateCreate, retryHint: (rid) => \`wl task escalate ${id} --reason <同一个理由> --retry-request ${rid}\` })`（键 `oneshot:<id>`；重试原样重放首次的 `from`；`oneShot` 自己在 hint 末尾补"本次协调者 --from <handle>"，并把本地无记录时的 `request_mismatch` 报成 `retry_request_mismatch`）→ `recordGate` → `taskList` 读回任务当前状态（不用回执）返回。`resolveGate`：`getGate`（无 → `gate_unknown`）→ `ledgered(key \`resolve:${gateId}\`, build: (t) => ({ id: gateId, resolution, from: t.coordinatorHandle! }), call: gateResolve)` → `reassign` 时 `setTaskClaimedBy` → `taskList` 读回状态返回。`resolveGate` 不碰 `epoch`/`gate_failures`：下次派发时 `dispatchTo` 按 spec 9.3 处理（这样在 Orca 界面里直接 resolve 也走同一条路）。
 - [ ] **Step 4：运行确认通过。**
 - [ ] **Step 5：提交** — `git commit -m "feat(core): wl task escalate and resolve"`
 
@@ -1228,32 +1434,32 @@ wl task resolve <gateId> --resolution <text> [--reassign <addr>] [--json]
 
 ```ts
 test('wl task create --json prints the created id', async () => {
-  const c = fakeCommands({ createTask: async () => ({ id: 'task-1' }) })
-  const r = await runWith(['task', 'create', 'duo', '--title', 't', '--json'], c)
+  const c = cmds({ createTask: async () => ({ id: 'task-1' }) })
+  const r = await exec(['task', 'create', 'duo', '--title', 't', '--json'], c)
   expect(JSON.parse(r.out).result.id).toBe('task-1')
 })
 test('wl task create / escalate pass --retry-request through', async () => {
   const seen: unknown[] = []
-  const c = fakeCommands({ createTask: async (_d, a) => { seen.push(a); return { id: 't' } }, escalateTask: async (_d, a) => { seen.push(a); return { gateId: 'g', status: 'blocked' } } })
-  await runWith(['task', 'create', 'duo', '--title', 't', '--retry-request', 'rid-1'], c)
-  await runWith(['task', 'escalate', 't1', '--reason', 'x', '--retry-request', 'rid-2'], c)
+  const c = cmds({ createTask: async (_d, a) => { seen.push(a); return { id: 't' } }, escalateTask: async (_d, a) => { seen.push(a); return { gateId: 'g', status: 'blocked' } } })
+  await exec(['task', 'create', 'duo', '--title', 't', '--retry-request', 'rid-1'], c)
+  await exec(['task', 'escalate', 't1', '--reason', 'x', '--retry-request', 'rid-2'], c)
   expect(seen).toEqual([expect.objectContaining({ retryRequest: 'rid-1' }), expect.objectContaining({ retryRequest: 'rid-2' })])
 })
 test('wl task done exit codes follow outcome; an uncertain error exits 3 and prints the hint', async () => {
   for (const [outcome, code] of [['done', 0], ['gate_failed', 1], ['escalated', 1]] as const) {
-    expect((await runWith(['task', 'done', 't1'], fakeCommands({ doneTask: async () => ({ outcome }) }))).code).toBe(code)
+    expect((await exec(['task', 'done', 't1'], cmds({ doneTask: async () => ({ outcome }) }))).code).toBe(code)
   }
-  const r = await runWith(['task', 'done', 't1'], fakeCommands({ doneTask: async () => { throw new WinglineError('uncertain', 'orca_timeout', 't', { hint: '原样重跑同一条命令即可' }) } }))
+  const r = await exec(['task', 'done', 't1'], cmds({ doneTask: async () => { throw new WinglineError('uncertain', 'orca_timeout', 't', { hint: '原样重跑同一条命令即可' }) } }))
   expect(r).toMatchObject({ code: 3, err: expect.stringContaining('原样重跑') })
 })
 test('wl task list --tags a,b parses into an array', async () => {
   let args: unknown
-  await runWith(['task', 'list', 'duo', '--tags', 'a,b'], fakeCommands({ listTasks: async (_d, a) => { args = a; return [] } }))
+  await exec(['task', 'list', 'duo', '--tags', 'a,b'], cmds({ listTasks: async (_d, a) => { args = a; return [] } }))
   expect(args).toMatchObject({ tags: ['a', 'b'] })
 })
 ```
 
-> `fakeCommands(over)`/`runWith(argv, c)` 是对 `main.test.ts` 里已有 `run(argv, h.io, c, makeDeps)` 写法的两行包装（已有的 `Commands` 默认实现全部抛"未注入"），在本任务里加到文件顶部。
+> 直接用 `main.test.ts` 里**已有**的两个 helper，不另起名字：`cmds(over?: Partial<Commands>): Commands` 返回一个完整的 `Commands`——阶段 1 的四个字段 `up`/`ps`/`send`/`down` 的默认实现**返回固定的成功值**（如 `up` 返回 `{ team: 'duo', posts: [{ address: 'builder@duo', outcome: 'launched' }] }`），不是抛错；`exec(argv, c = cmds())` 调 `run(argv, h.io, c, makeDeps)` 并返回 `{ code, out, err }`。本任务给 `Commands` 加 9 个字段后，`cmds` 的默认对象必须为每个新字段补一个默认实现，否则 `cmds` 的返回类型不满足 `Commands`、`pnpm typecheck` 失败（`tsconfig.typecheck.json` 含 `packages/*/test`）；**新加的 9 个**默认实现一律 `async () => { throw new Error('未注入：<字段名>') }`（测试里没覆盖到的子命令一旦被调用就会暴露出来），阶段 1 的四个保持原样。2B 计划 Task 10 用同样的方式补它的 5 个字段。
 
 - [ ] **Step 2：运行确认失败。**
 - [ ] **Step 3：实现。** `Commands` 接口补 9 个字段，`realCommands` 补导入；逐个注册 `task` 子命令；逗号参数 `.split(',').filter(Boolean)`；`exitCodeOfDone`。`index.ts` 补 `commands/task/` 下 11 个文件的导出（`ledger`、`identity`、`gate-exec`、`query`、`dispatch`、`create`、`plan`、`claim`、`start`、`done`、`escalate`）。
@@ -1320,8 +1526,9 @@ test('the post\'s terminal is closed mid-task: Orca reverts it to ready, the own
 ## 自检记录
 
 - **spec 覆盖：** 第 2 节（实测语义）→ Task 3 的 argv 与 `FakeOrca` 模型；第 3 节约束 6 → Task 7，约束 8（§2.2 修订）→ Task 2/4 与 `deps.ts` 注释；第 4 节（字段、连接触发、环检测）→ Task 1、Task 10；第 5 节（Run、协调者归属、Run 复用）→ Task 5，`wl task` 被 fence 时刷新 → Task 4；第 6 节（表）→ Task 2；第 7 节（身份）→ Task 6，7.3（注入判断）→ Task 8 `dispatchTo`；第 8 节（状态机、`epoch`）→ Task 8/10/11；第 9 节（账本、键表、派发）→ Task 4/8 与 Global Constraints 的表；第 10 节（命令）→ Task 8–12；第 11 节（错误与 `uncertain`）→ Task 4（hint）、Task 8/11（P2 hint）、Task 12（退出码）；第 12 节（测试要求）→ Task 3 模型、Task 4/10 的重跑测试、Task 13。
-- **占位扫描：** 无 TBD；Task 3 的 `fake-client.test.ts` 只列了要钉的五条语义未逐字写出（每条是 spec 第 2 节事实的直接翻译），其余测试均为可执行代码；旧版里注释式的 claim/start/done 用例全部换成了可执行测试。
+- **占位扫描：** 无 TBD；Task 3 的 `fake-client.test.ts` 只列了要钉的七条语义未逐字写出（每条是 spec 第 2 节事实的直接翻译），其余测试均为可执行代码；旧版里注释式的 claim/start/done 用例全部换成了可执行测试。
 - **类型一致性：** `TeamRow.coordinatorHandle`、`RequestRow`、`TaskExtRow`（含 `kind`/`epoch`）、`DoneVerdictRow`、`OrchestrationTask`（含 `blocked`）、`Delivery`/`LinkDelivery`、`Actor` 在定义任务与消费任务之间一致（Task 2→4/8/9/10/11，Task 3→全部，Task 6→8/9/10，Task 8→9/10）。`runUse` 只在 Task 3 声明、无 `retryRequest`；2B 计划只消费它。
 - **Review Focus：** 6 条各有对应任务的可执行测试（见 Review Focus 的任务标注）。
 - **比例：** Task 10 最重（`done` 的判定 + 后续 + 重跑），测试也最多，符合它承载的风险；Task 7 最轻。
+- **第四次修订的自查：** ①生产代码里 `dropRequest` 只剩 Task 4 `ledgered` 的一个分支（新行被拒，或旧行收到 `LEDGER_CHECKED_CODES`），全文不再有"任意 `kind==='orca'` 就删行"的描述；②`dispatchTo` 的"已完成"只看本轮账本行，`bumpEpoch` 只在任务确实 `ready` 时调用（Task 8 两处：键已 done 且 `ready`、回放后 `ready`），`start` 自己拦"已派给别人"（Task 9），`linkOne` 先查 `delivered` 记录（Task 10）；③`oneShot` 的签名（Task 4）与两个消费者（Task 8 `create.ts`、Task 11 `escalateTask`）一致：`retryRequest` 只传用户给的，`create.ts` 另传预生成的 `id`；④`UpResult.run?` 与消费方（Task 5 `exitCodeOfUp`/`renderUp`/测试、2B 计划 Task 11）一致，`main.test.ts` 的三处旧字面量与 `registry.test.ts` 的 `getRequest` 断言已在 Task 5/Task 2 的 Files 里列明；⑤`cmds`/`exec` 是 `main.test.ts` 的真实 helper 名（Task 5、Task 12、2B 计划 Task 10 统一）；⑥新错误码 `retry_request_args_changed`（1）/`retry_request_mismatch`（3）与 spec 第 11 节一致。
 - **与 spec 的实现层决定：** `create --post` 的 P2 id 在 `create.ts` 里先生成再传入 `oneShot`，以便派发超时时 hint 里给出同一个 id（Task 8）；`start` 对"已派给自己"提前返回，避免把自己算进 WIP（Task 9）；`gateCreate` 不传 `--options`（Task 3）。
