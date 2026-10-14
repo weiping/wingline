@@ -337,3 +337,20 @@ macOS 真机（Orca 1.4.224）以**本机 claude × 2**（builder 与 checker �
 4. **`check --wait --timeout-ms <n>` 在没有新消息时干净地返回 `timedOut: true`，不报错**，即使 `--terminal` 指向的终端已经关闭——调度员主循环可以放心地用"要么拿到消息，要么超时"这两种结果驱动巡查节拍，不需要额外处理"终端已死"这类错误。
 
 原始回执见 `spikes/out/task-dispatch-probe/linux/`（手动命令，未写成脚本，回执直接贴在上面）。
+
+### 补充探针二：幂等重试 / `dispatch --inject` / `gate-create` 对已终态任务 / `WINGLINE_POST` 兼容性 / `lastOutputAt`（2026-10-14，Linux 本机真实 Orca 1.4.222，针对 Opus 复审阶段 2 文档后列出的未验证假设）
+
+背景：Opus 复审阶段 2A/2B 的 spec 与 plan 时，指出几处关键假设从未用真机验证过。本轮逐条补测，均在 wingline 仓库自己的 worktree（`path:/Users/liuweiping/workspace/dev/wingline`）里创建/关闭终端和一个 Run（`run_4ee13dec8229`，CLI 无法删除，已如实残留，需人工在界面清理），未影响其他团队状态。
+
+1. **所有编排写操作的 `--retry-request` 是真正的服务端幂等重放，不是仅对 `terminal send` 生效。** `orca-ide orchestration <子命令> --help` 核对：`task-create`/`task-update`/`run-create`/`dispatch`/`gate-create`/`send`/`run-use`/`worker-start` 全部带 `--retry-request <id>`（此前只在 `terminal send` 上验证过）。实测：`task-create` 首次成功后拿到 `mutation.requestId`，用同一个 id 重放同样的 `task-create`（哪怕参数完全照抄）→ 返回同一个 `task.id`、`mutation.replayed:true`，`task-list` 确认只有 1 条，没有建出重复任务。
+   **影响：** 2B 的"无重试账本"问题（复审发现 #4）可以直接复用 Orca 自带的幂等重放：雁阵只需要在调用前**先持久化一条"待确认"记录**（含完整参数），调用成功后把 Orca 返回的 `mutation.requestId` 存回这条记录；下次因为进程超时/崩溃需要重试同一操作时，带着存好的 `requestId` 重放即可保证不重复。唯一的真实缺口是："调用都没发出去，或发出去了但连 `requestId` 都没收到"这种彻底失联的情况——这时雁阵手上没有可重放的 id，只能靠查询现有状态（如 `task-list`）判断上次是否已经生效，这部分逻辑仍需要 2B 自己设计，不是 Orca 能兜底的。
+2. **`dispatch --inject` 之前的探针从未传过，默认 `--inject` 是 false，`injected:false` 只是因为没开这个参数，不代表"post 永远不会被通知"。** 补测：对占位进程（非 agent）终端 `--inject` 直接被拒（`code: inject_rejected`，`reason: no_agent_detected`，消息列出了 Orca 能识别的全部 agent CLI 名单，`claude` 在内）；对一个真实跑起来的本机 `claude` 终端（`tui-idle` 已满足）执行 `dispatch --task <id> --to <T> --from <协调者> --inject`，回执 `injected:true`，`prompt.stages:["input_accepted"]`，紧接着 `terminal show` 的 `preview` 显示 claude 已经在处理该任务（标题变成 `◐ Orchestration worker <任务标题>`，屏幕显示"✻ Frolicking…(thinking)"）。
+   **影响：** 复审发现 #5（"post 是否知道自己有活干从未验证"）解决——2A 的 `dispatch`/`hands_to`/`reviewed_by` 自动派任务，只要带上 `--inject`，Orca 会把任务内容直接写进目标 agent 的输入框并提交，不需要雁阵自己再做通知或要求 post 轮询。2A 计划里凡是建任务后派给一个 post 终端的地方，都应该把 `dispatch` 换成 `dispatch --inject`。仍要注意：`--inject` 要求目标终端已经是一个被 Orca 识别出的 agent（见上面的名单），对还在启动中或非 agent 终端会被拒——这与 `wl up` 需要先等 `tui-idle` 再派任务的既有设计一致。
+3. **`gate-create` 接受一个已经 `failed` 的任务，不报错。** 补测：先用 `orchestration send --type worker_done --outcome failed --task-id <id> --dispatch-id <id> --from <worker handle>` 把任务标记失败（任务进入终态），再对同一个 `--task <id>` 调 `gate-create`，返回 `ok:true`，新建的 gate 状态为 `pending`。
+   **影响：** 复审发现 #4 提到的"escalated 路径（预算耗尽后转人工决策，对已 failed 的任务 gate-create）此前未探测"——现已证实成立，2B 的 escalated 分支设计不需要改。
+4. **`WINGLINE_POST=<addr> <launch>` 前缀不会干扰 Orca 对 agent 终端的识别（POSIX/bash，Linux 实测）。** 补测：并排起两个终端，一个 `--command "<claude 完整路径> --dangerously-skip-permissions"`，另一个 `--command "WINGLINE_POST=builder@duo <claude 完整路径> --dangerously-skip-permissions"`；两者 `terminal wait --for tui-idle` 都正常满足，`terminal show` 的 `agentIdentity` 都是 `"claude"`，标题都是 `"✳ Claude Code"`，行为无差异。
+   **影响：** 复审发现 #7 的"WINGLINE_POST 注入会不会让 Orca 认不出 agent"这一条，在 POSIX shell 下**不成立**（前缀不影响识别）。未验证的仍是 Windows `.cmd` 路径的 `set WINGLINE_POST=<addr>&& <launch>` 写法——本机没有 Windows 真机，这部分假设继续待验证，2B/2A 文档需要把"已在 POSIX 验证、Windows 待验证"写清楚，不能再笼统写"未验证"。
+5. **`terminal show` 确实有 `lastOutputAt` 字段，是 Unix 毫秒时间戳（数字），不是字符串。** 实测 `lastOutputAt: 1791941667225`。Worktree 级别另有一个同名字段 `lastActivityAt`，同样是毫秒数字，但那是 worktree 粒度（多个 post 共享一个 worktree 时不够用），patrol 要用的必须是 `terminal show` 里这个按终端/post 的 `lastOutputAt`。
+   **影响：** 复审发现 #12（"lastOutputAt 格式与时区风险未验证"）解决：2B 的 `TerminalSummary.lastOutputAt` 类型应为 `number`（epoch ms），判断"多久没输出"直接用 `Date.now() - lastOutputAt`，不需要也不应该用 `Date.parse`，完全没有时区解析风险。
+
+收尾：5 个新建终端已全部 `terminal close`（`ptyKilled:true`），`terminal list` 确认无 `spike` 残留；本轮新建的 Run `run_4ee13dec8229` 和之前历次探针一样无法用 CLI 删除，残留待人工在 Orca 界面清理。
