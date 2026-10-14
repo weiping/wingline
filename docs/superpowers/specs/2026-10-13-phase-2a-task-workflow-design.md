@@ -204,6 +204,8 @@ ready + claimed_by=X（本地过渡态）                  │
 
 CLI 退出码：`done`（含附带 `linkedTask` 的情形）→ 0；`gate_failed`/`escalated` → 1（需要调用方或人工处理）。
 
+**`--body` 里的 gate 输出在 Windows 上要按总纲 7.7 已有的换行规则处理**：gate 命令的 stdout/stderr 几乎总是带换行，而所有 Orca 调用（含 `send`）在 Windows 上都经 `.cmd` 包装，`escapeCmdArg` 对含换行的参数直接报错（见总纲 7.7 的表："含换行...的 `wl send` 消息报输入错误，提示改成单行或写进文件后只发路径"）。`wl task done` 构造 `--body` 时沿用同一规则：`deps.multilineSafe` 为真（POSIX）直接截断嵌入；为假（Windows）时把完整输出写入 `~/.wingline/logs/<team>/gate-<task_id>-<N>.txt`，`--body` 只放一行"gate 输出见 <路径>"。不按 Windows 单独报错中止——`wl task done` 的 `--body`是雁阵自己拼出来的，不是用户输入，没有必要像 `wl send` 那样拒绝，直接退化成写文件即可。
+
 **`wl task escalate <id> --reason <text> [--as <addr>]`**
 
 人工或当前 owner 均可调用，`gate-create --task <id> --question <reason> --from <coordinator_handle>`，不改变任务的 Orca 状态（用于"还没到 gate 失败预算，但想提前叫人"的场景）。
