@@ -397,3 +397,22 @@ macOS 真机（Orca 1.4.224）以**本机 claude × 2**（builder 与 checker �
 **对设计的影响（2A/2B spec 与 plan 已按此修订，见各文档 2026-10-14 第三次修订说明）：** `wl task done` 的 `escalated` 分支必须先 `worker_done(failed)` 再 `gate-create`（第二次修订把顺序颠倒过来是错的，见 B3）；`wl task escalate` 会把在办任务从岗位手里收回（B1）；`wl task resolve` 实际效果是"任务回到 `ready`"（B2）；在办任务的孤儿问题在终端被关闭的场景下由 Orca 自己兜底（C3）；重跑安全可以用"持久化 id + 完整参数、fence 即未落地"这一条规则闭环（A1–A3）；`wl up` 不需要每次 `run-use` 才能让 2A 工作（C2）；2B 的岗位级"闸门连败"不能靠 `task-list` 的 assignee 统计（B4）；2B 第 2 级升级不能用 `send --type escalation`（D3）；`check` 消息字段按 A9 映射。
 
 收尾：四个探针（含 `gate-block-probe --part2` 那一次）创建的 13 个占位/shell 终端全部 `terminal close`，`terminal list` 确认无 `spike` 残留；新建的 Run（`run_3d5ed139d275`、`run_f71a6e4eef35`、`run_9c7120774f16`、`run_1f026d2532be`、`run_fd1dea1933fc`）CLI 无法删除，残留待人工在 Orca 界面清理。
+
+### 补充探针四：失败的调用进不进账本 / 已落地的调用在环境变化后重放（2026-10-14，Linux 本机真实 Orca 1.4.222，针对 Opus 第三次复审阶段 2 文档，下称 R4）
+
+背景：第三次复审指出 2A spec 第 9.1 节 P1 "其他明确的 Orca 错误 → 删掉账本行" 的依据（"Orca 先查账本，所以明确报错就证明原调用没落地"）只对**在账本检查之后**才产生的错误成立；`runner.json` 把一切 `ok:false` 都变成 `kind:'orca'`，其中 `runtime_unavailable`（"其他命令返回 ok:false、code runtime_unavailable"，见上面实测发现 10）是 CLI 根本连不上运行时、请求从未到达账本时返回的。还有两个前提此前没测过：失败的调用会不会被记进账本（若会，保留账本行重放就会永远回放同一个失败）；已落地的调用在 `--to`/`--from` 指向的终端被关闭之后重放，是回放还是报终端类错误（若是后者，这类错误也不能当作"没落地"的证明）。脚本 `spikes/ledger-failure-probe.ts`，只用占位终端，原始回执在 `spikes/out/ledger-failure-probe/linux/`。用法同前。
+
+1. **以 `ok:false` 结束的调用不进账本：之后同 id 同参数重放是重新执行，不是回放那次失败。** 证据两条：
+   - 任务 A 已派给 w1 时，用新 id `X` 把 A 派给 w2 → `task_not_startable`；关掉 w1（A 自动回 `ready`）后用同一个 `X`、同样参数重放 → `ok:true`、`mutation.replayed:false`、A 真的派给了 w2（新的 dispatch id）。
+   - 用非协调者 w2 的 `--from` 加 id `F` 调 `task-create` → `consumer_fenced`；`run-use` 把协调者换成 w2 后同一个 `F`、同样参数重放 → `ok:true`、`replayed:false`、建出任务；再重放一次才是 `replayed:true`。
+   - 对照：`worker_done --from <非 assignee>` 带 id 被拒（`worker_identity_changed`），同 id 重放还是同样的错误（条件没变，重新执行又被拒一次）。
+2. **"只有 `ready` 的任务能派发"的真实错误码是 `task_not_startable`**（`detail.status` 给出任务当时状态，`detail.nextSteps` 提示 `dispatch-show`）。此前 2A 计划的假 `OrcaClient` 用的 `invalid_state` 是编的。
+3. **已落地的 `dispatch` 在目标终端被关闭（任务因此回 `ready`）之后重放 → `replayed:true`，回执是原来的 dispatch 快照，任务仍是 `ready`、无 assignee。** 即账本检查在 `--to` 的有效性检查之前；同时再次印证回放回执是旧快照（R3-A2），不能据此认为任务"此刻"已派发。
+4. **已落地的 `worker_done` 在 assignee（`--from`）终端被关闭之后重放 → `replayed:true`。**
+5. 附带观察：`task_not_startable`、`consumer_fenced` 的错误回执 `detail` 里带 `orchestrationRequestId`（即这次用的 `--retry-request`），`worker_identity_changed` 的回执没有 `detail`。不据此推断错误产生在哪一层，只如实记录。
+
+**能确定"在账本检查之后才产生"的错误码（同一个 id 若曾落地，Orca 会先回放而不会返回这些错误）：** `consumer_fenced`（R3-A3）、`task_not_startable`（R3-A1：对已 `dispatched` 的任务重放落地过的 `dispatch` 是回放；本轮第 1 条）、`inactive_dispatch`（R3-A1：对已终态任务重放落地过的 `worker_done` 是回放，而新 id 在这种状态下得到的正是 `inactive_dispatch`，R3-B1）。**不能确定的：** `runtime_unavailable`（按定义产生在请求到达运行时之前，对"之前那次是否落地"不提供任何信息）、`inject_rejected`、`worker_identity_changed`，以及任何没在探针里出现过的错误码。
+
+**对设计的影响（2A spec 第 2、9.1、9.3、10 节与 2A 计划 Task 3/4/8/10/11 已按此修订，见各文档 2026-10-14 第四次修订说明）：** 账本行一旦可能已经发出过（进入本次调用时它就在、且不是 `done`），只有上面三个"确定在账本之后"的错误码才允许据此删行或换 id；其余一律保留 id 与参数、报"结果不确定"（退出码 3）。这样做的代价只有"重跑时重复执行一次必然失败的调用"，不会产生重复对象——因为第 1 条：失败不进账本，保留的 id 重放时要么回放真正落地过的那次，要么重新执行。
+
+收尾：本轮创建的 6 个占位终端全部 `terminal close`，`terminal list` 确认 0 个终端、无 `spike` 残留；新建的 Run `run_3d9c053676fa` CLI 无法删除，残留待人工在 Orca 界面清理。
