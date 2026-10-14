@@ -8,7 +8,9 @@
 
 **Tech Stack：** TypeScript、vitest、`node:sqlite`（已用）、commander（已用）；不引入新运行时依赖。
 
-**Spec：** `docs/superpowers/specs/2026-10-13-phase-2a-task-workflow-design.md`（下称 spec）。实现者必须同时阅读 spec 全文，尤其第 2、5、7、8 节。本计划的接口/字段/错误码均取自该 spec；本文档只在 spec 对某个细节留了开放选择时才做出决定并在对应任务里注明。
+**Spec：** `docs/superpowers/specs/2026-10-13-phase-2a-task-workflow-design.md`（下称 spec）。实现者必须同时阅读 spec 全文，尤其第 2、5、7、9 节（均在 2026-10-14 修订中改过——`dispatch --inject`、`wl up` 无条件 `run-use`、`--as` 的身份解析规则、`wl task done` 的调用顺序和幂等 id）。本计划的接口/字段/错误码均取自该 spec；本文档只在 spec 对某个细节留了开放选择时才做出决定并在对应任务里注明。
+
+> **2026-10-14 修订：** 本计划最初是对着 spec 的 2026-10-13 版写的；spec 经 Opus 复审和补充探针改过几处关键假设后，本计划同步修正了 Task 2/3/4/7/9/11，并修了 Task 2 测试里一处真实的外键违反（`recordGate` 测试没先建团队行）和 Task 7 `seedRunningTeam` 助手里悬空的 `specPath`。
 
 ## Global Constraints
 
@@ -18,6 +20,7 @@
 - Orca `--json` 信封、退出码四分类（1 输入/2 Orca/3 不确定/4 内部）沿用总纲 7.8 节，阶段 2A 新增的都是输入错误（退出码 1），因为 `wl task` 不产生新的"不确定"类别（spec 第 9 节）。
 - 规格哈希：新字段参与 `specHash`，沿用阶段 1 的规范化+SHA-256 规则，不新增哈希代码路径。
 - CI 矩阵不变：`macos-latest`、`ubuntu-latest`、`windows-latest` × Node `22.13`、`24`——所有新测试必须跨平台安全（gate 测试一律用 `node -e "..."`，不用 shell 内置命令）。
+- 凡是会在 Orca 侧产生新状态的编排写调用都带 `--retry-request`（实测确认 Orca 接受调用方自己生成的 UUID 当幂等键，见 spec 第 2 节事实 7）：单次调用命令（`run-create`/`run-use`/单纯的 `dispatch`/`workerDone`/`gateCreate`/`gateResolve`）每次尝试生成一个新 `crypto.randomUUID()`；`wl task done` 这种一条命令里有多步调用的，id 落在 `task_ext`（Task 2），重跑同一条命令天然复用。
 
 ## Review Focus
 
@@ -38,8 +41,8 @@ packages/core/src/
   spec/hash.ts                   # 改：新字段纳入 specHash
   registry/migrations.ts         # 改：新迁移（teams.coordinator_handle、task_ext、gates 表）
   registry/registry.ts           # 改：TeamRow 新字段；TaskExtRow 及其读写方法；gates 表方法
-  orca/types.ts                  # 改：OrchestrationTask 类型；OrcaClient 新增 7 个编排方法签名
-  orca/client.ts                 # 改：实现上面 7 个方法
+  orca/types.ts                  # 改：OrchestrationTask 类型；OrcaClient 新增 8 个编排方法签名（含 runUse）
+  orca/client.ts                 # 改：实现上面 8 个方法
   orca/cmd-escape.ts             # 改：新增 withPostEnv()
   commands/deps.ts               # 改：CommandDeps 新增 env 字段
   commands/up.ts                 # 改：WINGLINE_POST 注入 + run-create 建立协调者
@@ -169,6 +172,7 @@ test('hash changes when tags/gate/links/budgets change', () => {
   }
   export interface TaskExtRow {
     taskId: string; team: string; tags: string[]; plan: string | null; claimedBy: string | null; gateFailures: number
+    doneLinkRequestId: string | null; doneDispatchRequestId: string | null; doneReportRequestId: string | null
   }
   // Registry 新增方法：
   getTaskExt(taskId: string): TaskExtRow | null
@@ -176,6 +180,8 @@ test('hash changes when tags/gate/links/budgets change', () => {
   setTaskClaimedBy(taskId: string, claimedBy: string | null): void
   setTaskPlan(taskId: string, plan: string): void
   incrementGateFailures(taskId: string): number   // 返回自增后的计数
+  /** 只在对应列为空时写入（COALESCE 语义）：第一次尝试 wl task done 时落盘，裸重跑会读到同一批 id。见 spec 第 6 节。 */
+  setDoneRequestIds(taskId: string, ids: { link?: string; dispatch?: string; report?: string }): void
   recordGate(gateId: string, team: string): void
   getGateTeam(gateId: string): string | null
   ```
@@ -192,23 +198,39 @@ test('task_ext round trip and defaults', () => {
   const r = Registry.open(tmpFile())
   r.upsertTeam({ name: 'duo', specPath: '/s', specHash: 'h'.repeat(64), runId: 'run-1', coordinatorHandle: 'c', status: 'up' })
   r.insertTaskExt({ taskId: 'task-1', team: 'duo', tags: ['backend'] })
-  expect(r.getTaskExt('task-1')).toEqual({ taskId: 'task-1', team: 'duo', tags: ['backend'], plan: null, claimedBy: null, gateFailures: 0 })
+  expect(r.getTaskExt('task-1')).toEqual({
+    taskId: 'task-1', team: 'duo', tags: ['backend'], plan: null, claimedBy: null, gateFailures: 0,
+    doneLinkRequestId: null, doneDispatchRequestId: null, doneReportRequestId: null,
+  })
   r.setTaskClaimedBy('task-1', 'builder@duo')
   r.setTaskPlan('task-1', '先读代码')
   expect(r.incrementGateFailures('task-1')).toBe(1)
   expect(r.incrementGateFailures('task-1')).toBe(2)
   expect(r.getTaskExt('task-1')).toMatchObject({ claimedBy: 'builder@duo', plan: '先读代码', gateFailures: 2 })
 })
+test('setDoneRequestIds only writes columns that are still empty (COALESCE semantics)', () => {
+  const r = Registry.open(tmpFile())
+  r.upsertTeam({ name: 'duo', specPath: '/s', specHash: 'h'.repeat(64), runId: 'run-1', coordinatorHandle: 'c', status: 'up' })
+  r.insertTaskExt({ taskId: 'task-1', team: 'duo', tags: [] })
+  r.setDoneRequestIds('task-1', { link: 'rid-link-1', report: 'rid-report-1' })
+  r.setDoneRequestIds('task-1', { link: 'rid-link-2', dispatch: 'rid-dispatch-1', report: 'rid-report-2' })
+  expect(r.getTaskExt('task-1')).toMatchObject({
+    doneLinkRequestId: 'rid-link-1', doneDispatchRequestId: 'rid-dispatch-1', doneReportRequestId: 'rid-report-1',
+  })
+})
 test('gates table maps gate id to team', () => {
   const r = Registry.open(tmpFile())
+  r.upsertTeam({ name: 'duo', specPath: '/s', specHash: 'h'.repeat(64), runId: 'run-1', coordinatorHandle: 'c', status: 'up' })
   r.recordGate('gate-1', 'duo')
   expect(r.getGateTeam('gate-1')).toBe('duo')
   expect(r.getGateTeam('unknown')).toBeNull()
 })
 ```
 
+> **修正一处真实的外键违反：** 上面 `gates table maps gate id to team` 这条用例在最初版本里直接 `r.recordGate('gate-1', 'duo')`，没有先 `upsertTeam` 建 `duo` 这一行——`gates.team` 和 `task_ext.team` 都是 `REFERENCES teams(name)`，总纲 7.5 节"数据库启用 WAL 和外键"意味着这个写入会被 SQLite 拒绝。本计划里涉及 `task_ext`/`gates` 的每一条测试都必须先 `upsertTeam`，上面已经按这个要求写好；Task 7 起复用的 `seedRunningTeam` 助手本身就会建团队行，不需要额外注意。
+
 - [ ] **Step 2：运行确认失败。**
-- [ ] **Step 3：实现。** `migrations.ts` 追加数组第二项：`ALTER TABLE teams ADD COLUMN coordinator_handle TEXT; CREATE TABLE task_ext (task_id TEXT PRIMARY KEY, team TEXT NOT NULL REFERENCES teams(name), tags TEXT NOT NULL, plan TEXT, claimed_by TEXT, gate_failures INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL); CREATE TABLE gates (gate_id TEXT PRIMARY KEY, team TEXT NOT NULL REFERENCES teams(name));`。`registry.ts`：`teamRow()` 加 `coordinatorHandle: r.coordinator_handle as string | null`；`upsertTeam` 的 INSERT/UPDATE 语句加 `coordinator_handle` 列（值 `t.coordinatorHandle`）；新方法按 Interfaces 实现，`tags` 用 `JSON.stringify`/`JSON.parse` 存取，`incrementGateFailures` 用 UPDATE 后紧跟一次 SELECT 读回新值。`up.ts` 的 `registerTeam()` 里 `upsertTeam({...})` 调用加 `coordinatorHandle: existing?.coordinatorHandle ?? null`（和 `runId` 的既有写法完全对称）。测试文件里补 `coordinatorHandle: null`。
+- [ ] **Step 3：实现。** `migrations.ts` 追加数组第二项：`ALTER TABLE teams ADD COLUMN coordinator_handle TEXT; CREATE TABLE task_ext (task_id TEXT PRIMARY KEY, team TEXT NOT NULL REFERENCES teams(name), tags TEXT NOT NULL, plan TEXT, claimed_by TEXT, gate_failures INTEGER NOT NULL DEFAULT 0, done_link_request_id TEXT, done_dispatch_request_id TEXT, done_report_request_id TEXT, created_at TEXT NOT NULL); CREATE TABLE gates (gate_id TEXT PRIMARY KEY, team TEXT NOT NULL REFERENCES teams(name));`。`registry.ts`：`teamRow()` 加 `coordinatorHandle: r.coordinator_handle as string | null`；`upsertTeam` 的 INSERT/UPDATE 语句加 `coordinator_handle` 列（值 `t.coordinatorHandle`）；新方法按 Interfaces 实现，`tags` 用 `JSON.stringify`/`JSON.parse` 存取，`incrementGateFailures` 用 UPDATE 后紧跟一次 SELECT 读回新值；`setDoneRequestIds` 用 `UPDATE task_ext SET done_link_request_id = COALESCE(done_link_request_id, ?), done_dispatch_request_id = COALESCE(done_dispatch_request_id, ?), done_report_request_id = COALESCE(done_report_request_id, ?) WHERE task_id = ?`，入参里没给的那个位置传 `null`（`COALESCE(col, NULL)` 等于保留原值，不会误清空）。`up.ts` 的 `registerTeam()` 里 `upsertTeam({...})` 调用加 `coordinatorHandle: existing?.coordinatorHandle ?? null`（和 `runId` 的既有写法完全对称）。测试文件里补 `coordinatorHandle: null`。
 - [ ] **Step 4：运行确认通过** — `pnpm vitest run packages/core/test` → PASS；`pnpm typecheck` 无错误。
 - [ ] **Step 5：提交** — `git commit -m "feat(core): registry support for coordinator handle, task_ext and gates"`
 
@@ -230,19 +252,21 @@ test('gates table maps gate id to team', () => {
     parentId: string | null; assigneeHandle: string | null; dispatchId: string | null; result: string | null
   }
   // OrcaClient 新增：
-  runCreate(a: { objective: string; from: string }): Promise<{ id: string; coordinatorHandle: string }>
-  taskCreate(a: { spec: string; taskTitle: string; run: string; from: string; parent?: string }): Promise<{ id: string }>
+  runCreate(a: { objective: string; from: string; retryRequest?: string }): Promise<{ id: string; coordinatorHandle: string }>
+  runUse(a: { id: string; from: string; retryRequest?: string }): Promise<{ coordinatorHandle: string }>
+  taskCreate(a: { spec: string; taskTitle: string; run: string; from: string; parent?: string; retryRequest?: string }): Promise<{ id: string }>
   taskList(a: { run: string }): Promise<OrchestrationTask[]>
-  dispatch(a: { task: string; to: string; from: string }): Promise<{ dispatchId: string }>
-  workerDone(a: { taskId: string; dispatchId: string; outcome: 'succeeded' | 'failed'; subject: string; body?: string; run: string; from: string }): Promise<void>
-  gateCreate(a: { task: string; question: string; options?: string[]; from: string }): Promise<{ id: string }>
-  gateResolve(a: { id: string; resolution: string; from: string }): Promise<void>
+  dispatch(a: { task: string; to: string; from: string; inject?: boolean; retryRequest?: string }): Promise<{ dispatchId: string; injected: boolean }>
+  workerDone(a: { taskId: string; dispatchId: string; outcome: 'succeeded' | 'failed'; subject: string; body?: string; run: string; from: string; retryRequest?: string }): Promise<void>
+  gateCreate(a: { task: string; question: string; options?: string[]; from: string; retryRequest?: string }): Promise<{ id: string }>
+  gateResolve(a: { id: string; resolution: string; from: string; retryRequest?: string }): Promise<void>
   ```
-  argv（均由 `runner.json` 自动追加 `--json`）：
+  **`retryRequest`、`dispatch`的`inject` 在每个 argv 列表末尾按条件追加，不改变前面参数的顺序**（`...(a.retryRequest ? ['--retry-request', a.retryRequest] : [])`；`dispatch` 额外 `...(a.inject ? ['--inject'] : [])`，在 `--retry-request` 之前——两者独立，顺序本身不影响 Orca 解析，这里固定一个顺序只是为了测试断言好写）。argv（均由 `runner.json` 自动追加 `--json`）：
   - `runCreate` → `['orchestration','run-create','--objective',a.objective,'--from',a.from]`，读 `r.run.id`/`r.run.coordinator_handle`
+  - `runUse` → `['orchestration','run-use','--id',a.id,'--from',a.from]`，读 `r.run.coordinator_handle`（复用 `run-create` 的回执形状，字段名相同，见 `spikes/REPORT.md`"补充探针"）
   - `taskCreate` → `['orchestration','task-create','--spec',a.spec,'--task-title',a.taskTitle,'--run',a.run,'--from',a.from, ...(a.parent?['--parent',a.parent]:[])]`，读 `r.task.id`
   - `taskList` → `['orchestration','task-list','--run',a.run]`，把 `r.tasks[]` 的 `task_title→title`、`parent_id→parentId`、`assignee_handle→assigneeHandle`（缺省 null）、`dispatch_id→dispatchId`（缺省 null）映射过来，其余字段原名
-  - `dispatch` → `['orchestration','dispatch','--task',a.task,'--to',a.to,'--from',a.from]`，读 `r.dispatch.id` 为 `dispatchId`
+  - `dispatch` → `['orchestration','dispatch','--task',a.task,'--to',a.to,'--from',a.from, ...(a.inject?['--inject']:[])]`，读 `r.dispatch.id` 为 `dispatchId`、`r.injected` 为 `injected`
   - `workerDone` → `['orchestration','send','--type','worker_done','--outcome',a.outcome,'--task-id',a.taskId,'--dispatch-id',a.dispatchId,'--subject',a.subject, ...(a.body?['--body',a.body]:[]), '--run',a.run,'--from',a.from]`，不读返回值
   - `gateCreate` → `['orchestration','gate-create','--task',a.task,'--question',a.question, ...(a.options?['--options',JSON.stringify(a.options)]:[]), '--from',a.from]`，读 `r.gate.id`
   - `gateResolve` → `['orchestration','gate-resolve','--id',a.id,'--resolution',a.resolution,'--from',a.from]`，不读返回值
@@ -292,25 +316,43 @@ test('gateResolve builds argv', async () => {
   await client.gateResolve({ id: 'gate-1', resolution: 'retry', from: 'c' })
   expect(calls[0]).toEqual(['orchestration', 'gate-resolve', '--id', 'gate-1', '--resolution', 'retry', '--from', 'c'])
 })
+test('runUse reads coordinator_handle', async () => {
+  const { client, calls } = clientWith({ 'orchestration run-use': { run: { coordinator_handle: 'term-9' } } })
+  expect(await client.runUse({ id: 'run-1', from: 'term-9' })).toEqual({ coordinatorHandle: 'term-9' })
+  expect(calls[0]).toEqual(['orchestration', 'run-use', '--id', 'run-1', '--from', 'term-9'])
+})
+test('dispatch --inject is appended only when given, and reads injected from the receipt', async () => {
+  const { client, calls } = clientWith({ 'orchestration dispatch': { dispatch: { id: 'ctx-1' }, injected: true } })
+  expect(await client.dispatch({ task: 't1', to: 'h2', from: 'c', inject: true })).toEqual({ dispatchId: 'ctx-1', injected: true })
+  expect(calls[0]).toEqual(['orchestration', 'dispatch', '--task', 't1', '--to', 'h2', '--from', 'c', '--inject'])
+  await client.dispatch({ task: 't1', to: 'h2', from: 'c' })
+  expect(calls[1]).not.toContain('--inject')
+})
+test('--retry-request is appended to every mutating call only when given', async () => {
+  const { client, calls } = clientWith({ 'orchestration task-create': { task: { id: 't1' } } })
+  await client.taskCreate({ spec: 's', taskTitle: 't', run: 'run-1', from: 'c', retryRequest: 'rid-1' })
+  expect(calls[0]).toContain('rid-1')
+  expect(calls[0]!.at(-2)).toBe('--retry-request')
+})
 ```
 
 > `clientWith`（既有测试 helper）按 `args.slice(0,2).join(' ')` 当键，`orchestration task-create` 这类两段式命令正好命中；多留意 `--options` 的值在 argv 里是整个 JSON 字符串这一个元素，不是被 shell 分词。
 
 - [ ] **Step 2：运行确认失败。**
-- [ ] **Step 3：实现 `types.ts`/`client.ts`。** `FakeOrca`（`fake-client.ts`）补齐 7 个方法：各自维护一个 `XCalls` 数组记录入参、一个内部自增 id 计数器；`tasks: OrchestrationTask[]` 作为可从测试里直接读写的背板数据；`taskCreate` 推入一条 `status: 'ready'` 的任务；`dispatch` 找到对应任务改 `status/assigneeHandle/dispatchId`；`workerDone` 改 `status` 为 `completed`/`failed`（按 `outcome`）、`result` 存 `body ?? null`；`gateCreate`/`gateResolve` 只记录调用、返回/不返回对应值。
+- [ ] **Step 3：实现 `types.ts`/`client.ts`。** `FakeOrca`（`fake-client.ts`）补齐 8 个方法：各自维护一个 `XCalls` 数组记录入参（原样记录 `inject`/`retryRequest` 字段，供 argv 风格的断言之外也能直接按字段断言）、一个内部自增 id 计数器；`tasks: OrchestrationTask[]` 作为可从测试里直接读写的背板数据；`taskCreate` 推入一条 `status: 'ready'` 的任务；`dispatch` 找到对应任务改 `status/assigneeHandle/dispatchId`，返回 `injected: a.inject ?? false`（Fake 不模拟"未就位终端拒绝注入"这类真机行为，只回显调用方传了什么）；`workerDone` 改 `status` 为 `completed`/`failed`（按 `outcome`）、`result` 存 `body ?? null`；`gateCreate`/`gateResolve`/`runUse` 只记录调用、返回/不返回对应值（`runUse` 固定返回 `{ coordinatorHandle: a.from }`，和真实 `run-use` 的"值覆盖"语义一致）。**Fake 不实现 Orca 真实的幂等重放/`request_mismatch` 校验**——这是真机行为，留给契约测试的 fixture 或以后的真机集成测试验证，单元测试只需要确认 argv 里带上了 `--retry-request`。
 - [ ] **Step 4：运行确认通过** — `pnpm vitest run packages/core/test` → PASS（含其他命令测试文件仍能编译）；`pnpm typecheck`。
 - [ ] **Step 5：提交** — `git commit -m "feat(core): orchestration methods on OrcaClient"`
 
 ---
 
-### Task 4：`wl up`——`WINGLINE_POST` 注入 + 建立协调者
+### Task 4：`wl up`——`WINGLINE_POST` 注入 + 建立/刷新协调者
 
 **Files:**
 - Modify：`packages/core/src/orca/cmd-escape.ts`、`packages/core/src/commands/up.ts`
-- Modify：`packages/core/test/orca/cmd-escape.test.ts`、`packages/core/test/commands/up.test.ts`
+- Modify：`packages/core/test/orca/cmd-escape.test.ts`、`packages/core/test/commands/up.test.ts`、`packages/core/test/commands/fake-client.ts`（`FakeOrca` 加一个可选的 `leadHandleOverride` 字段：设了的话，`terminalList()` 对 lead 这个岗位的标题返回这个 handle 而不是 `terminalCreate` 时分配的那个，模拟"第二轮 `wl up` 把 lead 识别成 `already_live`，但它的 handle 和第一轮不一样"——不需要真的关闭重开终端）
 
 **Interfaces:**
-- Consumes：`OrcaClient.runCreate`（Task 3）、`TeamRow.coordinatorHandle`（Task 2）
+- Consumes：`OrcaClient.runCreate`/`runUse`（Task 3）、`TeamRow.coordinatorHandle`（Task 2）
 - Produces：
   ```ts
   // cmd-escape.ts
@@ -344,26 +386,32 @@ test('after both posts are up and the lead is live, wl up establishes the Run vi
   const { deps, registry } = mkDeps(o)
   await up(deps, { specPath: duo() })
   expect(o.runCreateCalls).toEqual([{ objective: 'wingline:duo', from: 'term-1' }])  // term-1 = builder（lead）的 handle
+  expect(o.runUseCalls).toEqual([])   // 首次建立用 run-create，不是 run-use
   expect(registry.getTeam('duo')).toMatchObject({ runId: 'run-1', coordinatorHandle: 'term-1' })
 })
-test('a second wl up does not re-create the Run', async () => {
+test('a second wl up calls run-use (not run-create) and refreshes coordinatorHandle to the current lead handle', async () => {
   const o = new FakeOrca()
-  const { deps } = mkDeps(o)
+  const { deps, registry } = mkDeps(o)
   await up(deps, { specPath: duo() })
   o.runCreateCalls.length = 0
+  o.leadHandleOverride = 'term-1-new'   // 模拟 lead 终端被重建、handle 变了（比如上一轮 down --close 之后）
   await up(deps, { specPath: duo() })
   expect(o.runCreateCalls).toEqual([])
+  expect(o.runUseCalls).toEqual([{ id: 'run-1', from: 'term-1-new' }])
+  expect(registry.getTeam('duo')).toMatchObject({ runId: 'run-1', coordinatorHandle: 'term-1-new' })
 })
-test('if the lead post is not live this round, the Run is not created', async () => {
+test('if the lead post is not live this round, neither run-create nor run-use is called', async () => {
   const o = new FakeOrca()
   o.waitSatisfied = false
-  await up(mkDeps(o).deps, { specPath: duo() })
+  const { deps } = mkDeps(o)
+  await up(deps, { specPath: duo() })
   expect(o.runCreateCalls).toEqual([])
+  expect(o.runUseCalls).toEqual([])
 })
 ```
 
 - [ ] **Step 2：运行确认失败。**
-- [ ] **Step 3：实现。** `withPostEnv` 按签名实现。`up.ts`：`startPost` 里 `orca.terminalCreate({ ..., command: post.launch })` 改成 `command: withPostEnv(post.launch, address, l.deps.multilineSafe)`。`up()` 函数里，posts 循环结束后，新增：若 `registry.getTeam(spec.name)!.runId` 为空，找出 `posts` 结果里地址等于 `postAddress(spec.lead, spec.name)` 的那条，若其 `outcome` 是 `'launched'` 或 `'already_live'`，取 `registry.getPost(leadAddress)!.handle!`，调用 `deps.orca.runCreate({ objective: \`wingline:${spec.name}\`, from: leadHandle })`，把结果写回 `registry.upsertTeam({ ...team, runId: run.id, coordinatorHandle: run.coordinatorHandle })`。
+- [ ] **Step 3：实现。** `withPostEnv` 按签名实现。`up.ts`：`startPost` 里 `orca.terminalCreate({ ..., command: post.launch })` 改成 `command: withPostEnv(post.launch, address, l.deps.multilineSafe)`。`up()` 函数里，posts 循环结束后，新增：找出 `posts` 结果里地址等于 `postAddress(spec.lead, spec.name)` 的那条；若其 `outcome` 不是 `'launched'`/`'already_live'`，跳过（下次 `wl up` 再试，和原设计一致）；否则取 `registry.getPost(leadAddress)!.handle!` 为 `leadHandle`——若 `registry.getTeam(spec.name)!.runId` 为空，调用 `deps.orca.runCreate({ objective: \`wingline:${spec.name}\`, from: leadHandle })`；否则（`runId` 已存在，**不管这轮是不是刚重复跑一次**）无条件调用 `deps.orca.runUse({ id: team.runId!, from: leadHandle })`。两个分支都把结果的 `coordinatorHandle` 写回 `registry.upsertTeam({ ...team, runId: team.runId ?? run.id, coordinatorHandle: result.coordinatorHandle })`（这是 spec 第 5 节"无条件 run-use"修订后的行为——解决协调者 handle 在 `wl down --close` + `wl up` 或 Orca 重启后悬空的问题）。
 - [ ] **Step 4：运行确认通过。**
 - [ ] **Step 5：提交** — `git commit -m "feat(core): inject WINGLINE_POST and establish the orchestration Run on wl up"`
 
@@ -499,7 +547,10 @@ test('runs in the given cwd', async () => {
   export async function listTasks(deps: CommandDeps, args: { team?: string; mine?: boolean; status?: string; tags?: string[]; as?: string }): Promise<TaskRow[]>
   export async function showTask(deps: CommandDeps, args: { id: string; team?: string }): Promise<TaskRow>
   // create.ts
-  export async function createTask(deps: CommandDeps, args: { team: string; title: string; post?: string; tags?: string[]; parent?: string; as?: string }): Promise<{ id: string }>
+  export async function createTask(deps: CommandDeps, args: { team: string; title: string; post?: string; tags?: string[]; parent?: string; as?: string; retryRequest?: string }): Promise<{ id: string }>
+  // retryRequest 不给时内部 crypto.randomUUID()，用在 task-create 这一步；--post 触发的 dispatch 是单独一次调用，
+  // 总是另生成一个随机 id（不暴露给调用方控制）——两次调用内容不同，不能共用同一个幂等 id（spec 第 2 节事实 7：
+  // 同 id 配不同参数会被 Orca 拒绝 request_mismatch）。
   // plan.ts
   export async function planTask(deps: CommandDeps, args: { id: string; text: string }): Promise<void>   // task_terminal；无需身份（spec 第 9 节原文如此）
   ```
@@ -549,11 +600,11 @@ test('createTask --spec text is prefixed with the actor address, or "human" when
   await createTask(deps, { team: 'duo', title: 't' })
   expect(o.taskCreateCalls[1]!.spec).toMatch(/^human: /)
 })
-test('createTask --post dispatches to that post\'s handle', async () => {
+test('createTask --post dispatches to that post\'s handle with --inject', async () => {
   const o = new FakeOrca(); const { deps, registry } = seedRunningTeam(o)
   registry.upsertPost({ address: 'checker@duo', team: 'duo', agent: 'codex', worktree: 'current', handle: 'term-2', status: 'live', isLead: false })
   const r = await createTask(deps, { team: 'duo', title: 't', post: 'checker@duo' })
-  expect(o.dispatchCalls).toEqual([{ task: r.id, to: 'term-2', from: 'coord-1' }])
+  expect(o.dispatchCalls[0]).toMatchObject({ task: r.id, to: 'term-2', from: 'coord-1', inject: true })
 })
 test('createTask --post on an offline post fails before dispatch', async () => {
   const o = new FakeOrca(); const { deps, registry } = seedRunningTeam(o)
@@ -581,10 +632,10 @@ test('planTask on a completed/failed task is rejected', async () => {
 })
 ```
 
-> 新增测试 helper `seedRunningTeam(orca, over?)`：在 `fake-client.ts` 里加一个便捷函数，内部调用既有 `mkDeps`，再 `registry.upsertTeam({ name:'duo', ..., runId:'run-1', coordinatorHandle:'coord-1', status:'up' })`，返回 `{ deps, registry }`——后续 Task 8–10 的测试都要用到，在本任务里一次性加好。
+> 新增测试 helper `seedRunningTeam(orca, over?)`：在 `fake-client.ts` 里加一个便捷函数，内部调用既有 `mkDeps`，再 `registry.upsertTeam({ name:'duo', specPath: mkTeam(DUO_YAML), specHash:'h'.repeat(64), runId:'run-1', coordinatorHandle:'coord-1', status:'up' })`，返回 `{ deps, registry }`——**`specPath` 必须是 `mkTeam(DUO_YAML)` 返回的真实临时文件路径，不能随手写个占位字符串**：`claimTask`/`startTask`（Task 8）要用它 `loadTeamSpec(...)` 读出 `self_claim`/`tags`/`plan_first`/`gate`/`links`，占位路径会在那两个任务的测试里读文件失败。后续 Task 8–10 的测试都要用到这个 helper，在本任务里一次性加好。
 
 - [ ] **Step 2：运行确认失败。**
-- [ ] **Step 3：实现。** `query.ts`：`mustTeamReady` 读 `registry.getTeam`，缺失/`runId`或`coordinatorHandle`为空分别报 `team_unknown`/`run_not_ready`；`fetchTasks` 调 `deps.orca.taskList({ run: team.runId! })`，按 `id` 左连接 `deps.registry.getTaskExt(t.id)`（没有则 `tags:[], plan:null, claimedBy:null, gateFailures:0`）；`findTask` 从 `fetchTasks` 结果里找，找不到报 `task_not_found`；`findTaskAnywhere` 遍历 `registry.listTeams().filter(t=>t.runId)`，对每个调 `fetchTasks` 找 id，找到即返回，否则遍历完报 `task_not_found`；`listTasks`：`team` 给出则只查该队，否则遍历所有已建 Run 的队，合并后按 `status`/`tags`（交集）/`mine`（需要 `resolveActor`+`resolveOwnHandle`，按 `assigneeHandle===handle || claimedBy===actor` 过滤）过滤；`showTask`：`team` 给出调 `findTask`，否则调 `findTaskAnywhere` 取 `.task`。`create.ts`：按 Interfaces 实现，`spec` 文本为 `` `${args.as ?? deps.env.WINGLINE_POST ?? 'human'}: ${args.title}` ``，给了 `post` 时解析其 `registry.getPost(args.post)?.handle`（无则 `post_offline`）再 `dispatch`。`plan.ts`：`findTaskAnywhere` 取任务，`completed`/`failed` 报 `task_terminal`，否则 `registry.setTaskPlan`。
+- [ ] **Step 3：实现。** `query.ts`：`mustTeamReady` 读 `registry.getTeam`，缺失/`runId`或`coordinatorHandle`为空分别报 `team_unknown`/`run_not_ready`；`fetchTasks` 调 `deps.orca.taskList({ run: team.runId! })`，按 `id` 左连接 `deps.registry.getTaskExt(t.id)`（没有则 `tags:[], plan:null, claimedBy:null, gateFailures:0`）；`findTask` 从 `fetchTasks` 结果里找，找不到报 `task_not_found`；`findTaskAnywhere` 遍历 `registry.listTeams().filter(t=>t.runId)`，对每个调 `fetchTasks` 找 id，找到即返回，否则遍历完报 `task_not_found`；`listTasks`：`team` 给出则只查该队，否则遍历所有已建 Run 的队，合并后按 `status`/`tags`（交集）/`mine`（需要 `resolveActor`+`resolveOwnHandle`，按 `assigneeHandle===handle || claimedBy===actor` 过滤）过滤；`showTask`：`team` 给出调 `findTask`，否则调 `findTaskAnywhere` 取 `.task`。`create.ts`：按 Interfaces 实现，`spec` 文本为 `` `${args.as ?? deps.env.WINGLINE_POST ?? 'human'}: ${args.title}` ``，`taskCreate` 调用带 `retryRequest: args.retryRequest ?? crypto.randomUUID()`；给了 `post` 时解析其 `registry.getPost(args.post)?.handle`（无则 `post_offline`）再 `orca.dispatch({ task: created.id, to: handle, from: coordinatorHandle, inject: true, retryRequest: crypto.randomUUID() })`（`inject: true` 是因为这是派给另一个岗位，对方不会自己来问；和 Task 8 `startTask` 的自派发不同，那里故意不传 `inject`）。`plan.ts`：`findTaskAnywhere` 取任务，`completed`/`failed` 报 `task_terminal`，否则 `registry.setTaskPlan`。
 - [ ] **Step 4：运行确认通过。**
 - [ ] **Step 5：提交** — `git commit -m "feat(core): wl task create/list/show/plan"`
 
@@ -637,7 +688,7 @@ test('start: dispatches to the caller\'s own resolved handle', async () => {
 ```
 
 - [ ] **Step 2：运行确认失败。**
-- [ ] **Step 3：实现。** `claim.ts`：`const actor = resolveActor(deps, args.as); const team = actor.split('@')[1]!; const spec = loadTeamSpec(mustTeamReady(deps, team).specPath); const post = spec.posts.find(p => postAddress(p.id, team) === actor)`（找不到报 `post_unknown`）；`!post.selfClaim` → `self_claim_disabled`；`registry.withTeamLock(team, async () => { const task = await findTask(deps, team, args.id); task.status !== 'ready' → task_not_open; task.claimedBy → task_not_open（已被认领视同不再 open）; task.tags.length && !task.tags.some(t => post.tags.includes(t)) → tags_mismatch; registry.setTaskClaimedBy(args.id, actor) })`。`start.ts`：解析 actor/team/post 同上；`const ext = deps.registry.getTaskExt(args.id); ext?.claimedBy !== actor → not_claimed_by_you`；`post.planFirst && !ext.plan → plan_required`；`const handle = await resolveOwnHandle(deps, actor)`；`const rows = await fetchTasks(deps, team)`；统计 `rows.filter(r => r.assigneeHandle === handle && r.status === 'dispatched').length >= spec.budgets.maxInProgressPerPost → wip_budget_exceeded`；否则 `await deps.orca.dispatch({ task: args.id, to: handle, from: (await mustTeamReady(deps, team)).coordinatorHandle! })`。
+- [ ] **Step 3：实现。** `claim.ts`：`const actor = resolveActor(deps, args.as); const team = actor.split('@')[1]!; const spec = loadTeamSpec(mustTeamReady(deps, team).specPath); const post = spec.posts.find(p => postAddress(p.id, team) === actor)`（找不到报 `post_unknown`）；`!post.selfClaim` → `self_claim_disabled`；`registry.withTeamLock(team, async () => { const task = await findTask(deps, team, args.id); task.status !== 'ready' → task_not_open; task.claimedBy → task_not_open（已被认领视同不再 open）; task.tags.length && !task.tags.some(t => post.tags.includes(t)) → tags_mismatch; registry.setTaskClaimedBy(args.id, actor) })`。`start.ts`：解析 actor/team/post 同上；`const ext = deps.registry.getTaskExt(args.id); ext?.claimedBy !== actor → not_claimed_by_you`；`post.planFirst && !ext.plan → plan_required`；`const handle = await resolveOwnHandle(deps, actor)`；`const rows = await fetchTasks(deps, team)`；统计 `rows.filter(r => r.assigneeHandle === handle && r.status === 'dispatched').length >= spec.budgets.maxInProgressPerPost → wip_budget_exceeded`；否则 `await deps.orca.dispatch({ task: args.id, to: handle, from: (await mustTeamReady(deps, team)).coordinatorHandle! })`——**不传 `inject`（自派发，调用方当下就在这个任务里敲命令）也不传 `retryRequest`**：这是唯一一处 `dispatch` 不接幂等 id 的地方，因为自派发裸重跑天然安全——若上一次其实已经成功，重跑只会撞上 Orca 自己的"已 dispatched 的任务不能再 dispatch"（spec 第 2 节事实 3），这是一个清晰可辨认的错误，不是静默重复，不需要额外的幂等机制兜底。
 - [ ] **Step 4：运行确认通过。**
 - [ ] **Step 5：提交** — `git commit -m "feat(core): wl task claim and start"`
 
@@ -648,9 +699,10 @@ test('start: dispatches to the caller\'s own resolved handle', async () => {
 **Files:**
 - Create：`packages/core/src/commands/task/done.ts`
 - Create：`packages/core/test/commands/task/done.test.ts`
+- Modify：`packages/core/test/commands/fake-client.ts`（`FakeOrca` 加一个贯穿所有方法的 `callOrder: string[]`，每个编排方法调用时各推入一个标签字符串——`'taskCreate'`/`'dispatch'`/`'workerDone'`/`'gateCreate'` 等。本任务要断言"哪个调用先发生"，现有各方法各自一个 `XCalls` 数组看不出跨方法的相对顺序）
 
 **Interfaces:**
-- Consumes：`runGate`（Task 6）、`mustTeamReady`/`findTask`（Task 7）、`resolveActor`/`resolveOwnHandle`（Task 5）
+- Consumes：`runGate`（Task 6）、`mustTeamReady`/`findTask`（Task 7）、`resolveActor`/`resolveOwnHandle`（Task 5）、`Registry.setDoneRequestIds`/`getTaskExt`（Task 2）
 - Produces：
   ```ts
   export type DoneOutcome = 'done' | 'gate_failed' | 'escalated'
@@ -658,6 +710,10 @@ test('start: dispatches to the caller\'s own resolved handle', async () => {
   export async function doneTask(deps: CommandDeps, args: { id: string; cwd?: string; as?: string }): Promise<DoneResult>
   ```
   > spec 第 9 节写的是单数 `linkedTask: string`；`reviewed_by`/`hands_to` 本身是列表，这里改成 `linkedTasks: string[]`（可能为空数组，没有 link 时字段省略）以忠实支持多个目标——做出这个选择是因为单数字段无法表达配置了多个评审人的情况，细节记在这里供以后对照 spec 时核对。
+
+  **调用顺序和幂等 id（spec 2026-10-14 修订后的核心变化）：** 会建立新状态的调用（建关联任务/gate）必须排在把原任务转终态的 `workerDone` 之前，命令中途失败时裸重跑才安全。进入函数后先调一次 `registry.setDoneRequestIds(args.id, { link: crypto.randomUUID(), dispatch: crypto.randomUUID(), report: crypto.randomUUID() })`（只在对应列还是空的时候才真正写入新生成的值，见 Task 2 的 COALESCE 语义），再 `const ext = registry.getTaskExt(args.id)!` 读回**实际生效**的三个 id——裸重跑时读到的是上一次尝试落盘的那一批，不是刚生成的。三个分支都从这里取用：有链接的 `done` 用 `ext.doneLinkRequestId` 给 `taskCreate`、`ext.doneDispatchRequestId` 给链接任务的 `dispatch`、`ext.doneReportRequestId` 给 `workerDone`；`escalated` 用 `ext.doneLinkRequestId` 给 `gateCreate`（和"有链接"分支互斥，不会同时发生在一次调用里，共用一列没有冲突）、`ext.doneReportRequestId` 给 `workerDone`；无链接的 `done` 只用 `ext.doneReportRequestId` 给 `workerDone`。
+
+  **Windows 换行兜底（spec 同一修订）：** gate 的 stdout/stderr 几乎总带换行，而 Orca 调用在 Windows 上经 `.cmd` 包装会拒绝含换行的参数。`deps.multilineSafe` 为假且要塞进 `--body` 的内容含 `\n`/`\r` 时，改成把完整内容写进 `path.join(deps.home, 'logs', team, \`gate-${args.id}-${Date.now()}.txt\`)`，`--body` 只放一行"gate 输出见 <路径>"；`multilineSafe` 为真或内容本来就没有换行，直接截断嵌入（沿用已有的 4000 字符量级）。
 
 - [ ] **Step 1：写失败测试**
 
@@ -673,9 +729,14 @@ test('gate passes, no links: outcome done, worker_done(succeeded) sent once', as
   expect(r).toEqual({ outcome: 'done' })
   expect(o.workerDoneCalls).toEqual([{ taskId: 't1', dispatchId: 'ctx-1', outcome: 'succeeded', subject: 'gate passed', run: 'run-1', from: '<builder 的 handle>' }])
 })
-test('gate passes, reviewed_by: creates one child task per reviewer and dispatches it', async () => {
-  // team.yaml 变体：builder.links.reviewed_by = [checker]；断言 o.taskCreateCalls 含 parent:'t1'、spec 前缀 '评审：'
-  // 且 o.dispatchCalls 把新任务派给 checker 的 handle；r.linkedTasks 长度 1
+test('gate passes, reviewed_by: creates the child task and dispatches it with --inject, in that order, before worker_done', async () => {
+  // team.yaml 变体：builder.links.reviewed_by = [checker]
+  const r = await doneTask(deps, { id: 't1', as: 'builder@duo' })
+  expect(o.taskCreateCalls[0]).toMatchObject({ parent: 't1', spec: expect.stringContaining('评审：') })
+  expect(o.dispatchCalls[0]).toMatchObject({ to: '<checker 的 handle>', inject: true })
+  expect(o.callOrder.indexOf('taskCreate')).toBeLessThan(o.callOrder.indexOf('dispatch'))
+  expect(o.callOrder.indexOf('dispatch')).toBeLessThan(o.callOrder.lastIndexOf('workerDone'))
+  expect(r.linkedTasks).toHaveLength(1)
 })
 test('gate passes, hands_to: same shape with "交接：" prefix', async () => { /* ... */ })
 test('gate fails, under budget: outcome gate_failed, no orca call beyond the gate itself', async () => {
@@ -684,18 +745,31 @@ test('gate fails, under budget: outcome gate_failed, no orca call beyond the gat
   expect(o.workerDoneCalls).toEqual([])
   expect(deps.registry.getTaskExt('t1')!.gateFailures).toBe(1)
 })
-test('gate fails, exactly at the budget: outcome escalated, worker_done(failed) + gate-create', async () => {
+test('gate fails, exactly at the budget: outcome escalated, gate-create happens before worker_done(failed)', async () => {
   // 预置 gateFailures = budgets.maxGateFailures - 1，再失败一次
   const r = await doneTask(deps, { id: 't1', as: 'builder@duo' })
   expect(r).toEqual({ outcome: 'escalated' })
+  expect(o.callOrder.indexOf('gateCreate')).toBeLessThan(o.callOrder.indexOf('workerDone'))
   expect(o.workerDoneCalls[0]).toMatchObject({ outcome: 'failed' })
   expect(o.gateCreateCalls[0]).toMatchObject({ task: 't1', options: ['retry', 'abandon', 'reassign'] })
-  expect(deps.registry.getGateTeam(o.gateCreateCalls[0]!... /* 用 gateCreate 返回的 id */)).toBe('duo')
+  // FakeOrca 按 Task 3 的约定用内部自增计数器分配 id（如 'gate-1'），本测试里这是第一次 gateCreate 调用
+  expect(deps.registry.getGateTeam('gate-1')).toBe('duo')
+})
+test('a bare rerun of wl task done after an interrupted escalated attempt reuses the same retry-request ids and does not duplicate the gate', async () => {
+  // 第一次调用前手动 registry.setDoneRequestIds('t1', { link: 'rid-link', report: 'rid-report' }) 模拟"上次已经落盘但没跑完"
+  // 断言这次 doneTask 的 gateCreate/workerDone 调用里的 retryRequest 等于 'rid-link'/'rid-report'，不是新生成的随机值
+})
 })
 ```
 
 - [ ] **Step 2：运行确认失败。**
-- [ ] **Step 3：实现。** 解析 `actor`/`team`（同 Task 8 的 `actor.split('@')[1]`）、`post`、`handle = await resolveOwnHandle(...)`；`const task = await findTask(deps, team, args.id)`；`task.assigneeHandle !== handle → not_dispatched_to_you`；`task.status !== 'dispatched' → task_not_dispatched`；`const gate = await runGate(post.gate, args.cwd ?? process.cwd())`；gate 通过：`await orca.workerDone({ taskId, dispatchId: task.dispatchId!, outcome:'succeeded', subject:'gate passed', run: teamRow.runId!, from: handle })`；若 `post.reviewedBy.length` 或 `post.handsTo.length`（互斥，Task 1 已校验不会同时出现），对每个目标地址：`orca.taskCreate({ spec: \`${prefix}${args.id}\`, taskTitle: \`${prefix}${task.title}\`, run, from: coordinatorHandle, parent: args.id })` → `registry.insertTaskExt({ taskId: created.id, team, tags: [] })` → `orca.dispatch({ task: created.id, to: <目标 handle>, from: coordinatorHandle })`，收集 `linkedTasks`；gate 不通过：`const n = registry.incrementGateFailures(args.id)`；`n < spec.budgets.maxGateFailures` → 返回 `{ outcome:'gate_failed' }`；否则 `orca.workerDone({ ..., outcome:'failed', body: gate.output })`，`const { id: gateId } = await orca.gateCreate({ task: args.id, question: \`连续 ${n} 次 gate 失败，需要人工决定下一步\`, options: ['retry','abandon','reassign'], from: coordinatorHandle })`，`registry.recordGate(gateId, team)`，返回 `{ outcome: 'escalated' }`。
+- [ ] **Step 3：实现。** 解析 `actor`/`team`（同 Task 8 的 `actor.split('@')[1]`）、`post`、`handle = await resolveOwnHandle(...)`；`const task = await findTask(deps, team, args.id)`；`task.assigneeHandle !== handle → not_dispatched_to_you`；`task.status !== 'dispatched' → task_not_dispatched`；`const gate = await runGate(post.gate, args.cwd ?? process.cwd())`；`registry.setDoneRequestIds(args.id, { link: crypto.randomUUID(), dispatch: crypto.randomUUID(), report: crypto.randomUUID() })` 然后 `const ext = registry.getTaskExt(args.id)!` 取回实际生效的三个 id（见上面 Interfaces 的说明）；`const body = toBody(gate.output, deps)`（见下方 `toBody` 说明，Windows 换行兜底）。
+
+  **gate 通过分支，按顺序：** 若 `post.reviewedBy.length` 或 `post.handsTo.length`（互斥，Task 1 已校验不会同时出现），对每个目标地址依次：①`orca.taskCreate({ spec: \`${prefix}${args.id}\`, taskTitle: \`${prefix}${task.title}\`, run, from: coordinatorHandle, parent: args.id, retryRequest: ext.doneLinkRequestId })` → `registry.insertTaskExt({ taskId: created.id, team, tags: [] })`；②`orca.dispatch({ task: created.id, to: <目标 handle>, from: coordinatorHandle, inject: true, retryRequest: ext.doneDispatchRequestId })`，收集进 `linkedTasks`；都做完之后才③`orca.workerDone({ taskId, dispatchId: task.dispatchId!, outcome:'succeeded', subject:'gate passed', body, run: teamRow.runId!, from: handle, retryRequest: ext.doneReportRequestId })`。没有链接时直接做③，跳过①②。
+
+  **gate 不通过分支：** `const n = registry.incrementGateFailures(args.id)`；`n < spec.budgets.maxGateFailures` → 不调用任何 Orca 方法，返回 `{ outcome:'gate_failed' }`；否则按顺序：①`const { id: gateId } = await orca.gateCreate({ task: args.id, question: \`连续 ${n} 次 gate 失败，需要人工决定下一步\`, options: ['retry','abandon','reassign'], from: coordinatorHandle, retryRequest: ext.doneLinkRequestId })`，`registry.recordGate(gateId, team)`；然后②`orca.workerDone({ taskId, dispatchId: task.dispatchId!, outcome:'failed', subject:'gate failed', body, run: teamRow.runId!, from: handle, retryRequest: ext.doneReportRequestId })`；返回 `{ outcome: 'escalated' }`。**①②次序不能颠倒**——这正是本次修订要修的问题：若先调②把原任务转成终态，再调①建 gate 时失败，人工永远看不到这个决策请求。
+
+  `toBody(output: string, deps: CommandDeps): string | undefined`（本任务内部小函数，不需要单独导出）：`output` 为空返回 `undefined`；`deps.multilineSafe` 为真或 `output` 不含 `\n`/`\r`，直接截断到既有的 4000 字符量级；否则把完整 `output` 写入 `path.join(deps.home, 'logs', team, \`gate-${args.id}-${Date.now()}.txt\`)`（`fs.mkdirSync(..., {recursive:true})` 兜底目录不存在），返回 `\`gate 输出见 ${那个路径}\``（单行，不含换行，安全经过 Windows `.cmd` 包装）。
 - [ ] **Step 4：运行确认通过。**
 - [ ] **Step 5：提交** — `git commit -m "feat(core): wl task done with gate execution and reviewed_by/hands_to linking"`
 
@@ -764,7 +838,7 @@ test('resolve on an unrecorded gate id fails', async () => {
 命令面（对照 spec 第 9 节；`claim/start/plan/done/escalate/resolve` 不带显式 `--team`，身份/任务查找自己解析团队，见 Task 7–10）：
 
 ```
-wl task create <team> --title <t> [--post <addr>] [--tags <a,b>] [--parent <id>] [--as <addr>] [--json]
+wl task create <team> --title <t> [--post <addr>] [--tags <a,b>] [--parent <id>] [--as <addr>] [--retry-request <id>] [--json]
 wl task list [team] [--mine] [--status <s>] [--tags <a,b>] [--as <addr>] [--json]
 wl task show <id> [--team <team>] [--json]
 wl task claim <id> [--as <addr>] [--json]
@@ -837,4 +911,5 @@ test('full flow: up establishes the Run, then create → claim → start → don
 - **spec 覆盖：** spec 第 2 节（实测结论）→ Task 3/4 的 argv/字段映射；第 3 节（shell 例外）→ Task 6；第 4 节（team.yaml）→ Task 1；第 5 节（Run/协调者）→ Task 2/4；第 6 节（注册表）→ Task 2；第 7 节（身份解析）→ Task 5；第 8 节（状态机）→ Task 7–9；第 9 节（命令）→ Task 7–10；第 10 节（错误处理）→ 各任务内联；第 11 节（测试分层）→ Task 3（契约）、Task 7–10（单元）、Task 12（集成）。
 - **类型一致性：** `TaskRow`/`OrchestrationTask`/`CommandDeps`/`mustTeamReady`/`findTask`/`resolveActor`/`resolveOwnHandle` 在定义任务与使用任务中签名一致（已核对 Task 7→8/9/10 的消费点）。
 - **Review Focus：** 5 条均已在对应任务里有专门测试（见上文 Review Focus 小节的任务标注）。
-- **与 spec 的已知偏离（均为实现判断，已在对应任务里注明理由）：** `wl task done` 的 `linkedTask: string` 改为 `linkedTasks: string[]`（Task 9）；`wl task plan`/`escalate`/`resolve` 不接 `--as`（Task 7/10，因为 spec 正文从未对这三个命令的调用方做身份校验，保留这个参数只会是死代码）。
+- **与 spec 的已知偏离（均为实现判断，已在对应任务里注明理由）：** `wl task done` 的 `linkedTask: string` 改为 `linkedTasks: string[]`（Task 9）；`wl task plan`/`escalate`/`resolve` 不接 `--as`（Task 7/10，因为 spec 正文从未对这三个命令的调用方做身份校验，保留这个参数只会是死代码）；`wl task create --post` 的 `dispatch` 和 `wl task done` 链接派发的 `dispatch` 不接受用户传入的 `retryRequest`（始终内部生成），只有 `task-create` 本身暴露 `--retry-request`——两次调用内容不同不能共用一个幂等 id，没有必要为第二次调用也开一个 CLI 参数。
+- **2026-10-14 修订带来的新增产物：** `OrcaClient.runUse`（Task 3/4，解决 `wl up` 第二次及以后运行时协调者 handle 刷新）；`task_ext` 的三个 `done_*_request_id` 列和 `Registry.setDoneRequestIds`（Task 2/9，`wl task done` 的裸重跑安全性）；`FakeOrca.callOrder`（Task 9，断言跨方法调用顺序）；`dispatch` 新增 `inject`/`injected` 字段（Task 3，贯穿 Task 7/9 所有"派给别的岗位"的调用点，Task 8 的自派发故意不用）。均已在对应任务的 Interfaces/Step 3 里给出确切签名和理由，不存在"决定了但没写下来"的缺口。
