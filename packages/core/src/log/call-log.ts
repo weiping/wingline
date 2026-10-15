@@ -36,6 +36,17 @@ export function pruneCallLogs(dir: string, now: Date): void {
   }
 }
 
+/** 摘要行里保留的信息：回执的 ok、错误码、消息/任务条数（回执不是合法 JSON 时什么也不加）。 */
+function receiptSummary(stdout: string): Record<string, unknown> {
+  try {
+    const env = JSON.parse(stdout) as { ok?: boolean; error?: { code?: string }; result?: { count?: number; messages?: unknown[] } }
+    const count = env.result?.count ?? env.result?.messages?.length
+    return { ok: env.ok, ...(env.error?.code ? { errorCode: env.error.code } : {}), ...(count === undefined ? {} : { count }) }
+  } catch {
+    return {}
+  }
+}
+
 export interface CallLogOptions {
   /** 为真时这一行只记 args/ms/exitCode/stdoutBytes（只读轮询，避免一天上千条完整回执）；失败时仍保留 stderr。 */
   summarize?: (args: string[]) => boolean
@@ -50,7 +61,7 @@ export function createCallLog(dir: string, now: () => Date = () => new Date(), o
     record(e) {
       const head = { at: now().toISOString(), args: redact(e.args), ms: e.ms, exitCode: e.exitCode }
       const line = o.summarize?.(e.args)
-        ? { ...head, stdoutBytes: e.stdout.length, ...(e.exitCode === 0 ? {} : { stderr: e.stderr.slice(0, RECEIPT_LIMIT) }) }
+        ? { ...head, stdoutBytes: e.stdout.length, ...receiptSummary(e.stdout), ...(e.exitCode === 0 ? {} : { stderr: e.stderr.slice(0, RECEIPT_LIMIT) }) }
         : { ...head, stdout: e.stdout.slice(0, RECEIPT_LIMIT), stderr: e.stderr.slice(0, RECEIPT_LIMIT) }
       fs.appendFileSync(file(), JSON.stringify(line) + '\n')
     },

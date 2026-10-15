@@ -41,6 +41,8 @@ export interface LoopState {
   checkFailures: number
   backoffMs: number
   logDay: string
+  /** 上一次 check 是否成功；只在结果变化时记事件。 */
+  lastCheckOk: boolean | null
 }
 export interface LoopOpts {
   signal?: AbortSignal
@@ -98,7 +100,7 @@ export function initialState(deps: CommandDeps, team: TeamRow, spec: TeamSpec): 
   const now = deps.now()
   return {
     team, spec, specHash: team.specHash, locked: false, lastScanAt: now.getTime(), lastWall: now.getTime(), lastMono: deps.monotonic(),
-    wokeAt: null, observeOnlyNextScan: true, pendingAck: null, checkFailures: 0, backoffMs: BACKOFF_START_MS, logDay: dayOf(now),
+    wokeAt: null, observeOnlyNextScan: true, pendingAck: null, checkFailures: 0, backoffMs: BACKOFF_START_MS, logDay: dayOf(now), lastCheckOk: null,
   }
 }
 
@@ -150,7 +152,7 @@ async function checkFailed(st: LoopState, opts: LoopOpts, result: 'failed' | 'lo
   return result
 }
 
-async function reclaim(deps: CommandDeps, st: LoopState, handle: string): Promise<void> {
+async function reclaim(deps: CommandDeps, st: LoopState, handle: string, opts: LoopOpts): Promise<void> {
   st.pendingAck = null
   let outcome = 'ok'
   try {
@@ -159,6 +161,9 @@ async function reclaim(deps: CommandDeps, st: LoopState, handle: string): Promis
     outcome = `failed:${codeOf(err)}`
   }
   deps.registry.appendPatrolEvent({ team: st.team.name, action: 'fenced_reclaim', outcome })
+  if (outcome === 'ok') return
+  await (opts.sleep ?? defaultSleep)(st.backoffMs)
+  st.backoffMs = Math.min(st.backoffMs * 2, BACKOFF_MAX_MS)
 }
 
 async function inbox(deps: CommandDeps, handle: string, st: LoopState, opts: LoopOpts): Promise<LoopResult['check']> {
@@ -178,7 +183,7 @@ async function inbox(deps: CommandDeps, handle: string, st: LoopState, opts: Loo
     return 'ok'
   } catch (err) {
     if (fenced(err)) {
-      await reclaim(deps, st, handle)
+      await reclaim(deps, st, handle, opts)
       return 'fenced'
     }
     if (err instanceof WinglineError && err.code === 'dispatcher_superseded') throw err
@@ -195,6 +200,7 @@ async function scan(deps: CommandDeps, st: LoopState, opts: LoopOpts): Promise<v
     beat(deps, team, st.locked)
     const hits = detectSignals(snap, st.spec, deps.registry.listPatrolState(team))
     await advancePatrol(deps, ctx, hits, { observeOnly: st.observeOnlyNextScan, ops: opts.ops, io: opts.io })
+    deps.registry.appendPatrolEvent({ team, action: 'scan', outcome: 'ok', detail: { hits: hits.length } })
   } catch (err) {
     if (err instanceof WinglineError && err.code === 'dispatcher_superseded') throw err
     deps.registry.appendPatrolEvent({ team, action: 'scan_skipped', outcome: `failed:${codeOf(err)}` })
@@ -204,12 +210,20 @@ async function scan(deps: CommandDeps, st: LoopState, opts: LoopOpts): Promise<v
   }
 }
 
+function recordCheck(deps: CommandDeps, st: LoopState, check: LoopResult['check']): void {
+  const ok = check === 'ok'
+  if (st.lastCheckOk === ok) return
+  st.lastCheckOk = ok
+  deps.registry.appendPatrolEvent({ team: st.team.name, action: ok ? 'check_ok' : 'check_failed', outcome: ok ? 'ok' : `failed:${check}` })
+}
+
 /** spec 第 3 节的五步：心跳 → 唤醒检测 → 维护 → 收件箱 → 巡查（巡查与收件箱是否成功无关）。 */
 export async function loopOnce(deps: CommandDeps, handle: string, st: LoopState, opts: LoopOpts = {}): Promise<LoopResult> {
   beat(deps, st.team.name, st.locked)
   const woke = detectWake(deps, st)
   maintain(deps, st)
   const check = await inbox(deps, handle, st, opts)
+  recordCheck(deps, st, check)
   beat(deps, st.team.name, st.locked)
   const due = deps.now().getTime() - st.lastScanAt >= PATROL_INTERVAL_MS
   if (due) await scan(deps, st, opts)

@@ -86,7 +86,7 @@ async function clearRow(e: Env, row: PatrolStateRow): Promise<void> {
 }
 
 async function announce(e: Env, h: SignalHit, level: number, message: string): Promise<void> {
-  await notifyHuman(e.deps, e.ctx, { post: h.post, signal: h.signal, taskId: h.taskId, level, message }, e.io)
+  await notifyHuman(e.deps, e.ctx, { post: h.post, signal: h.signal, taskId: h.taskId, level, message, command: h.command }, e.io)
   await worktreeComment(e.deps, e.ctx, h.post, `雁阵：${h.post} ${h.signal}（${e.now.toISOString()}）`)
 }
 

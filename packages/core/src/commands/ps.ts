@@ -2,6 +2,7 @@ import { WinglineError } from '../errors.js'
 import type { TerminalSummary } from '../orca/types.js'
 import type { PostRow } from '../registry/registry.js'
 import { preflight, type CommandDeps } from './deps.js'
+import { dispatcherHealth, type DispatcherHealth } from './dispatcher/lifecycle.js'
 
 export interface PsRow {
   address: string
@@ -10,6 +11,8 @@ export interface PsRow {
   handle: string | null
   worktree: string
   isLead: boolean
+  /** 该岗位所在团队的调度员状态；从未启动过则不填。 */
+  dispatcher?: DispatcherHealth
 }
 
 function statusOf(matches: TerminalSummary[]): PsRow['status'] {
@@ -31,11 +34,12 @@ export async function ps(deps: CommandDeps, args: { team?: string }): Promise<Ps
   }
   await preflight(deps)
   const terminals = await orca.terminalList()
-  return teams.flatMap((t) =>
-    registry.listPosts(t!.name).map((post) => {
+  return teams.flatMap((t) => {
+    const health = dispatcherHealth(deps, t!.name)
+    return registry.listPosts(t!.name).map((post) => {
       const r = row(post, terminals.filter((x) => x.title === post.address))
       if (r.handle !== post.handle) registry.setPostHandle(post.address, r.handle)
-      return r
-    }),
-  )
+      return health.state === 'never' ? r : { ...r, dispatcher: health }
+    })
+  })
 }

@@ -41,6 +41,8 @@ export interface HumanNotice {
   taskId?: string | null
   level: number
   message: string
+  /** 建议的处理命令；wl attention 从最近一条 notify 事件里读它。 */
+  command?: string
 }
 export interface OutletIo {
   fetch?: typeof fetch
@@ -93,7 +95,7 @@ export async function notifyHuman(deps: CommandDeps, ctx: Ctx, n: HumanNotice, i
     n.post === lead ? 'skipped_self' : await typeTo(deps, team, lead, n.message, { action: 'notify_lead', subject: n.post, signal: n.signal, taskId: n.taskId })
   const external = await notifyExternal(deps, ctx, n, io)
   deps.registry.appendPatrolEvent({
-    team, post: n.post, signal: n.signal, taskId: n.taskId, action: 'notify', outcome: `lead:${toLead};external:${external}`, detail: { level: n.level, message: n.message },
+    team, post: n.post, signal: n.signal, taskId: n.taskId, action: 'notify', outcome: `lead:${toLead};external:${external}`, detail: { level: n.level, message: n.message, command: n.command },
   })
   return { lead: toLead, external }
 }
