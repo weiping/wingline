@@ -59,6 +59,11 @@ function markUncertain<A extends object, R>(x: Ctx<A, R>, err: unknown, hint: st
   throw uncertainError(err, hint)
 }
 
+/** oneShot 的 c.hint 带 --retry-request <id>；所有不确定出口都经它，缺省用 fallback。 */
+function hintFor<A extends object, R>(x: Ctx<A, R>, row: RequestRow, fallback: string): string {
+  return x.c.hint ? x.c.hint(JSON.parse(row.args!) as A, row.retryRequest!) : fallback
+}
+
 async function attempt<A extends object, R>(x: Ctx<A, R>, row: RequestRow): Promise<R> {
   const args = JSON.parse(row.args!) as A
   const value = await x.c.call({ ...args, retryRequest: row.retryRequest! })
@@ -80,7 +85,7 @@ async function queryState(deps: CommandDeps, id: string): Promise<'completed' | 
 }
 
 /** 同 id 同参数再调用一次：Orca 对 completed 的请求重放返回记下的结果。 */
-async function replayOnce<A extends object, R>(x: Ctx<A, R>, row: RequestRow, err: unknown): Promise<R> {
+async function replayOnce<A extends object, R>(x: Ctx<A, R>, row: RequestRow): Promise<R> {
   try {
     return await attempt(x, row)
   } catch (again) {
@@ -88,7 +93,7 @@ async function replayOnce<A extends object, R>(x: Ctx<A, R>, row: RequestRow, er
       x.deps.registry.dropRequest(x.c.key)
       throw again
     }
-    return markUncertain(x, again, DEFAULT_HINT(row.retryRequest!))
+    return markUncertain(x, again, hintFor(x, row, DEFAULT_HINT(row.retryRequest!)))
   }
 }
 
@@ -96,15 +101,14 @@ async function replayOnce<A extends object, R>(x: Ctx<A, R>, row: RequestRow, er
 async function settleFailure<A extends object, R>(x: Ctx<A, R>, row: RequestRow, err: unknown): Promise<R> {
   const id = row.retryRequest!
   const state = await queryState(x.deps, id)
-  if (state === 'completed' && indeterminate(err)) return replayOnce(x, row, err)
+  if (state === 'completed' && indeterminate(err)) return replayOnce(x, row)
   if (state === 'completed' || state === 'absent') {
     x.deps.registry.dropRequest(x.c.key)
     if (!indeterminate(err)) throw err
-    throw uncertainError(err, '原样重跑同一条命令即可')
+    throw uncertainError(err, hintFor(x, row, '原样重跑同一条命令即可'))
   }
-  if (state === 'pending') return markUncertain(x, err, '原调用还在进行，稍后原样重跑同一条命令')
-  const hint = x.c.hint ? x.c.hint(JSON.parse(row.args!) as A, id) : DEFAULT_HINT(id)
-  return markUncertain(x, err, hint)
+  if (state === 'pending') return markUncertain(x, err, hintFor(x, row, '原调用还在进行，稍后原样重跑同一条命令'))
+  return markUncertain(x, err, hintFor(x, row, DEFAULT_HINT(id)))
 }
 
 async function run<A extends object, R>(x: Ctx<A, R>, row: RequestRow, reissued = false): Promise<R> {
@@ -126,8 +130,8 @@ async function preSettle<A extends object, R>(x: Ctx<A, R>, row: RequestRow): Pr
   if (state === 'completed') return row
   if (state === 'absent') return reissue(x, teamOf(x.deps, x.c.team))
   const err = new WinglineError('uncertain', 'outcome_unknown', `请求 ${row.retryRequest} 的结果不确定`)
-  const hint = state === 'pending' ? '原调用还在进行，稍后原样重跑同一条命令' : DEFAULT_HINT(row.retryRequest!)
-  return markUncertain(x, err, hint)
+  const fallback = state === 'pending' ? '原调用还在进行，稍后原样重跑同一条命令' : DEFAULT_HINT(row.retryRequest!)
+  return markUncertain(x, err, hintFor(x, row, fallback))
 }
 
 /** spec 第 9.1 节 P1。done 行直接返回存下的结果（不调用 Orca）。 */
