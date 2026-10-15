@@ -137,7 +137,7 @@ function registerBaseCommands(program: Command, commands: Commands, execute: Exe
       execute(!!o.json, async (d) => {
         if (o.adoptRun && o.newRun) throw new WinglineError('input', 'run_flags_conflict', '--adopt-run 与 --new-run 互斥')
         return commands.up(d, { specPath, adoptRun: o.adoptRun, newRun: o.newRun })
-      }, renderUp, exitCodeOfUp))
+      }, (r) => renderUp(r, { newRun: o.newRun }), exitCodeOfUp))
   program.command('ps [team]').description('查看岗位状态').option('--json', '输出 JSON')
     .action((team: string | undefined, o: { json?: boolean }) => execute(!!o.json, (d) => commands.ps(d, { team }), renderPs))
   program.command('send <post@team> <message>').description('给岗位发消息').option('--json', '输出 JSON')
@@ -155,6 +155,7 @@ export async function run(
   makeDeps: (env: NodeJS.ProcessEnv, warn: (m: string) => void) => CommandDeps = defaultMakeDeps,
 ): Promise<number> {
   let code = 0
+  const json = argv.includes('--json')
 
   async function execute<T>(json: boolean, fn: (deps: CommandDeps) => Promise<T>, render: (r: T) => string, exitOf: (r: T) => number = () => 0) {
     let deps: CommandDeps | undefined
@@ -178,7 +179,7 @@ export async function run(
     .description('雁阵 Wingline：在 Orca 之上运行常驻 agent 团队')
     .version(PACKAGE_VERSION)
     .exitOverride()
-    .configureOutput({ writeOut: (s) => io.stdout.write(s), writeErr: (s) => io.stderr.write(s) })
+    .configureOutput({ writeOut: (s) => io.stdout.write(s), writeErr: (s) => { if (!json) io.stderr.write(s) } })
 
   registerBaseCommands(program, commands, execute)
   registerTaskCommands(program, commands, execute)
@@ -188,6 +189,8 @@ export async function run(
   } catch (err) {
     if (!(err instanceof CommanderError)) throw err
     code = err.exitCode === 0 ? 0 : 1
+    // --json 时用法错误也要给出一份合法的 JSON 文档
+    if (json && code !== 0) io.stdout.write(JSON.stringify({ ok: false, error: { kind: 'input', code: 'usage', message: err.message.replace(/^error: /, '') } }) + '\n')
   }
   return code
 }

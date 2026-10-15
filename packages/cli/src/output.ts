@@ -24,12 +24,13 @@ export function renderPs(rows: PsRow[]): string {
   )
 }
 
-export function renderUp(r: UpResult): string {
+export function renderUp(r: UpResult, opts: { newRun?: boolean } = {}): string {
   const lines = r.posts.map((p) => {
     const detail = [p.reason, p.retry && `重试：${p.retry}`].filter(Boolean).join('；')
     return `${p.address}  ${UP_LABEL[p.outcome]}${detail ? `  ${detail}` : ''}`
   })
-  return `团队 ${r.team}\n${lines.join('\n')}\n${renderRun(r)}${renderDead(r)}`
+  const reset = opts.newRun && r.run?.outcome === 'created' ? '旧 Run 里的任务不会再出现在 wl task list 中（它们仍在 Orca 里）\n' : ''
+  return `团队 ${r.team}\n${lines.join('\n')}\n${renderRun(r)}${reset}${renderDead(r)}`
 }
 
 function renderRun(r: UpResult): string {
@@ -147,6 +148,11 @@ const LINK_LABEL: Record<string, string> = {
   skipped_offline: '岗位不在线，未派发', skipped_frozen: '岗位已冻结，未派发',
 }
 
+function linkReason(l: { target: string; taskId: string; delivery: string; reason?: string }): string {
+  if (l.delivery !== 'not_notified') return ''
+  return `（${l.reason ?? '未知'}）；可以 wl send ${l.target} "你有新任务 ${l.taskId}，见 wl task show ${l.taskId}"`
+}
+
 export function renderDone(r: DoneResult): string {
   if (r.outcome === 'gate_failed') return `gate 未通过，输出见 ${r.gateOutputPath}\n`
   if (r.outcome === 'gate_failed_after_bypass') {
@@ -155,7 +161,7 @@ export function renderDone(r: DoneResult): string {
   if (r.outcome === 'escalated') {
     return `连续 gate 失败，已转人工决策：gate ${r.gateId}；wl task resolve ${r.gateId} --resolution <决定>\n`
   }
-  const links = (r.linkedTasks ?? []).map((l) => `  ${l.target}  子任务 ${l.taskId}  ${LINK_LABEL[l.delivery]}\n`).join('')
+  const links = (r.linkedTasks ?? []).map((l) => `  ${l.target}  子任务 ${l.taskId}  ${LINK_LABEL[l.delivery]}${linkReason(l)}\n`).join('')
   return `${r.replayed ? '（这一轮早已完成，以下是存下的结果）\n' : ''}已完成\n${r.closure ? closureLine(r.closure) : ''}${links}`
 }
 
