@@ -34,8 +34,8 @@ test('A-I1: a never-landed uncertain dispatch row is not replayed to the OLD pos
   const t = o.tasks.find((x) => x.id === id)!
   expect(t.assigneeHandle === 'term-b').toBe(false)            // never the old post's terminal
   expect(t).toMatchObject({ status: 'dispatched', assigneeHandle: 'term-c' })
-  expect(started).toMatchObject({ delivery: 'self' })           // checker started it from its own terminal: nothing typed anywhere
-  expect(o.sent).toEqual([])
+  expect(started).toMatchObject({ delivery: 'self' })           // checker started it from its own terminal: no new-task line typed (the only typed line is the reassign notice)
+  expect(o.sent.filter((m) => m.text.includes('新任务'))).toEqual([])
 })
 
 // —— A-I2：更早 epoch 留下的 open 行不能永远算 call_uncertain ——
