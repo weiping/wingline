@@ -18,7 +18,7 @@ const WEEK_MS = 7 * 24 * 60 * 60 * 1000
 function killTree(pid: number): void {
   try {
     if (process.platform === 'win32') {
-      spawn('taskkill', ['/T', '/F', '/PID', String(pid)], { shell: false, windowsHide: true, stdio: 'ignore' })
+      spawn('taskkill', ['/T', '/F', '/PID', String(pid)], { shell: false, windowsHide: true, stdio: 'ignore' }).on('error', () => {})
     } else {
       process.kill(-pid, 'SIGKILL')
     }
@@ -58,7 +58,9 @@ export async function runGate(command: string | null, opts: { cwd: string; timeo
 
 /** 岗位 worktree 根目录：path:<abs> → abs；否则 worktree show；读不出 → gate_cwd_unknown（不退回到别处）。 */
 export async function gateCwd(deps: CommandDeps, address: string): Promise<string> {
-  const selector = deps.registry.getPost(address)!.worktree
+  const post = deps.registry.getPost(address)
+  if (!post) throw new WinglineError('input', 'post_unknown', `岗位 ${address} 没有登记`, { hint: '先执行 wl up' })
+  const selector = post.worktree
   if (selector.startsWith('path:')) return selector.slice('path:'.length)
   try {
     return (await deps.orca.worktreeShow({ worktree: selector })).path
@@ -67,6 +69,15 @@ export async function gateCwd(deps: CommandDeps, address: string): Promise<strin
       hint: '确认 Orca 在运行且该 worktree 仍存在；gate 不会在其他目录里运行',
       cause: err,
     })
+  }
+}
+
+/** 清理候选可能在列出之后被别的进程删掉：stat 不到就当没有。 */
+function isStale(file: string): boolean {
+  try {
+    return Date.now() - fs.statSync(file).mtimeMs > WEEK_MS
+  } catch {
+    return false
   }
 }
 
@@ -81,7 +92,7 @@ export function writeGateOutput(home: string, team: string, taskId: string, epoc
   fs.mkdirSync(dir, { recursive: true })
   for (const name of fs.readdirSync(dir)) {
     const file = path.join(dir, name)
-    if (/^gate-.*\.txt$/.test(name) && Date.now() - fs.statSync(file).mtimeMs > WEEK_MS) fs.rmSync(file)
+    if (/^gate-.*\.txt$/.test(name) && isStale(file)) fs.rmSync(file, { force: true })
   }
   const file = gateOutputPath(home, team, taskId, epoch, n)
   fs.writeFileSync(file, output)

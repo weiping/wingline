@@ -97,17 +97,24 @@ async function replayOnce<A extends object, R>(x: Ctx<A, R>, row: RequestRow): P
   }
 }
 
+/** 回执读不出（internal/bad_json、回执形状不符的 TypeError）：调用可能已经落地，和传输错误一样要靠 request-show 定案。 */
+const unreadable = (err: unknown): boolean => !(err instanceof WinglineError) || err.kind === 'internal'
+
+const pendingHint = <A extends object, R>(x: Ctx<A, R>, row: RequestRow): string =>
+  x.c.hint ? `原调用还在进行，稍后重跑：${hintFor(x, row, '')}` : '原调用还在进行，稍后原样重跑同一条命令'
+
 /** spec 第 9.1 节第 3 步。 */
 async function settleFailure<A extends object, R>(x: Ctx<A, R>, row: RequestRow, err: unknown): Promise<R> {
   const id = row.retryRequest!
   const state = await queryState(x.deps, id)
-  if (state === 'completed' && indeterminate(err)) return replayOnce(x, row)
+  const unsure = indeterminate(err) || unreadable(err)
+  if (state === 'completed' && unsure) return replayOnce(x, row)
   if (state === 'completed' || state === 'absent') {
     x.deps.registry.dropRequest(x.c.key)
-    if (!indeterminate(err)) throw err
+    if (!unsure) throw err
     throw uncertainError(err, hintFor(x, row, '原样重跑同一条命令即可'))
   }
-  if (state === 'pending') return markUncertain(x, err, hintFor(x, row, '原调用还在进行，稍后原样重跑同一条命令'))
+  if (state === 'pending') return markUncertain(x, err, pendingHint(x, row))
   return markUncertain(x, err, hintFor(x, row, DEFAULT_HINT(id)))
 }
 
@@ -119,7 +126,7 @@ async function run<A extends object, R>(x: Ctx<A, R>, row: RequestRow, reissued 
       const team = await refreshCoordinator(x.deps, x.c.team)
       return run(x, await reissue(x, team), true)
     }
-    if (!(err instanceof WinglineError) || err.kind === 'input' || err.kind === 'internal') throw err
+    if (err instanceof WinglineError && err.kind === 'input') throw err
     return settleFailure(x, row, err)
   }
 }
@@ -130,8 +137,8 @@ async function preSettle<A extends object, R>(x: Ctx<A, R>, row: RequestRow): Pr
   if (state === 'completed') return row
   if (state === 'absent') return reissue(x, teamOf(x.deps, x.c.team))
   const err = new WinglineError('uncertain', 'outcome_unknown', `请求 ${row.retryRequest} 的结果不确定`)
-  const fallback = state === 'pending' ? '原调用还在进行，稍后原样重跑同一条命令' : DEFAULT_HINT(row.retryRequest!)
-  return markUncertain(x, err, hintFor(x, row, fallback))
+  const hint = state === 'pending' ? pendingHint(x, row) : hintFor(x, row, DEFAULT_HINT(row.retryRequest!))
+  return markUncertain(x, err, hint)
 }
 
 /** spec 第 9.1 节 P1。done 行直接返回存下的结果（不调用 Orca）。 */

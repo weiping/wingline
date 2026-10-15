@@ -52,10 +52,14 @@ export async function fetchTasks(deps: CommandDeps, team: string): Promise<TaskR
 
 const notFound = (id: string) => new WinglineError('input', 'task_not_found', `找不到任务 ${id}`, { hint: '用 wl task list 查看任务' })
 
-export async function findTask(deps: CommandDeps, team: string, id: string): Promise<TaskRow> {
-  const found = (await fetchTasks(deps, team)).find((t) => t.id === id)
+export function pickTask(tasks: TaskRow[], id: string): TaskRow {
+  const found = tasks.find((t) => t.id === id)
   if (!found) throw notFound(id)
   return found
+}
+
+export async function findTask(deps: CommandDeps, team: string, id: string): Promise<TaskRow> {
+  return pickTask(await fetchTasks(deps, team), id)
 }
 
 /** task_ext.team 优先，否则遍历有 Run 的团队。 */
@@ -230,6 +234,10 @@ export async function gatherStaleInput(deps: CommandDeps, team: string): Promise
   }
 }
 
-export async function listStale(deps: CommandDeps, team: string): Promise<StaleItem[]> {
-  return staleReasons(await gatherStaleInput(deps, team), deps.now())
+/** 不给团队时扫描所有有 Run 的团队。 */
+export async function listStale(deps: CommandDeps, team?: string): Promise<StaleItem[]> {
+  const names = team ? [team] : deps.registry.listTeams().filter((t) => t.runId).map((t) => t.name)
+  const items: StaleItem[] = []
+  for (const name of names) items.push(...staleReasons(await gatherStaleInput(deps, name), deps.now()))
+  return items
 }

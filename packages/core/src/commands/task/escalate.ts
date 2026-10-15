@@ -2,7 +2,7 @@ import { WinglineError } from '../../errors.js'
 import type { OrchestrationTaskStatus } from '../../orca/types.js'
 import type { CommandDeps } from '../deps.js'
 import { locatePost } from '../locate.js'
-import { announce, dispatchTo, type Delivery } from './dispatch.js'
+import { announce, bumpRound, dispatchTo, type Delivery } from './dispatch.js'
 import { isPostFrozen } from './frozen.js'
 import { resolveActor } from './identity.js'
 import { ledgered, oneShot } from './ledger.js'
@@ -39,9 +39,10 @@ export async function escalateTask(
     build: (t) => ({ task: a.id, question: a.reason, from: t.coordinatorHandle! }),
     call: (x) => deps.orca.gateCreate(x),
   })
+  const known = deps.registry.getGate(gate.id) !== null
   deps.registry.recordGate(gate.id, team.name, a.id)
-  logTask(deps, { team: team.name, taskId: a.id, actor, action: 'escalate', detail: { gateId: gate.id, reason: a.reason } })
-  if (lead !== actor?.address) {
+  if (!known) logTask(deps, { team: team.name, taskId: a.id, actor, action: 'escalate', detail: { gateId: gate.id, reason: a.reason } })
+  if (!known && lead !== actor?.address) {
     await notifyPost(deps, lead, `[雁阵] 任务 ${a.id} 已转人工决策（${neutralize(a.reason, 80)}）：wl task resolve ${gate.id} --resolution <决定>`)
   }
   const now = await findTask(deps, team.name, a.id)
@@ -119,7 +120,7 @@ async function reopenDispatch(deps: CommandDeps, team: string, id: string, rec: 
   })
 }
 
-type RecoverResult = { status: 'dispatched' | 'queued' | 'ready'; delivery?: Delivery; epoch: number; reason?: string }
+type RecoverResult = { status: 'dispatched' | 'queued' | 'ready'; delivery?: Delivery; epoch: number; reason?: string; owner?: string | null }
 
 export async function recoverTask(deps: CommandDeps, a: { id: string; as?: string }): Promise<RecoverResult> {
   const { team } = await findTaskAnywhere(deps, a.id)
@@ -127,21 +128,20 @@ export async function recoverTask(deps: CommandDeps, a: { id: string; as?: strin
   const rec = await openRecord(deps, team.name, a.id)
   await reopenDispatch(deps, team.name, a.id, rec)
   const actor = await resolveActor(deps, a.as)
-  const finish = async (r: Omit<RecoverResult, 'epoch'>): Promise<RecoverResult> => {
+  const owner = (await findTask(deps, team.name, a.id)).claimedBy
+  const finish = async (r: Omit<RecoverResult, 'epoch' | 'owner'>): Promise<RecoverResult> => {
     deps.registry.dropRequest(`recover:${a.id}:open`)
     logTask(deps, { team: team.name, taskId: a.id, actor, action: 'recover', detail: r })
-    return { ...r, epoch: deps.registry.getTaskExt(a.id)?.epoch ?? rec.epoch }
+    return { ...r, owner, epoch: deps.registry.getTaskExt(a.id)?.epoch ?? rec.epoch }
   }
-  const owner = (await findTask(deps, team.name, a.id)).claimedBy
   if (!owner) return finish({ status: 'ready' })
   if (isPostFrozen(deps, owner)) return finish({ status: 'ready', reason: 'skipped_frozen' })
   const located = await locatePost(deps.orca, owner)
   if (!located) return finish({ status: 'ready', reason: 'post_offline' })
-  const bumped = !deps.registry.getRequest(`dispatch:${a.id}:${rec.epoch}`) && deps.registry.getTaskExt(a.id)?.epoch === rec.epoch
-  if (bumped) deps.registry.bumpEpoch(team.name, a.id, rec.epoch, false)
+  const current = await findTask(deps, team.name, a.id)
+  if (!deps.registry.getRequest(`dispatch:${a.id}:${rec.epoch}`) && current.epoch === rec.epoch) bumpRound(deps, team.name, current)
   const target = { address: owner, handle: located.handle }
-  const task = await findTask(deps, team.name, a.id)
   const d = await dispatchTo(deps, team.name, a.id, target)
-  const ann = await announce(deps, team.name, task, target, d, actor)
+  const ann = await announce(deps, team.name, current, target, d, actor)
   return finish({ status: d.status === 'queued' ? 'queued' : 'dispatched', delivery: ann.delivery })
 }

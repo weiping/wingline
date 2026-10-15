@@ -5,7 +5,7 @@ import { isOwnTerminal } from './identity.js'
 import { ledgered } from './ledger.js'
 import { logTask } from './log.js'
 import { neutralize, notifyPost, type NotifyResult } from './notify.js'
-import { findTask, fetchTasks, type TaskRow } from './query.js'
+import { fetchTasks, findTask, pickTask, type TaskRow } from './query.js'
 
 export type Delivery = 'notified' | 'notified_unconfirmed' | 'not_notified' | 'self' | 'queued'
 export type DispatchOutcome =
@@ -27,13 +27,16 @@ export function taskSpec(deps: CommandDeps, head: string): string {
 
 const dispatchKey = (taskId: string, epoch: number) => `dispatch:${taskId}:${epoch}`
 
-async function busyWith(deps: CommandDeps, team: string, taskId: string, handle: string): Promise<string | null> {
-  const tasks = await fetchTasks(deps, team)
+function busyIn(tasks: TaskRow[], taskId: string, handle: string): string | null {
   return tasks.find((t) => t.id !== taskId && t.status === 'dispatched' && t.assigneeHandle === handle)?.id ?? null
 }
 
+async function busyWith(deps: CommandDeps, team: string, taskId: string, handle: string): Promise<string | null> {
+  return busyIn(await fetchTasks(deps, team), taskId, handle)
+}
+
 /** 上一轮派发结束（任务回到 ready）：epoch +1，并把上一轮留下的未收尾判定收尾为 abandoned。 */
-function bumpRound(deps: CommandDeps, team: string, task: TaskRow): void {
+export function bumpRound(deps: CommandDeps, team: string, task: TaskRow): void {
   const { registry } = deps
   const old = registry.getVerdict(task.id, task.epoch)
   const next = registry.bumpEpoch(team, task.id, task.epoch, old?.verdict === 'escalate')
@@ -75,7 +78,8 @@ async function confirmReplay(deps: CommandDeps, team: string, task: TaskRow, tar
 }
 
 async function dispatchRound(deps: CommandDeps, team: string, taskId: string, target: Target, canBump: boolean): Promise<DispatchOutcome> {
-  const task = await findTask(deps, team, taskId)
+  const tasks = await fetchTasks(deps, team)
+  const task = pickTask(tasks, taskId)
   const row = deps.registry.getRequest(dispatchKey(taskId, task.epoch))
   if (row?.state === 'done') {
     if (task.status !== 'ready' || !canBump) return JSON.parse(row.receipt!) as DispatchOutcome
@@ -84,7 +88,7 @@ async function dispatchRound(deps: CommandDeps, team: string, taskId: string, ta
   }
   if (!row) {
     if (task.status !== 'ready') throw new WinglineError('input', 'task_not_open', `任务 ${taskId} 状态为 ${task.status}，不能派发`)
-    const other = await busyWith(deps, team, taskId, target.handle)
+    const other = busyIn(tasks, taskId, target.handle)
     if (other) return { status: 'queued', busyWith: other }
   }
   return ledgerDispatch(deps, team, task, target, canBump)

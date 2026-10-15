@@ -103,7 +103,7 @@ type Links = RawTeam['links']
 function checkLinks(links: Links, ids: Set<string>, at: Located): void {
   for (const [key, entry] of Object.entries(links)) {
     if (!ids.has(key)) at.fail('links_unknown_post', ['links', key], `links 中的岗位 ${key} 不在 posts 中`)
-    if (entry.reviewed_by && entry.hands_to) {
+    if (entry.reviewed_by?.length && entry.hands_to?.length) {
       at.fail('links_conflict', ['links', key], `岗位 ${key} 不能同时有 reviewed_by 与 hands_to`)
     }
     for (const rel of ['reviewed_by', 'hands_to', 'consults'] as const) {

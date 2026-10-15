@@ -6,8 +6,10 @@ import { taskPreflight } from './preflight.js'
 import { findTask, findTaskAnywhere } from './query.js'
 
 export async function planTask(deps: CommandDeps, a: { id: string; text: string }): Promise<void> {
+  const known = deps.registry.getTaskExt(a.id)?.team
+  if (known) await taskPreflight(deps, known)
   const { team } = await findTaskAnywhere(deps, a.id)
-  await taskPreflight(deps, team.name)
+  if (!known) await taskPreflight(deps, team.name)
   const actor = await resolveActor(deps)
   await deps.registry.withTeamLock(team.name, async () => {
     const task = await findTask(deps, team.name, a.id)

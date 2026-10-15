@@ -238,7 +238,9 @@ async function runStep(l: Launch, args: UpArgs, leadHandle: string): Promise<Run
 async function ensureRun(l: Launch, posts: PostResult[], args: UpArgs): Promise<RunStep> {
   const lead = postAddress(l.spec.lead, l.spec.name)
   const leadResult = posts.find((p) => p.address === lead)
-  if (leadResult?.outcome !== 'launched' && leadResult?.outcome !== 'already_live') return { outcome: 'deferred', runId: null }
+  if (leadResult?.outcome !== 'launched' && leadResult?.outcome !== 'already_live') {
+    return { outcome: 'deferred', runId: l.deps.registry.getTeam(l.spec.name)!.runId }
+  }
   try {
     return await runStep(l, args, l.deps.registry.getPost(lead)!.handle!)
   } catch (err) {

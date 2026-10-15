@@ -21,7 +21,8 @@ export async function startTask(deps: CommandDeps, a: { id: string; as?: string 
   const task = await findTask(deps, team, a.id)
   if (task.claimedBy !== actor.address) throw fail('not_claimed_by_you', `任务 ${a.id} 不是 ${actor.address} 认领的`)
   const post = spec.posts.find((p) => `${p.id}@${team}` === actor.address)
-  if (post?.planFirst && !task.plan) throw fail('plan_required', `岗位 ${actor.address} 要求先写计划`, `wl task plan ${a.id} "<计划>"`)
+  if (!post) throw fail('post_unknown', `${actor.address} 不是团队 ${team} 的岗位`)
+  if (post.planFirst && !task.plan) throw fail('plan_required', `岗位 ${actor.address} 要求先写计划`, `wl task plan ${a.id} "<计划>"`)
   const handle = await resolveHandle(deps, actor)
   if (task.status === 'dispatched' && task.assigneeHandle === handle) {
     await settleOpenDispatch(deps, team, task, { address: actor.address, handle })

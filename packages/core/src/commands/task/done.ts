@@ -66,7 +66,8 @@ async function decideDispatched(c: Ctx, task: TaskRow): Promise<DoneResult | Don
 }
 
 async function decideBypassed(c: Ctx): Promise<DoneResult | DoneVerdictRow> {
-  logTask(c.deps, { team: c.team.name, taskId: c.id, actor: c.actor, action: 'bypass_detected' })
+  const seen = c.deps.registry.listTaskLog(c.id).some((l) => l.action === 'bypass_detected' && l.epoch === c.ext.epoch)
+  if (!seen) logTask(c.deps, { team: c.team.name, taskId: c.id, actor: c.actor, action: 'bypass_detected' })
   const g = await runPostGate(c, c.ext.gateFailures + 1)
   if (g.passed) {
     return c.deps.registry.recordVerdict({
@@ -74,8 +75,11 @@ async function decideBypassed(c: Ctx): Promise<DoneResult | DoneVerdictRow> {
     })
   }
   const lead = `${c.spec.lead}@${c.team.name}`
-  if (lead !== c.actor.address) {
+  const noticeKey = key(c, 'bypass-notice')
+  if (lead !== c.actor.address && !c.deps.registry.getRequest(noticeKey)) {
     await notifyPost(c.deps, lead, `[雁阵] ${c.actor.address} 的任务 ${c.id} 绕过 wl 直接上报，补跑 gate 失败，见 ${g.file}；要重开用 wl task escalate ${c.id} --reopen --reason <原因>`)
+    c.deps.registry.beginRequest(noticeKey)
+    c.deps.registry.finishRequest(noticeKey, 'done')
   }
   return { outcome: 'gate_failed_after_bypass', gateOutputPath: g.file! }
 }
@@ -98,6 +102,7 @@ async function decide(c: Ctx): Promise<DoneResult | DoneVerdictRow> {
 
 // —— 后续步骤（第 4 步，每一步都是 P1）——
 
+const REJECT_CODES = new Set(['worker_identity_changed', 'inactive_dispatch'])
 const REJECT_HINT = (id: string) =>
   `这一轮派发已经不属于这个终端：先 wl task show ${id}；若任务已回到 ready，wl task start ${id}；若派给了已不存在的终端，wl task recover ${id}`
 
@@ -119,7 +124,7 @@ async function report(c: Ctx, v: DoneVerdictRow): Promise<void> {
       call: (a) => c.deps.orca.workerDone(a),
     })
   } catch (err) {
-    if (err instanceof WinglineError && err.kind === 'orca') {
+    if (err instanceof WinglineError && err.kind === 'orca' && REJECT_CODES.has(err.code)) {
       throw new WinglineError('orca', err.code, err.message, { hint: REJECT_HINT(c.id), cause: err })
     }
     throw err
