@@ -21,12 +21,13 @@ test('fresh up does create → wait → brief per post', async () => {
     'version', 'status',
     'terminalList', 'terminalCreate', 'terminalWait', 'terminalSend',
     'terminalList', 'terminalCreate', 'terminalWait', 'terminalSend',
+    'runList', 'runCreate', 'taskList', 'terminalList',
   ])
   expect(deps.registry.listPosts('duo').map((p) => [p.address, p.status, p.isLead])).toEqual([
     ['builder@duo', 'live', true],
     ['checker@duo', 'live', false],
   ])
-  expect(deps.registry.getTeam('duo')).toMatchObject({ status: 'up', runId: null })
+  expect(deps.registry.getTeam('duo')).toMatchObject({ status: 'up', runId: 'run-1', coordinatorHandle: 'term-1' })
 })
 
 test('terminal is created with title, worktree and launch command; briefing goes to that handle', async () => {
@@ -207,4 +208,174 @@ test('concurrent up on the same team → team_busy', async () => {
   o.onCreate = undefined
   release()
   await first
+})
+
+test('first up: run-list finds nothing → run-create from the lead handle through the ledger', async () => {
+  const o = new FakeOrca(); const { deps, registry } = mkDeps(o)
+  const r = await up(deps, { specPath: duo() })
+  expect(r.run).toEqual({ outcome: 'created', runId: 'run-1' })
+  expect(o.callsOf('runCreate')).toEqual([{ objective: 'wingline:duo', from: 'term-1', retryRequest: expect.any(String) }])
+  expect(registry.getRequest('duo:run-create')!.state).toBe('done')
+})
+test('run-create landed but returned runtime_timeout → settled in the same up, no second Run', async () => {
+  const o = new FakeOrca(); const { deps } = mkDeps(o)
+  o.faults.push({ method: 'runCreate', when: 'after', error: new WinglineError('orca', 'runtime_timeout', 't') })
+  expect((await up(deps, { specPath: duo() })).run).toEqual({ outcome: 'created', runId: 'run-1' })
+  expect(o.runs).toHaveLength(1)
+})
+test('run-create uncertain (request-show unreachable) → uncertain with the retry command; rerunning replays the same id', async () => {
+  const o = new FakeOrca(); const { deps } = mkDeps(o); const p = duo()
+  o.faults.push({ method: 'runCreate', when: 'after', error: new WinglineError('uncertain', 'orca_timeout', 't') },
+                { method: 'requestShow', when: 'before', error: new WinglineError('orca', 'runtime_unavailable', 'x') })
+  expect((await up(deps, { specPath: p })).run).toMatchObject({ outcome: 'uncertain', retry: `wl up ${p}` })
+  expect((await up(deps, { specPath: p })).run).toMatchObject({ outcome: 'created', runId: 'run-1' })
+  const ids = o.callsOf('runCreate').map((a) => a.retryRequest)
+  expect(ids).toHaveLength(2); expect(ids[1]).toBe(ids[0])
+  expect(o.runs).toHaveLength(1)
+})
+test('registry lost: run-list finds exactly one wingline:duo Run → adopted and run-use to the lead, no run-create', async () => {
+  const o = new FakeOrca(); o.runs.push({ id: 'run-9', objective: 'wingline:duo', coordinatorHandle: 'gone', createdAt: 'T' })
+  const { deps, registry } = mkDeps(o)
+  expect((await up(deps, { specPath: duo() })).run).toEqual({ outcome: 'adopted', runId: 'run-9' })
+  expect(o.callsOf('runCreate')).toEqual([])
+  expect(o.callsOf('runUse')).toEqual([{ id: 'run-9', from: 'term-1' }])
+  expect(registry.getTeam('duo')).toMatchObject({ runId: 'run-9', coordinatorHandle: 'term-1' })
+})
+test('two candidate Runs → ambiguous (exit 1 kind) listing both; --adopt-run picks one', async () => {
+  const o = new FakeOrca()
+  o.runs.push({ id: 'run-8', objective: 'wingline:duo', coordinatorHandle: 'x', createdAt: 'T1' }, { id: 'run-9', objective: 'wingline:duo', coordinatorHandle: 'y', createdAt: 'T2' })
+  const { deps, registry } = mkDeps(o); const p = duo()
+  expect((await up(deps, { specPath: p })).run).toMatchObject({ outcome: 'ambiguous', candidates: [{ id: 'run-8', createdAt: 'T1' }, { id: 'run-9', createdAt: 'T2' }], retry: `wl up ${p} --adopt-run <id>` })
+  expect((await up(deps, { specPath: p, adoptRun: 'run-9' })).run).toEqual({ outcome: 'adopted', runId: 'run-9' })
+  expect(registry.getTeam('duo')!.runId).toBe('run-9')
+})
+test('the Run was deleted in Orca → lost with the --new-run hint; --new-run creates a fresh Run and skips run-list', async () => {
+  const o = new FakeOrca(); const { deps, registry } = mkDeps(o); const p = duo()
+  await up(deps, { specPath: p })
+  o.runs.length = 0; await o.terminalClose({ handle: 'term-1' })      // 协调者终端没了 → 下一轮要 run-use
+  expect((await up(deps, { specPath: p })).run).toMatchObject({ outcome: 'lost', runId: 'run-1', retry: `wl up ${p} --new-run` })
+  o.calls.length = 0
+  expect((await up(deps, { specPath: p, newRun: true })).run).toEqual({ outcome: 'created', runId: 'run-2' })
+  expect(o.calls).not.toContain('runList')
+  expect(registry.getRequest('duo:run-create')!.state).toBe('done')
+})
+test('second up keeps the coordinator while its terminal is alive (e.g. a running dispatcher)', async () => {
+  const o = new FakeOrca(); const { deps, registry } = mkDeps(o); const p = duo()
+  await up(deps, { specPath: p })
+  o.terminals.push({ handle: 'term-dsp', title: 'dispatcher@duo', connected: true, worktreeId: 'w' })
+  registry.updateCoordinatorHandle('duo', 'term-dsp'); o.coordinator = 'term-dsp'
+  expect((await up(deps, { specPath: p })).run).toEqual({ outcome: 'kept', runId: 'run-1' })
+  expect(o.callsOf('runUse')).toEqual([])
+  expect(registry.getTeam('duo')!.coordinatorHandle).toBe('term-dsp')
+})
+test('second up reclaims for the lead when the coordinator terminal is gone', async () => {
+  const o = new FakeOrca(); const { deps, registry } = mkDeps(o); const p = duo()
+  await up(deps, { specPath: p })
+  await o.terminalClose({ handle: 'term-1' })
+  expect((await up(deps, { specPath: p })).run).toEqual({ outcome: 'reclaimed', runId: 'run-1' })
+  expect(o.callsOf('runUse')).toEqual([{ id: 'run-1', from: 'term-3' }])
+  expect(registry.getTeam('duo')!.coordinatorHandle).toBe('term-3')
+})
+test('lead not live this round → run step deferred, no orchestration call', async () => {
+  const o = new FakeOrca(); o.waitSatisfied = false
+  const r = await up(mkDeps(o).deps, { specPath: duo() })
+  expect(r.run).toEqual({ outcome: 'deferred', runId: null })
+  expect(o.orch).toEqual([])
+})
+test('the Run is reused after wl down and a spec change', async () => {
+  const o = new FakeOrca(); const { deps, registry } = mkDeps(o)
+  await up(deps, { specPath: duo() })
+  registry.upsertTeam({ ...registry.getTeam('duo')!, status: 'stopped' })
+  const r = await up(deps, { specPath: mkTeam(DUO_YAML.replace('model: opus', 'model: sonnet')) })
+  expect(r.run?.runId).toBe('run-1')
+  expect(o.callsOf('runCreate')).toHaveLength(1)
+})
+test('dispatched tasks whose assignee terminal is gone are reported with a recover command, grouped by owner; nothing is changed', async () => {
+  const o = new FakeOrca(); const { deps, registry } = mkDeps(o); const p = duo()
+  await up(deps, { specPath: p })
+  const { id } = await o.taskCreate({ spec: 's', taskTitle: '实现登录', run: 'run-1', from: 'term-1' })
+  registry.insertTaskExt({ taskId: id, team: 'duo', tags: [], kind: 'work', claimedBy: 'checker@duo' })
+  await o.dispatch({ task: id, to: 'term-old', from: 'term-1' })        // 派给了一个已经不存在的 handle（R5-4）
+  o.orch.length = 0
+  const r = await up(deps, { specPath: p })
+  expect(r.deadAssignees).toEqual([{ taskId: id, title: '实现登录', owner: 'checker@duo', command: `wl task recover ${id}` }])
+  expect(o.orch.filter((c) => c.m !== 'runUse')).toEqual([])
+})
+
+test('ambiguous candidates: no orchestration write, runId stays unset, posts still launched', async () => {
+  const o = new FakeOrca()
+  o.runs.push({ id: 'run-8', objective: 'wingline:duo', coordinatorHandle: 'x', createdAt: 'T1' }, { id: 'run-9', objective: 'wingline:duo', coordinatorHandle: 'y', createdAt: 'T2' })
+  const { deps, registry } = mkDeps(o)
+  const r = await up(deps, { specPath: duo() })
+  expect(r.run).toMatchObject({ outcome: 'ambiguous', runId: null })
+  expect(r.posts.map((x) => x.outcome)).toEqual(['launched', 'launched'])
+  expect(o.callsOf('runCreate')).toEqual([]); expect(o.callsOf('runUse')).toEqual([])
+  expect(registry.getTeam('duo')!.runId).toBeNull()
+})
+test('run-list ignores Runs of other objectives', async () => {
+  const o = new FakeOrca(); o.runs.push({ id: 'run-5', objective: 'wingline:other', coordinatorHandle: 'x', createdAt: 'T' })
+  const r = await up(mkDeps(o).deps, { specPath: duo() })
+  expect(r.run).toMatchObject({ outcome: 'created' })
+  expect(r.run!.runId).not.toBe('run-5')
+})
+test('a rerun after an uncertain run-create goes straight to the ledger row: no run-list', async () => {
+  const o = new FakeOrca(); const { deps } = mkDeps(o); const p = duo()
+  o.faults.push({ method: 'runCreate', when: 'after', error: new WinglineError('uncertain', 'orca_timeout', 't') },
+                { method: 'requestShow', when: 'before', error: new WinglineError('orca', 'runtime_unavailable', 'x') })
+  await up(deps, { specPath: p })
+  o.orch.length = 0
+  expect((await up(deps, { specPath: p })).run).toMatchObject({ outcome: 'created', runId: 'run-1' })
+  expect(o.callsOf('runList')).toEqual([])
+})
+test('run-create rejected by Orca → run failed (exit-2 kind), ledger row dropped, runId unset, posts unaffected', async () => {
+  const o = new FakeOrca(); const { deps, registry } = mkDeps(o)
+  o.faults.push({ method: 'runCreate', when: 'before', error: new WinglineError('orca', 'runtime_error', 'no') })
+  const r = await up(deps, { specPath: duo() })
+  expect(r.run).toMatchObject({ outcome: 'failed', runId: null })
+  expect(r.posts.map((x) => x.outcome)).toEqual(['launched', 'launched'])
+  expect(registry.getRequest('duo:run-create')).toBeNull()
+  expect(registry.getTeam('duo')!.runId).toBeNull()
+})
+test('--adopt-run with an id Orca does not know → failed, nothing written', async () => {
+  const o = new FakeOrca(); const { deps, registry } = mkDeps(o)
+  const r = await up(deps, { specPath: duo(), adoptRun: 'run-ghost' })
+  expect(r.run).toMatchObject({ outcome: 'failed', runId: null })
+  expect(registry.getTeam('duo')!.runId).toBeNull()
+})
+test('the coordinator is never taken from a live terminal, even when the lead was relaunched', async () => {
+  const o = new FakeOrca(); const { deps, registry } = mkDeps(o); const p = duo()
+  await up(deps, { specPath: p })
+  o.terminals.push({ handle: 'term-dsp', title: 'dispatcher@duo', connected: true, worktreeId: 'w' })
+  registry.updateCoordinatorHandle('duo', 'term-dsp'); o.coordinator = 'term-dsp'
+  await o.terminalClose({ handle: 'term-1' })            // lead is relaunched on this up
+  const r = await up(deps, { specPath: p })
+  expect(r.run).toEqual({ outcome: 'kept', runId: 'run-1' })
+  expect(o.callsOf('runUse')).toEqual([])
+  expect(o.coordinator).toBe('term-dsp')
+})
+test('--new-run clears the old Run and coordinator before creating; the old ledger row is replaced, not replayed', async () => {
+  const o = new FakeOrca(); const { deps, registry } = mkDeps(o); const p = duo()
+  await up(deps, { specPath: p })
+  const first = registry.getRequest('duo:run-create')!.retryRequest
+  await up(deps, { specPath: p, newRun: true })
+  expect(registry.getTeam('duo')).toMatchObject({ runId: 'run-2' })
+  expect(registry.getRequest('duo:run-create')!.retryRequest).not.toBe(first)
+  expect(o.runs.map((x) => x.id)).toEqual(['run-1', 'run-2'])
+})
+test('no dead assignees → the field is empty/absent; a task dispatched to a live terminal is not reported; an unclaimed one has owner null', async () => {
+  const o = new FakeOrca(); const { deps } = mkDeps(o); const p = duo()
+  await up(deps, { specPath: p })
+  expect(r0(await up(deps, { specPath: p }))).toEqual([])
+  const live = await o.taskCreate({ spec: 's', taskTitle: 'a', run: 'run-1', from: 'term-1' })
+  await o.dispatch({ task: live.id, to: 'term-2', from: 'term-1' })           // term-2 is the live checker terminal
+  const dead = await o.taskCreate({ spec: 's', taskTitle: 'b', run: 'run-1', from: 'term-1' })
+  await o.dispatch({ task: dead.id, to: 'term-gone', from: 'term-1' })
+  expect((await up(deps, { specPath: p })).deadAssignees).toEqual([{ taskId: dead.id, title: 'b', owner: null, command: `wl task recover ${dead.id}` }])
+})
+const r0 = (r: { deadAssignees?: unknown[] }) => r.deadAssignees ?? []
+test('run step deferred → no dead-assignee report and no taskList call', async () => {
+  const o = new FakeOrca(); o.waitSatisfied = false
+  const r = await up(mkDeps(o).deps, { specPath: duo() })
+  expect(r.deadAssignees ?? []).toEqual([])
+  expect(o.calls).not.toContain('taskList')
 })

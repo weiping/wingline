@@ -131,3 +131,46 @@ test('sqlite experimental warning is suppressed, others are shown', async () => 
   expect(h.err()).not.toContain('SQLite')
   expect(h.err()).toContain('something else')
 })
+// packages/cli/test/main.test.ts（沿用文件里已有的 cmds / exec）
+test('up exits 3 when the Run step is uncertain even though every post launched', async () => {
+  const c = cmds({ up: async () => ({ team: 'duo', posts: [{ address: 'builder@duo', outcome: 'launched' }], run: { outcome: 'uncertain', runId: null, reason: 't', retry: 'wl up x' } }) })
+  const r = await exec(['up', 'x'], c)
+  expect(r.code).toBe(3); expect(r.out).toContain('wl up x')
+})
+test('up passes --adopt-run / --new-run through; ambiguous exits 1, lost exits 2', async () => {
+  const seen: unknown[] = []
+  const mk = (outcome: string) => cmds({ up: async (_d, a) => { seen.push(a); return { team: 'duo', posts: [], run: { outcome, runId: null } } } })
+  expect((await exec(['up', 'x', '--adopt-run', 'run-9'], mk('ambiguous'))).code).toBe(1)
+  expect((await exec(['up', 'x', '--new-run'], mk('lost'))).code).toBe(2)
+  expect(seen).toEqual([expect.objectContaining({ adoptRun: 'run-9' }), expect.objectContaining({ newRun: true })])
+})
+
+test('--adopt-run and --new-run are mutually exclusive (usage error, exit 1, up not called)', async () => {
+  let called = 0
+  const r = await exec(['up', 'x', '--adopt-run', 'run-9', '--new-run'], cmds({ up: async () => { called++; return { team: 'duo', posts: [] } } }))
+  expect(r.code).toBe(1); expect(called).toBe(0)
+})
+test('up exit code takes the most severe of posts and Run step; a healthy Run keeps exit 0', async () => {
+  const mk = (post: string, run: string) => cmds({ up: async () => ({ team: 'duo', posts: [{ address: 'builder@duo', outcome: post as 'launched' }], run: { outcome: run as 'created', runId: 'run-1' } }) })
+  expect((await exec(['up', 'x'], mk('uncertain', 'lost'))).code).toBe(2)
+  expect((await exec(['up', 'x'], mk('launched', 'failed'))).code).toBe(2)
+  expect((await exec(['up', 'x'], mk('launched', 'created'))).code).toBe(0)
+  for (const ok of ['adopted', 'kept', 'reclaimed', 'deferred']) expect((await exec(['up', 'x'], mk('launched', ok))).code).toBe(0)
+})
+test('up human output shows the Run step and the dead-assignee recover commands; --json carries run and deadAssignees', async () => {
+  const c = cmds({ up: async () => ({
+    team: 'duo', posts: [{ address: 'builder@duo', outcome: 'launched' }],
+    run: { outcome: 'created', runId: 'run-1' },
+    deadAssignees: [{ taskId: 't1', title: '实现登录', owner: 'checker@duo', command: 'wl task recover t1' }],
+  }) })
+  const r = await exec(['up', 'x'], c)
+  expect(r.out).toContain('run-1'); expect(r.out).toContain('wl task recover t1'); expect(r.out).toContain('checker@duo')
+  const j = JSON.parse((await exec(['up', 'x', '--json'], c)).out)
+  expect(j.result).toMatchObject({ run: { outcome: 'created', runId: 'run-1' }, deadAssignees: [{ taskId: 't1' }] })
+})
+test('up with an ambiguous Run lists the candidates and the --adopt-run hint', async () => {
+  const c = cmds({ up: async () => ({ team: 'duo', posts: [], run: { outcome: 'ambiguous', runId: null, candidates: [{ id: 'run-8', createdAt: 'T1' }, { id: 'run-9', createdAt: 'T2' }], retry: 'wl up x --adopt-run <id>' } }) })
+  const r = await exec(['up', 'x'], c)
+  expect(r.code).toBe(1)
+  expect(r.out + r.err).toContain('run-8'); expect(r.out + r.err).toContain('run-9'); expect(r.out + r.err).toContain('--adopt-run')
+})
