@@ -60,7 +60,7 @@ async function registerTeam(l: Launch): Promise<void> {
       hint: `不支持在线修改编队，请先执行 wl down ${l.spec.name}`,
     })
   }
-  registry.upsertTeam({ name: l.spec.name, specPath: l.spec.specPath, specHash: l.hash, runId: existing?.runId ?? null, status: 'up' })
+  registry.upsertTeam({ name: l.spec.name, specPath: l.spec.specPath, specHash: l.hash, runId: existing?.runId ?? null, coordinatorHandle: existing?.coordinatorHandle ?? null, status: 'up' })
   for (const p of l.spec.posts) {
     const address = postAddress(p.id, l.spec.name)
     const prev = registry.listPosts(l.spec.name).find((r) => r.address === address)
