@@ -8,6 +8,8 @@
 - **F-2 升级正在运行的阶段 1 团队：** 先 `wl down <team>`（不要加 `--close`，终端保持在线），再 `wl up <team.yaml>`。原因：`specHash` 现在包含 2A 新增的字段（`tags`、`gate`、连接、预算、`consults` 等），旧登记的哈希与新规格不一致，不先 `down` 会得到 `team_spec_changed`。
 - **F-4 `wl ps` 的 WORKTREE 列偏离了总纲：** `wl up` 把非 `path:` 的选择器（缺省的 `current`）按当次调用目录解析一次，写成 `path:/绝对路径`，所以 `wl ps` 显示的是固定后的路径而不是 `current`。2A spec §13 写的是"不改变 `wl ps` 的输出"，这是一处有意的偏离（gate 目录必须固定在 `wl up` 时刻）。仍存活的岗位在重跑 `wl up` 时保持原来的固定值；新建、已消失或将重建的岗位才重新解析。
 
+- **注册表版本保护：** 数据库由更新版本的 wingline 写入时（`user_version` 高于本程序认识的迁移数），旧版本会以 `registry_too_new` 拒绝打开，请升级 wingline。
+
 ## 已知问题（合并后）
 
 - **gate 输出缓冲没有上限：** `wl task done` 把 gate 的完整输出先读进内存，再整体写入 `~/.wingline/logs/<team>/gate-*.txt`。只有 gate 打印数百 MB 时才会成问题。后续改为边读边写入文件（只在内存里保留末尾 4000 字符给 `--body`）。
