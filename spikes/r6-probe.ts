@@ -91,7 +91,9 @@ async function main() {
       await attempt('S2-old-coord-acks-d2', ['orchestration', 'check', '--terminal', t1, '--run', runId, '--ack', d2])
       await attempt('S2-new-coord-acks-d2', ['orchestration', 'check', '--terminal', t3, '--run', runId, '--ack', d2])
     }
-    await attempt('S2-new-coord-check-after', ['orchestration', 'check', '--terminal', t3, '--run', runId])
+    const c4 = await attempt('S2-new-coord-check-after', ['orchestration', 'check', '--terminal', t3, '--run', runId])
+    const d3 = findString(c4.result, /delivery/i)
+    if (d3) await attempt('S2-new-coord-acks-d3', ['orchestration', 'check', '--terminal', t3, '--run', runId, '--ack', d3, '--wait', '--timeout-ms', '1000'], 30_000)
 
     // ---- S3：超过 60 s 的 check --wait ----
     if (process.env.WINGLINE_SPIKE_SKIP_S3 !== '1') await attempt('S3-check-wait-75s', ['orchestration', 'check', '--terminal', t3, '--run', runId, '--wait', '--timeout-ms', '75000'], 110_000)
@@ -121,16 +123,16 @@ async function main() {
 
     // ---- S6：真实 agent（可选） ----
     if (process.env.WINGLINE_SPIKE_AGENT === '1') {
-      const ag = await mk('spike-r6-agent', 'claude')
+      // 用绝对路径绕开用户 shell 里可能存在的 claude 别名（实测 macOS 上 claude 被别名为一个会先问 (Y/n) 的包装脚本）
+      const ag = await mk('spike-r6-agent', process.env.WINGLINE_SPIKE_AGENT_CMD ?? 'claude')
       await attempt('S6-wait-idle', ['terminal', 'wait', '--terminal', ag, '--for', 'tui-idle', '--timeout-ms', '60000'], 90_000)
       await attempt('S6-show-idle', ['terminal', 'show', '--terminal', ag])
       const d = await create('D', 'Reply with exactly the word OK. Do not use any tools.')
-      const e = await create('E', 'Reply with exactly the word SECOND. Do not use any tools.')
       await attempt('S6-dispatch-D-inject-idle', ['orchestration', 'dispatch', '--task', d, '--to', ag, '--from', t3, '--inject'])
-      await attempt('S6-dispatch-E-inject-busy', ['orchestration', 'dispatch', '--task', e, '--to', ag, '--from', t3, '--inject'])
       await sleep(25_000)
-      await attempt('S6-read-after-two-injects', ['terminal', 'read', '--terminal', ag])
-      record(probe, 'S6-states', { D: await taskState(runId, d), E: await taskState(runId, e) })
+      await attempt('S6-read-after-inject', ['terminal', 'read', '--terminal', ag])
+      record(probe, 'S6-states', { D: await taskState(runId, d) })
+      await attempt('S6-worker-list-after-inject', ['orchestration', 'worker-list', '--run', runId])
       await attempt('S6-send-permission-trigger', ['terminal', 'send', '--terminal', ag, '--text', 'Use your Bash tool to run exactly this command: uname -a', '--enter'])
       await sleep(15_000)
       await attempt('S6-show-at-permission', ['terminal', 'show', '--terminal', ag])
