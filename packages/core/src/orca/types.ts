@@ -19,6 +19,37 @@ export interface CloseResult {
   ptyKilled: boolean
 }
 
+export type OrchestrationTaskStatus = 'ready' | 'dispatched' | 'blocked' | 'completed' | 'failed'
+
+export interface OrchestrationTask {
+  id: string
+  status: OrchestrationTaskStatus
+  title: string
+  spec: string
+  parentId: string | null
+  /** 终态/blocked 任务的 task-list 不带这两个键 → null。 */
+  assigneeHandle: string | null
+  dispatchId: string | null
+  /** Orca 的 JSON 字符串原样保留。 */
+  result: string | null
+}
+
+export interface RunSummary {
+  id: string
+  objective: string
+  coordinatorHandle: string | null
+  createdAt: string
+}
+
+export type RequestShowState = 'completed' | 'pending' | 'absent'
+
+export interface TerminalView {
+  handle: string
+  title: string | null
+  connected: boolean
+  preview: string
+}
+
 export interface OrcaClient {
   version(): Promise<string>
   status(): Promise<{ reachable: boolean }>
@@ -27,4 +58,18 @@ export interface OrcaClient {
   terminalWait(a: { handle: string; forState: 'tui-idle'; timeoutMs: number }): Promise<{ satisfied: boolean }>
   terminalSend(a: { handle: string; text: string; enter: true; waitSubmitSec: number; retryRequest?: string }): Promise<SendResult>
   terminalClose(a: { handle: string }): Promise<CloseResult>
+  runCreate(a: { objective: string; from: string; retryRequest?: string }): Promise<{ id: string; coordinatorHandle: string; replayed: boolean }>
+  runUse(a: { id: string; from: string }): Promise<{ coordinatorHandle: string }>
+  runShow(a: { id: string }): Promise<{ coordinatorHandle: string }>
+  runList(): Promise<RunSummary[]>
+  /** receipt 原样（completed 时是原回执）。 */
+  requestShow(a: { request: string }): Promise<{ state: RequestShowState; receipt: unknown }>
+  taskCreate(a: { spec: string; taskTitle: string; run: string; from: string; parent?: string; retryRequest?: string }): Promise<{ id: string; replayed: boolean }>
+  taskList(a: { run: string }): Promise<OrchestrationTask[]>
+  dispatch(a: { task: string; to: string; from: string; retryRequest?: string }): Promise<{ dispatchId: string; replayed: boolean }>
+  workerDone(a: { taskId: string; dispatchId: string; outcome: 'succeeded' | 'failed'; subject: string; body?: string; run: string; from: string; retryRequest?: string }): Promise<{ replayed: boolean }>
+  gateCreate(a: { task: string; question: string; from: string; retryRequest?: string }): Promise<{ id: string; replayed: boolean }>
+  gateResolve(a: { id: string; resolution: string; from: string; retryRequest?: string }): Promise<{ replayed: boolean }>
+  terminalShow(a: { handle: string }): Promise<TerminalView>
+  worktreeShow(a: { worktree: string }): Promise<{ path: string }>
 }

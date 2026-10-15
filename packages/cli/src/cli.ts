@@ -44,6 +44,8 @@ export function defaultMakeDeps(env: NodeJS.ProcessEnv, warn: (m: string) => voi
     verifiedOrca: verified.verifiedOrca,
     multilineSafe: !exe.viaCmd,
     home,
+    env,
+    now: () => new Date(),
   }
 }
 
