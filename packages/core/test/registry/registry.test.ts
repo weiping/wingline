@@ -5,7 +5,7 @@ import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { expect, test } from 'vitest'
 import { MIGRATIONS } from '../../src/registry/migrations.js'
-import { Registry, type PostRow, type TeamRow } from '../../src/registry/registry.js'
+import { Registry, type PatrolStateRow, type PostRow, type TeamRow } from '../../src/registry/registry.js'
 
 const tmpDb = () => path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wl-reg-')), 'sub', 'state.db')
 
@@ -304,4 +304,85 @@ test('4-a: a database written by a newer wingline (user_version above this code\
   expect(() => Registry.open(file)).toThrow(expect.objectContaining({ code: 'registry_too_new', hint: expect.any(String) }))
   const ok = tmpDb(); Registry.open(ok).close()
   expect(() => Registry.open(ok).close()).not.toThrow()
+})
+
+// ---- 阶段 2B：心跳、巡查状态、冻结、静默、游标、提问、巡查事件 ----
+const running2b: TeamRow = { ...team, runId: 'run-1', coordinatorHandle: 'coord-1' }
+test('withTeamLock with takeoverAfterMs takes over only after the long threshold; the superseded holder learns it from heartbeat()', async () => {
+  let t = Date.parse('2026-10-15T10:00:00Z')
+  const r = Registry.open(tmpDb(), { now: () => new Date(t) })
+  let release!: () => void
+  const held = r.withTeamLock('dispatcher:duo', () => new Promise<void>((res) => { release = res }), { takeoverAfterMs: 600_000 })
+  r.heartbeat('dispatcher:duo')
+  t += 181_000
+  await expect(r.withTeamLock('dispatcher:duo', () => 1, { takeoverAfterMs: 600_000 })).rejects.toMatchObject({ code: 'team_busy' })
+  t += 420_000
+  let inner = false
+  await r.withTeamLock('dispatcher:duo', () => { inner = r.heartbeat('dispatcher:duo') }, { takeoverAfterMs: 600_000 })
+  expect(inner).toBe(true)
+  release(); await held
+})
+test('heartbeat() reports false when this process does not hold the row', () => {
+  const r = Registry.open(tmpDb())
+  expect(r.heartbeat('dispatcher:duo')).toBe(false)
+})
+test('heartbeat updates only the row this process holds; getLock exposes it', async () => {
+  const r = Registry.open(tmpDb())
+  await r.withTeamLock('dispatcher:duo', () => { r.heartbeat('dispatcher:duo'); expect(r.getLock('dispatcher:duo')).toMatchObject({ pid: process.pid, heartbeatAt: expect.any(String) }) })
+  expect(r.getLock('dispatcher:duo')).toBeNull()
+})
+test('patrol_state is keyed by (team, post, signal, task) and round-trips every column', () => {
+  const r = Registry.open(tmpDb()); r.upsertTeam(running2b)
+  const row: PatrolStateRow = { team: 'duo', post: 'builder@duo', signal: 'no_progress', taskId: 't1', level: 1, since: 'A', levelAt: 'B', lastNudgedAt: 'B', notifyCount: 0, nextDueAt: null, clearedAt: null }
+  r.putPatrolState(row); r.putPatrolState({ ...row, taskId: 't2', level: 0 }); r.putPatrolState({ ...row, signal: 'gate_streak', taskId: '' })
+  expect(r.getPatrolState('duo', 'builder@duo', 'no_progress', 't1')).toEqual(row)
+  expect(r.listPatrolState('duo')).toHaveLength(3)
+  r.putPatrolState({ ...row, level: 2, notifyCount: 1, clearedAt: 'C' })
+  expect(r.getPatrolState('duo', 'builder@duo', 'no_progress', 't1')).toMatchObject({ level: 2, notifyCount: 1, clearedAt: 'C' })
+})
+test('freeze is idempotent and records the signal; hush/unhush; cursor', () => {
+  const r = Registry.open(tmpDb()); r.upsertTeam(running2b)
+  r.freezePost({ post: 'builder@duo', team: 'duo', reason: 'patrol', signal: 'no_progress' })
+  r.freezePost({ post: 'builder@duo', team: 'duo', reason: 'again' })
+  expect(r.getFrozen('builder@duo')).toMatchObject({ reason: 'patrol', signal: 'no_progress' })
+  expect(r.listFrozen('duo').map((f) => f.post)).toEqual(['builder@duo'])
+  r.unfreezePost('builder@duo'); expect(r.getFrozen('builder@duo')).toBeNull()
+  r.hush('duo', 'checker@duo', 'U'); expect(r.hushedUntil('checker@duo')).toBe('U')
+  expect(r.listHushes('duo')).toEqual([{ post: 'checker@duo', until: 'U' }])
+  r.unhush('checker@duo'); expect(r.hushedUntil('checker@duo')).toBeNull()
+  expect(r.getCursor('builder@duo')).toBeNull(); r.setCursor('duo', 'builder@duo', 'T'); expect(r.getCursor('builder@duo')).toBe('T')
+})
+test('questions: insert-if-absent, open list, answer', () => {
+  const r = Registry.open(tmpDb()); r.upsertTeam(running2b)
+  const q = { team: 'duo', messageId: 'msg-1', taskId: 't1', dispatchId: 'ctx-1', asker: 'checker@duo', body: '用哪个？', options: ['a', 'b'], relayedAt: 'T' }
+  expect(r.recordQuestion(q)).toBe(true); expect(r.recordQuestion(q)).toBe(false)
+  expect(r.listOpenQuestions('duo').map((x) => x.messageId)).toEqual(['msg-1'])
+  r.answerQuestion('msg-1', 'T2')
+  expect(r.listOpenQuestions('duo')).toEqual([]); expect(r.getQuestion('msg-1')!.answeredAt).toBe('T2')
+})
+test('patrol_events: message_id is unique per team (dedupe); events without one never conflict; prune', () => {
+  const r = Registry.open(tmpDb()); r.upsertTeam(running2b)
+  expect(r.appendPatrolEvent({ team: 'duo', action: 'relay', messageId: 'msg-1' })).toBe(true)
+  expect(r.appendPatrolEvent({ team: 'duo', action: 'relay', messageId: 'msg-1' })).toBe(false)
+  expect(r.appendPatrolEvent({ team: 'duo', action: 'wake' })).toBe(true)
+  expect(r.appendPatrolEvent({ team: 'duo', action: 'wake' })).toBe(true)
+  expect(r.listPatrolEvents('duo')).toHaveLength(3)
+  expect(r.prunePatrolEvents('9999')).toBe(3)
+})
+test('listFinishedVerdictsAfter: only finished rows after the cursor, oldest first', () => {
+  let t = Date.parse('2026-10-15T10:00:00Z')
+  const r = Registry.open(tmpDb(), { now: () => new Date(t) }); r.upsertTeam(running2b)
+  for (const id of ['a', 'b', 'c']) {
+    r.insertTaskExt({ taskId: id, team: 'duo', tags: [], kind: 'work' })
+    r.recordVerdict({ taskId: id, epoch: 0, post: 'builder@duo', verdict: 'escalate', gateFailures: 3, dispatchId: 'x', reportFrom: 'h', body: null })
+  }
+  r.finishVerdict('a', 0, {}); t += 1000; const cut = new Date(t).toISOString(); t += 1000; r.finishVerdict('b', 0, {})
+  expect(r.listFinishedVerdictsAfter('builder@duo', null).map((v) => v.taskId)).toEqual(['a', 'b'])
+  expect(r.listFinishedVerdictsAfter('builder@duo', cut).map((v) => v.taskId)).toEqual(['b'])
+})
+test('listDeliveries reads the done:*:delivered:<target> ledger rows', () => {
+  const r = Registry.open(tmpDb()); r.upsertTeam(running2b)
+  r.claimRequest('done:t1:0:delivered:checker@duo', { target: 'checker@duo', taskId: 'c1', delivery: 'skipped_frozen' })
+  r.claimRequest('done:t2:0:delivered:builder@duo', { target: 'builder@duo', taskId: 'c2', delivery: 'sent' })
+  expect(r.listDeliveries('checker@duo')).toEqual([{ key: 'done:t1:0:delivered:checker@duo', target: 'checker@duo', taskId: 'c1', delivery: 'skipped_frozen' }])
 })

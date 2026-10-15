@@ -364,7 +364,7 @@ export function clock(start = Date.parse('2026-10-15T10:00:00Z')) {
 
 export function mkDeps(orca: FakeOrca, over: Partial<CommandDeps> = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'wl-home-'))
-  const registry = Registry.open(path.join(home, 'state.db'))
+  const registry = Registry.open(path.join(home, 'state.db'), over.now ? { now: over.now } : {})
   const warnings: string[] = []
   const deps: CommandDeps = {
     orca, registry, warn: (m) => warnings.push(m),

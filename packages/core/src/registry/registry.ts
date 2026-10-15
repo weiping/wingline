@@ -121,12 +121,97 @@ const logRow = (r: Row): TaskLogRow => ({
   detail: r.detail as string | null,
 })
 
+export type PatrolSignal =
+  | 'no_progress' | 'waiting_approval' | 'waiting_answer' | 'dead_assignee' | 'owner_idle'
+  | 'overdue' | 'done_unfinished' | 'bypassed' | 'call_uncertain' | 'gate_streak'
+export interface PatrolStateRow {
+  team: string
+  post: string
+  signal: PatrolSignal
+  taskId: string
+  level: number
+  since: string
+  levelAt: string
+  lastNudgedAt: string | null
+  notifyCount: number
+  nextDueAt: string | null
+  clearedAt: string | null
+}
+export interface FrozenRow {
+  post: string
+  reason: string
+  signal: string | null
+  frozenAt: string
+}
+export interface QuestionRow {
+  team: string
+  messageId: string
+  taskId: string | null
+  dispatchId: string | null
+  asker: string
+  body: string
+  options: string[]
+  relayedAt: string
+  answeredAt: string | null
+}
+export interface PatrolEvent {
+  team: string
+  post?: string | null
+  signal?: string | null
+  taskId?: string | null
+  action: string
+  outcome?: string | null
+  messageId?: string | null
+  detail?: unknown
+}
+
+const patrolRow = (r: Row): PatrolStateRow => ({
+  team: r.team as string,
+  post: r.post as string,
+  signal: r.signal as PatrolSignal,
+  taskId: r.task_id as string,
+  level: r.level as number,
+  since: r.since as string,
+  levelAt: r.level_at as string,
+  lastNudgedAt: r.last_nudged_at as string | null,
+  notifyCount: r.notify_count as number,
+  nextDueAt: r.next_due_at as string | null,
+  clearedAt: r.cleared_at as string | null,
+})
+
+const frozenRow = (r: Row): FrozenRow => ({
+  post: r.post as string, reason: r.reason as string, signal: r.signal as string | null, frozenAt: r.frozen_at as string,
+})
+
+const questionRow = (r: Row): QuestionRow => ({
+  team: r.team as string,
+  messageId: r.message_id as string,
+  taskId: r.task_id as string | null,
+  dispatchId: r.dispatch_id as string | null,
+  asker: r.asker as string,
+  body: r.body as string,
+  options: JSON.parse(r.options as string) as string[],
+  relayedAt: r.relayed_at as string,
+  answeredAt: r.answered_at as string | null,
+})
+
+const eventRow = (r: Row): PatrolEvent & { id: number; at: string } => ({
+  id: r.id as number,
+  at: r.at as string,
+  team: r.team as string,
+  post: r.post as string | null,
+  signal: r.signal as string | null,
+  taskId: r.task_id as string | null,
+  action: r.action as string,
+  outcome: r.outcome as string | null,
+  messageId: r.message_id as string | null,
+  detail: r.detail === null ? null : JSON.parse(r.detail as string),
+})
+
 const RECEIPT_LIMIT = 16 * 1024
 const BUSY_TIMEOUT_MS = 5000
 
 type Row = Record<string, string | number | null>
-
-const now = () => new Date().toISOString()
 
 const teamRow = (r: Row): TeamRow => ({
   name: r.name as string,
@@ -157,16 +242,23 @@ function pidAlive(pid: number): boolean {
 }
 
 export class Registry {
-  private constructor(private readonly db: DatabaseSync) {}
+  private constructor(
+    private readonly db: DatabaseSync,
+    private readonly clock: () => Date,
+  ) {}
 
-  static open(file: string): Registry {
+  private now(): string {
+    return this.clock().toISOString()
+  }
+
+  static open(file: string, o: { now?: () => Date } = {}): Registry {
     fs.mkdirSync(path.dirname(file), { recursive: true })
     const db = new DatabaseSync(file)
     db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`)
     db.exec('PRAGMA journal_mode = WAL')
     db.exec('PRAGMA foreign_keys = ON')
     Registry.migrate(db)
-    return new Registry(db)
+    return new Registry(db, o.now ?? (() => new Date()))
   }
 
   private static migrate(db: DatabaseSync): void {
@@ -216,25 +308,25 @@ export class Registry {
            run_id = excluded.run_id, coordinator_handle = excluded.coordinator_handle, status = excluded.status,
            updated_at = excluded.updated_at`,
       )
-      .run(t.name, t.specPath, t.specHash, t.runId, t.coordinatorHandle, t.status, now())
+      .run(t.name, t.specPath, t.specHash, t.runId, t.coordinatorHandle, t.status, this.now())
   }
 
   /** 只改状态这一列：不覆盖并发刷新过的 coordinator_handle / run_id（spec 第 5.2 节）。 */
   setTeamStatus(team: string, status: TeamRow['status']): void {
-    this.db.prepare('UPDATE teams SET status = ?, updated_at = ? WHERE name = ?').run(status, now(), team)
+    this.db.prepare('UPDATE teams SET status = ?, updated_at = ? WHERE name = ?').run(status, this.now(), team)
   }
 
   /** 已有团队重新 wl up：只更新规格与状态。 */
   markTeamUp(team: string, specPath: string, specHash: string): void {
-    this.db.prepare("UPDATE teams SET spec_path = ?, spec_hash = ?, status = 'up', updated_at = ? WHERE name = ?").run(specPath, specHash, now(), team)
+    this.db.prepare("UPDATE teams SET spec_path = ?, spec_hash = ?, status = 'up', updated_at = ? WHERE name = ?").run(specPath, specHash, this.now(), team)
   }
 
   updateCoordinatorHandle(team: string, handle: string | null): void {
-    this.db.prepare('UPDATE teams SET coordinator_handle = ?, updated_at = ? WHERE name = ?').run(handle, now(), team)
+    this.db.prepare('UPDATE teams SET coordinator_handle = ?, updated_at = ? WHERE name = ?').run(handle, this.now(), team)
   }
 
   setRunId(team: string, runId: string | null): void {
-    this.db.prepare('UPDATE teams SET run_id = ?, updated_at = ? WHERE name = ?').run(runId, now(), team)
+    this.db.prepare('UPDATE teams SET run_id = ?, updated_at = ? WHERE name = ?').run(runId, this.now(), team)
   }
 
   listPosts(team: string): PostRow[] {
@@ -248,15 +340,15 @@ export class Registry {
          ON CONFLICT(address) DO UPDATE SET team = excluded.team, agent = excluded.agent, worktree = excluded.worktree,
            handle = excluded.handle, status = excluded.status, is_lead = excluded.is_lead, updated_at = excluded.updated_at`,
       )
-      .run(p.address, p.team, p.agent, p.worktree, p.handle, p.status, p.isLead ? 1 : 0, now())
+      .run(p.address, p.team, p.agent, p.worktree, p.handle, p.status, p.isLead ? 1 : 0, this.now())
   }
 
   setPostHandle(address: string, handle: string | null): void {
-    this.db.prepare('UPDATE posts SET handle = ?, updated_at = ? WHERE address = ?').run(handle, now(), address)
+    this.db.prepare('UPDATE posts SET handle = ?, updated_at = ? WHERE address = ?').run(handle, this.now(), address)
   }
 
   setPostStatus(address: string, status: PostStatus): void {
-    this.db.prepare('UPDATE posts SET status = ?, updated_at = ? WHERE address = ?').run(status, now(), address)
+    this.db.prepare('UPDATE posts SET status = ?, updated_at = ? WHERE address = ?').run(status, this.now(), address)
   }
 
   getRequest(id: string): RequestRow | null {
@@ -277,7 +369,7 @@ export class Registry {
         `INSERT INTO requests(id, state, receipt, retry_request, args, updated_at) VALUES (?, 'pending', NULL, ?, ?, ?)
          ON CONFLICT(id) DO NOTHING`,
       )
-      .run(id, retryRequest, JSON.stringify(args), now())
+      .run(id, retryRequest, JSON.stringify(args), this.now())
   }
 
   /** 换 id 与参数；给了 expectedOld 时是比较后交换：旧 id 已被别的进程换掉则不动，返回 false。 */
@@ -286,7 +378,7 @@ export class Registry {
     const binds = expectedOld === undefined ? [id] : [id, expectedOld]
     const r = this.db
       .prepare(`UPDATE requests SET state = 'pending', receipt = NULL, retry_request = ?, args = ?, updated_at = ? WHERE ${where}`)
-      .run(retryRequest, JSON.stringify(args), now(), ...binds)
+      .run(retryRequest, JSON.stringify(args), this.now(), ...binds)
     return Number(r.changes) > 0
   }
 
@@ -306,7 +398,7 @@ export class Registry {
     const text = receipt === undefined ? null : JSON.stringify(receipt)
     const r = this.db
       .prepare("INSERT INTO requests(id, state, receipt, updated_at) VALUES (?, 'done', ?, ?) ON CONFLICT(id) DO NOTHING")
-      .run(id, text, now())
+      .run(id, text, this.now())
     return Number(r.changes) > 0
   }
 
@@ -319,17 +411,20 @@ export class Registry {
         `INSERT INTO requests(id, state, receipt, updated_at) VALUES (?, 'pending', NULL, ?)
          ON CONFLICT(id) DO UPDATE SET state = 'pending', receipt = NULL, updated_at = excluded.updated_at`,
       )
-      .run(id, now())
+      .run(id, this.now())
   }
 
   finishRequest(id: string, state: Exclude<RequestState, 'pending'>, receipt?: unknown): void {
     const text = receipt === undefined ? null : JSON.stringify(receipt).slice(0, RECEIPT_LIMIT)
-    this.db.prepare('UPDATE requests SET state = ?, receipt = ?, updated_at = ? WHERE id = ?').run(state, text, now(), id)
+    this.db.prepare('UPDATE requests SET state = ?, receipt = ?, updated_at = ? WHERE id = ?').run(state, text, this.now(), id)
   }
 
-  /** 跨进程互斥：持锁方 pid 仍存活时，其他持有者收到 team_busy；死进程的锁被接管。 */
-  async withTeamLock<T>(team: string, fn: () => Promise<T> | T): Promise<T> {
-    this.acquire(team)
+  /**
+   * 跨进程互斥：持锁方 pid 仍存活时，其他持有者收到 team_busy；死进程的锁被接管。
+   * 给了 takeoverAfterMs 时，心跳（缺省取 at）早于该时长的锁也视为死锁（spec 第 2.2 节）。
+   */
+  async withTeamLock<T>(team: string, fn: () => Promise<T> | T, o: { takeoverAfterMs?: number } = {}): Promise<T> {
+    this.acquire(team, o.takeoverAfterMs)
     try {
       return await fn()
     } finally {
@@ -337,21 +432,41 @@ export class Registry {
     }
   }
 
-  private acquire(team: string): void {
+  private lockIsLive(held: { pid: number; at: string; heartbeat_at: string | null }, takeoverAfterMs?: number): boolean {
+    if (!pidAlive(held.pid)) return false
+    if (takeoverAfterMs === undefined) return true
+    const last = Date.parse(held.heartbeat_at ?? held.at)
+    return this.clock().getTime() - last <= takeoverAfterMs
+  }
+
+  private acquire(team: string, takeoverAfterMs?: number): void {
     this.db.exec('BEGIN IMMEDIATE')
     try {
-      const held = this.db.prepare('SELECT pid FROM locks WHERE team = ?').get(team) as { pid: number } | undefined
-      if (held && pidAlive(held.pid)) {
+      const held = this.db.prepare('SELECT pid, at, heartbeat_at FROM locks WHERE team = ?').get(team) as
+        | { pid: number; at: string; heartbeat_at: string | null }
+        | undefined
+      if (held && this.lockIsLive(held, takeoverAfterMs)) {
         throw new WinglineError('input', 'team_busy', `团队 ${team} 正在被另一个 wl 命令（pid ${held.pid}）操作`, {
           hint: '等待其完成后重试',
         })
       }
-      this.db.prepare('INSERT OR REPLACE INTO locks(team, pid, at) VALUES (?, ?, ?)').run(team, process.pid, now())
+      this.db.prepare('INSERT OR REPLACE INTO locks(team, pid, at, heartbeat_at) VALUES (?, ?, ?, NULL)').run(team, process.pid, this.now())
       this.db.exec('COMMIT')
     } catch (err) {
       this.db.exec('ROLLBACK')
       throw err
     }
+  }
+
+  /** 只更新本进程持有的那一行；返回该行是否仍归本进程。 */
+  heartbeat(key: string): boolean {
+    const r = this.db.prepare('UPDATE locks SET heartbeat_at = ? WHERE team = ? AND pid = ?').run(this.now(), key, process.pid)
+    return Number(r.changes) === 1
+  }
+
+  getLock(key: string): { pid: number; at: string; heartbeatAt: string | null } | null {
+    const r = this.db.prepare('SELECT pid, at, heartbeat_at FROM locks WHERE team = ?').get(key) as Row | undefined
+    return r ? { pid: r.pid as number, at: r.at as string, heartbeatAt: r.heartbeat_at as string | null } : null
   }
 
   insertTaskExt(row: { taskId: string; team: string; tags: string[]; kind: TaskKind; claimedBy?: string | null; readySince?: string | null }): void {
@@ -360,7 +475,7 @@ export class Registry {
         `INSERT INTO task_ext(task_id, team, tags, kind, claimed_by, ready_since, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(task_id) DO NOTHING`,
       )
-      .run(row.taskId, row.team, JSON.stringify(row.tags), row.kind, row.claimedBy ?? null, row.readySince ?? null, now())
+      .run(row.taskId, row.team, JSON.stringify(row.tags), row.kind, row.claimedBy ?? null, row.readySince ?? null, this.now())
   }
 
   getTaskExt(taskId: string): TaskExtRow | null {
@@ -375,11 +490,11 @@ export class Registry {
         `INSERT INTO task_ext(task_id, team, created_at, ${column}) VALUES (?, ?, ?, ?)
          ON CONFLICT(task_id) DO UPDATE SET ${column} = excluded.${column}`,
       )
-      .run(taskId, team, now(), value)
+      .run(taskId, team, this.now(), value)
   }
 
   private ensureExt(team: string, taskId: string): void {
-    this.db.prepare('INSERT INTO task_ext(task_id, team, created_at) VALUES (?, ?, ?) ON CONFLICT(task_id) DO NOTHING').run(taskId, team, now())
+    this.db.prepare('INSERT INTO task_ext(task_id, team, created_at) VALUES (?, ?, ?) ON CONFLICT(task_id) DO NOTHING').run(taskId, team, this.now())
   }
 
   setClaimedBy(team: string, taskId: string, claimedBy: string | null): void {
@@ -434,7 +549,7 @@ export class Registry {
           `INSERT INTO task_done(task_id, epoch, post, verdict, gate_failures, dispatch_id, report_from, body, created_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
-        .run(row.taskId, row.epoch, row.post, row.verdict, row.gateFailures, row.dispatchId, row.reportFrom, row.body, now())
+        .run(row.taskId, row.epoch, row.post, row.verdict, row.gateFailures, row.dispatchId, row.reportFrom, row.body, this.now())
       this.db.exec('COMMIT')
     } catch (err) {
       this.db.exec('ROLLBACK')
@@ -446,7 +561,7 @@ export class Registry {
   finishVerdict(taskId: string, epoch: number, result: unknown): void {
     this.db
       .prepare('UPDATE task_done SET result = ?, finished_at = ? WHERE task_id = ? AND epoch = ?')
-      .run(JSON.stringify(result), now(), taskId, epoch)
+      .run(JSON.stringify(result), this.now(), taskId, epoch)
   }
 
   listUnfinishedVerdicts(team: string): DoneVerdictRow[] {
@@ -477,11 +592,139 @@ export class Registry {
     const detail = row.detail === undefined || row.detail === null ? null : typeof row.detail === 'string' ? row.detail : JSON.stringify(row.detail)
     this.db
       .prepare('INSERT INTO task_log(team, task_id, epoch, at, actor, actor_source, action, detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(row.team, row.taskId, row.epoch, now(), row.actor, row.actorSource, row.action, detail)
+      .run(row.team, row.taskId, row.epoch, this.now(), row.actor, row.actorSource, row.action, detail)
   }
 
   listTaskLog(taskId: string): TaskLogRow[] {
     return (this.db.prepare('SELECT * FROM task_log WHERE task_id = ? ORDER BY id').all(taskId) as Row[]).map(logRow)
+  }
+
+  // —— 阶段 2B：巡查状态、冻结、静默、游标、提问、巡查事件 ——
+
+  getPatrolState(team: string, post: string, signal: PatrolSignal, taskId: string): PatrolStateRow | null {
+    const r = this.db.prepare('SELECT * FROM patrol_state WHERE team = ? AND post = ? AND signal = ? AND task_id = ?').get(team, post, signal, taskId) as Row | undefined
+    return r ? patrolRow(r) : null
+  }
+
+  listPatrolState(team: string): PatrolStateRow[] {
+    return (this.db.prepare('SELECT * FROM patrol_state WHERE team = ? ORDER BY rowid').all(team) as Row[]).map(patrolRow)
+  }
+
+  putPatrolState(s: PatrolStateRow): void {
+    this.db
+      .prepare(
+        `INSERT INTO patrol_state(team, post, signal, task_id, level, since, level_at, last_nudged_at, notify_count, next_due_at, cleared_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(team, post, signal, task_id) DO UPDATE SET level = excluded.level, since = excluded.since, level_at = excluded.level_at,
+           last_nudged_at = excluded.last_nudged_at, notify_count = excluded.notify_count, next_due_at = excluded.next_due_at, cleared_at = excluded.cleared_at`,
+      )
+      .run(s.team, s.post, s.signal, s.taskId, s.level, s.since, s.levelAt, s.lastNudgedAt, s.notifyCount, s.nextDueAt, s.clearedAt)
+  }
+
+  freezePost(a: { post: string; team: string; reason: string; signal?: string | null }): void {
+    this.db
+      .prepare('INSERT INTO frozen_posts(post, team, reason, signal, frozen_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(post) DO NOTHING')
+      .run(a.post, a.team, a.reason, a.signal ?? null, this.now())
+  }
+
+  unfreezePost(post: string): void {
+    this.db.prepare('DELETE FROM frozen_posts WHERE post = ?').run(post)
+  }
+
+  getFrozen(post: string): FrozenRow | null {
+    const r = this.db.prepare('SELECT * FROM frozen_posts WHERE post = ?').get(post) as Row | undefined
+    return r ? frozenRow(r) : null
+  }
+
+  listFrozen(team: string): FrozenRow[] {
+    return (this.db.prepare('SELECT * FROM frozen_posts WHERE team = ? ORDER BY frozen_at, post').all(team) as Row[]).map(frozenRow)
+  }
+
+  hush(team: string, post: string, until: string): void {
+    this.db.prepare('INSERT INTO hushes(post, team, until) VALUES (?, ?, ?) ON CONFLICT(post) DO UPDATE SET until = excluded.until').run(post, team, until)
+  }
+
+  unhush(post: string): void {
+    this.db.prepare('DELETE FROM hushes WHERE post = ?').run(post)
+  }
+
+  hushedUntil(post: string): string | null {
+    const r = this.db.prepare('SELECT until FROM hushes WHERE post = ?').get(post) as Row | undefined
+    return r ? (r.until as string) : null
+  }
+
+  listHushes(team: string): Array<{ post: string; until: string }> {
+    const rows = this.db.prepare('SELECT post, until FROM hushes WHERE team = ? ORDER BY post').all(team) as Row[]
+    return rows.map((r) => ({ post: r.post as string, until: r.until as string }))
+  }
+
+  getCursor(post: string): string | null {
+    const r = this.db.prepare('SELECT after FROM patrol_cursor WHERE post = ?').get(post) as Row | undefined
+    return r ? (r.after as string) : null
+  }
+
+  setCursor(team: string, post: string, after: string): void {
+    this.db.prepare('INSERT INTO patrol_cursor(post, team, after) VALUES (?, ?, ?) ON CONFLICT(post) DO UPDATE SET after = excluded.after').run(post, team, after)
+  }
+
+  recordQuestion(q: Omit<QuestionRow, 'answeredAt'>): boolean {
+    const r = this.db
+      .prepare(
+        `INSERT INTO questions(message_id, team, task_id, dispatch_id, asker, body, options, relayed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(message_id) DO NOTHING`,
+      )
+      .run(q.messageId, q.team, q.taskId, q.dispatchId, q.asker, q.body, JSON.stringify(q.options), q.relayedAt)
+    return Number(r.changes) > 0
+  }
+
+  getQuestion(messageId: string): QuestionRow | null {
+    const r = this.db.prepare('SELECT * FROM questions WHERE message_id = ?').get(messageId) as Row | undefined
+    return r ? questionRow(r) : null
+  }
+
+  listOpenQuestions(team: string): QuestionRow[] {
+    return (this.db.prepare('SELECT * FROM questions WHERE team = ? AND answered_at IS NULL ORDER BY rowid').all(team) as Row[]).map(questionRow)
+  }
+
+  answerQuestion(messageId: string, at: string): void {
+    this.db.prepare('UPDATE questions SET answered_at = ? WHERE message_id = ?').run(at, messageId)
+  }
+
+  /** message_id 冲突（已处理过的消息）→ false。 */
+  appendPatrolEvent(e: PatrolEvent): boolean {
+    const detail = e.detail === undefined || e.detail === null ? null : JSON.stringify(e.detail)
+    const r = this.db
+      .prepare(
+        `INSERT INTO patrol_events(team, at, post, signal, task_id, action, outcome, message_id, detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT DO NOTHING`,
+      )
+      .run(e.team, this.now(), e.post ?? null, e.signal ?? null, e.taskId ?? null, e.action, e.outcome ?? null, e.messageId ?? null, detail)
+    return Number(r.changes) > 0
+  }
+
+  listPatrolEvents(team: string, o: { since?: string; limit?: number } = {}): Array<PatrolEvent & { id: number; at: string }> {
+    const rows = this.db
+      .prepare('SELECT * FROM patrol_events WHERE team = ? AND at >= ? ORDER BY id DESC LIMIT ?')
+      .all(team, o.since ?? '', o.limit ?? 1000) as Row[]
+    return rows.reverse().map(eventRow)
+  }
+
+  prunePatrolEvents(before: string): number {
+    return Number(this.db.prepare('DELETE FROM patrol_events WHERE at < ?').run(before).changes)
+  }
+
+  /** finished_at > after（null 表示不限）的已完成判定，按 finished_at 升序。 */
+  listFinishedVerdictsAfter(post: string, after: string | null): DoneVerdictRow[] {
+    const sql = 'SELECT * FROM task_done WHERE post = ? AND finished_at IS NOT NULL AND finished_at > ? ORDER BY finished_at, task_id'
+    return (this.db.prepare(sql).all(post, after ?? '') as Row[]).map(verdictRow)
+  }
+
+  /** 2A done 写下的交付记录（requests 里 done:%:delivered:<target> 且 done 的行）。 */
+  listDeliveries(target: string): Array<{ key: string; target: string; taskId: string; delivery: string }> {
+    const rows = this.db
+      .prepare("SELECT id, receipt FROM requests WHERE state = 'done' AND id LIKE 'done:%:delivered:' || ? ORDER BY updated_at, id")
+      .all(target) as Row[]
+    return rows.map((r) => ({ key: r.id as string, ...(JSON.parse(r.receipt as string) as { target: string; taskId: string; delivery: string }) }))
   }
 
   close(): void {

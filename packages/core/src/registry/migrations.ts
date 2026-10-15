@@ -46,4 +46,18 @@ export const MIGRATIONS: readonly string[] = [
     at TEXT NOT NULL, actor TEXT NOT NULL, actor_source TEXT NOT NULL, action TEXT NOT NULL, detail TEXT);
   CREATE INDEX task_log_task ON task_log(task_id, id);
   `,
+  `
+  ALTER TABLE locks ADD COLUMN heartbeat_at TEXT;
+  CREATE TABLE patrol_state (team TEXT NOT NULL, post TEXT NOT NULL, signal TEXT NOT NULL, task_id TEXT NOT NULL DEFAULT '',
+    level INTEGER NOT NULL, since TEXT NOT NULL, level_at TEXT NOT NULL, last_nudged_at TEXT, notify_count INTEGER NOT NULL DEFAULT 0,
+    next_due_at TEXT, cleared_at TEXT, PRIMARY KEY (team, post, signal, task_id));
+  CREATE TABLE frozen_posts (post TEXT PRIMARY KEY, team TEXT NOT NULL REFERENCES teams(name), reason TEXT NOT NULL, signal TEXT, frozen_at TEXT NOT NULL);
+  CREATE TABLE hushes (post TEXT PRIMARY KEY, team TEXT NOT NULL, until TEXT NOT NULL);
+  CREATE TABLE patrol_cursor (post TEXT PRIMARY KEY, team TEXT NOT NULL, after TEXT NOT NULL);
+  CREATE TABLE questions (message_id TEXT PRIMARY KEY, team TEXT NOT NULL, task_id TEXT, dispatch_id TEXT, asker TEXT NOT NULL,
+    body TEXT NOT NULL, options TEXT NOT NULL DEFAULT '[]', relayed_at TEXT NOT NULL, answered_at TEXT);
+  CREATE TABLE patrol_events (id INTEGER PRIMARY KEY AUTOINCREMENT, team TEXT NOT NULL, at TEXT NOT NULL, post TEXT, signal TEXT,
+    task_id TEXT, action TEXT NOT NULL, outcome TEXT, message_id TEXT, detail TEXT);
+  CREATE UNIQUE INDEX patrol_events_msg ON patrol_events(team, message_id) WHERE message_id IS NOT NULL;
+  `,
 ]
