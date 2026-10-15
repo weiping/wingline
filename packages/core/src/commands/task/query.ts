@@ -183,7 +183,7 @@ function deadAssignee(x: StaleInput): StaleItem[] {
 
 function ownerIdle(x: StaleInput, now: Date, th: StaleThresholds): StaleItem[] {
   const busy = (owner: string) =>
-    x.tasks.some((o) => o.status === 'dispatched' && o.claimedBy === owner && o.assigneeHandle !== null && x.alive.has(o.assigneeHandle))
+    x.tasks.some((o) => o.status === 'dispatched' && o.claimedBy === owner)
   return x.tasks
     .filter((t) => t.status === 'ready' && t.claimedBy && t.readySince && minutesSince(t.readySince, now) > th.ownerIdleMinutes && !busy(t.claimedBy))
     .map((t) => item(t, 'owner_idle', t.readySince, `wl task start ${t.id} --as ${as(t.claimedBy)}`))
