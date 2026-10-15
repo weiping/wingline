@@ -324,3 +324,20 @@ test('oneShot id precedence: retryRequest over id over a random uuid', async () 
   expect(ids[2]).toMatch(/^[0-9a-f-]{36}$/)
   expect(registry.getRequest('oneshot:rr')!.state).toBe('done')
 })
+
+test('oneShot: landed + transport code and the same-id replay fails again → hint carries --retry-request <id>', async () => {
+  const o = new FakeOrca(); const { deps } = seedRunningTeam(o)
+  o.faults.push({ method: 'taskCreate', when: 'after', error: rt() })
+  o.onMutate = () => { if (o.callsOf('taskCreate').length === 2) o.faults.push({ method: 'taskCreate', when: 'transport', error: ru() }) }
+  const err = await oneShotCreate(deps, o).catch((e) => e)
+  const id = o.callsOf('taskCreate')[0]!.retryRequest as string
+  expect(err).toMatchObject({ kind: 'uncertain', hint: expect.stringContaining(`--retry-request ${id}`) })
+})
+test('oneShot: request-show pending → hint carries --retry-request <id>', async () => {
+  const o = new FakeOrca(); const { deps } = seedRunningTeam(o)
+  o.faults.push({ method: 'taskCreate', when: 'before', error: timeout() })
+  o.onMutate = () => { const id = o.callsOf('taskCreate')[0]?.retryRequest as string | undefined; if (id) o.pendingIds.add(id) }
+  const err = await oneShotCreate(deps, o).catch((e) => e)
+  const id = o.callsOf('taskCreate')[0]!.retryRequest as string
+  expect(err).toMatchObject({ kind: 'uncertain', hint: expect.stringContaining(`--retry-request ${id}`) })
+})
