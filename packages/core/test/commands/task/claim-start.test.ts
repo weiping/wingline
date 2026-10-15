@@ -1,7 +1,7 @@
 import { expect, test } from 'vitest'
 import { claimTask, releaseTask, reassignTask } from '../../../src/commands/task/claim.js'
 import { startTask } from '../../../src/commands/task/start.js'
-import { DUO_YAML } from '../../spec/helpers.js'
+import { DUO_YAML, SELF_CLAIM_YAML } from '../../spec/helpers.js'
 import { FakeOrca, seedRunningTeam } from '../fake-client.js'
 
 const seed = (over: Parameters<typeof seedRunningTeam>[1] = {}) => {
