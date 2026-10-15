@@ -153,7 +153,8 @@ function waitingAnswer(snap: ScanSnapshot, t: TaskRow, post: string): SignalHit 
 function hasProgress(snap: ScanSnapshot, t: TaskRow, row: PatrolStateRow, lastOut: number): boolean {
   const levelAt = ms(row.levelAt)
   if (lastOut > Math.max(levelAt, ms(row.lastNudgedAt) + NUDGE_GRACE_MS)) return true
-  return ms(snap.lastLogAt.get(t.id)) > levelAt || ms(snap.lastVerdictAt.get(t.id)) > levelAt
+  // 重新派发（dispatch_id 变了）也是进展：dispatched_at 晚于进入当前级别的时间
+  return ms(snap.lastLogAt.get(t.id)) > levelAt || ms(snap.lastVerdictAt.get(t.id)) > levelAt || ms(t.dispatchedAt) > levelAt
 }
 
 function noProgress(snap: ScanSnapshot, spec: TeamSpec, t: TaskRow, post: string, term: TerminalSummary, p: Pat): SignalHit | null {
@@ -199,7 +200,7 @@ function staleHit(snap: ScanSnapshot, it: StaleItem): SignalHit | null {
       return { ...base, signal: 'owner_idle', minutes: minutesOf(snap, ms(it.since)) }
     case 'done_unfinished': {
       const v = snap.unfinished.find((u) => u.taskId === it.taskId)
-      if (!v || snap.now.getTime() - ms(v.createdAt) < DONE_UNFINISHED_GRACE_MS) return null
+      if (!v || snap.now.getTime() - ms(v.createdAt) <= DONE_UNFINISHED_GRACE_MS) return null
       return { ...base, post: v.post, signal: 'done_unfinished', epoch: v.epoch }
     }
     case 'bypassed':
