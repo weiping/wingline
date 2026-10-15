@@ -1,7 +1,7 @@
 import { WinglineError } from '../../errors.js'
 import type { CommandDeps } from '../deps.js'
 import { announce, dispatchTo, type Delivery } from './dispatch.js'
-import { isPostFrozen } from './frozen.js'
+import { frozenError, isPostFrozen } from './frozen.js'
 import { isOwnTerminal, requireActor, resolveHandle } from './identity.js'
 import { taskPreflight } from './preflight.js'
 import { findTask, type TaskRow } from './query.js'
@@ -29,7 +29,7 @@ export async function startTask(deps: CommandDeps, a: { id: string; as?: string 
     return { delivery: isOwnTerminal(deps, handle) ? 'self' : 'not_notified', already: true }
   }
   if (task.status !== 'ready') throw fail('task_not_open', `任务 ${a.id} 状态为 ${task.status}，不能开始`)
-  if (isPostFrozen(deps, actor.address)) throw fail('post_frozen', `岗位 ${actor.address} 已冻结`)
+  if (isPostFrozen(deps, actor.address)) throw frozenError(actor.address)
   const target = { address: actor.address, handle }
   const d = await dispatchTo(deps, team, a.id, target)
   if (d.status === 'queued') {

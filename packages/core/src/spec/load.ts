@@ -26,6 +26,17 @@ export interface TaskBudgets {
   maxMinutes: number | null
 }
 
+export interface PatrolSpec {
+  noProgressMinutes: number
+  promptMinutes: number
+  ownerIdleMinutes: number
+  postFailureStreak: number
+  freezeLead: boolean
+  autoRecover: boolean
+  worktreeComment: boolean
+  notify: { webhook: string } | { command: string[] } | null
+}
+
 export interface TeamSpec {
   version: 1
   name: string
@@ -34,6 +45,7 @@ export interface TeamSpec {
   lead: string
   posts: PostSpec[]
   budgets: { task: TaskBudgets }
+  patrol: PatrolSpec
   dir: string
   specPath: string
 }
@@ -157,6 +169,26 @@ function crossCheck(team: RawTeam, at: Located): void {
   if (cycle) at.fail('links_cycle', ['links'], `hands_to 形成环：${cycle.join(' → ')}`)
 }
 
+function patrolOf(raw: RawTeam['patrol'], platform: NodeJS.Platform, at: Located): PatrolSpec {
+  const n = raw.notify
+  if (n && Boolean(n.webhook) === Boolean(n.command)) {
+    at.fail('notify_conflict', ['patrol', 'notify'], 'patrol.notify 里 webhook 与 command 必须恰好填一个')
+  }
+  if (n?.command && platform === 'win32' && /\.(cmd|bat)$/i.test(n.command[0]!)) {
+    at.fail('notify_command_unsupported', ['patrol', 'notify', 'command', 0], 'Windows 上 .cmd/.bat 只能经 shell 启动，不支持作为 patrol.notify.command', '改用 .exe，或用 webhook')
+  }
+  return {
+    noProgressMinutes: raw.no_progress_minutes,
+    promptMinutes: raw.prompt_minutes,
+    ownerIdleMinutes: raw.owner_idle_minutes,
+    postFailureStreak: raw.post_failure_streak,
+    freezeLead: raw.freeze_lead,
+    autoRecover: raw.auto_recover,
+    worktreeComment: raw.worktree_comment,
+    notify: !n ? null : n.webhook ? { webhook: n.webhook } : { command: n.command! },
+  }
+}
+
 function launchOf(p: RawTeam['posts'][number], i: number, at: Located): string {
   if (p.launch) return p.launch
   if (!p.model) return p.agent
@@ -170,7 +202,7 @@ function resolveFile(dir: string, rel: string, at: Located, p: Path): string {
   return abs
 }
 
-export function loadTeamSpec(specPath: string): TeamSpec {
+export function loadTeamSpec(specPath: string, o: { platform?: NodeJS.Platform } = {}): TeamSpec {
   const abs = path.resolve(specPath)
   const dir = path.dirname(abs)
   const { raw, at } = parseYaml(abs)
@@ -204,6 +236,7 @@ export function loadTeamSpec(specPath: string): TeamSpec {
         maxMinutes: team.budgets.task.max_minutes ?? null,
       },
     },
+    patrol: patrolOf(team.patrol, o.platform ?? process.platform, at),
     dir,
     specPath: abs,
   }

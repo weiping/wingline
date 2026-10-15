@@ -62,3 +62,8 @@ test('B-M9: consults participates in the spec hash (spec §4: the new fields all
   const withConsults = specHash(loadTeamSpec(mkTeam(DUO_YAML + 'links:\n  builder:\n    consults: [checker]\n')))
   expect(withConsults).not.toBe(base)
 })
+
+test('patrol settings participate in the hash', () => {
+  const a = specHash(loadTeamSpec(mkTeam(DUO_YAML)))
+  expect(specHash(loadTeamSpec(mkTeam(DUO_YAML + 'patrol:\n  no_progress_minutes: 7\n')))).not.toBe(a)
+})

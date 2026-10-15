@@ -1,6 +1,7 @@
+import { WinglineError } from '../../errors.js'
 import type { CommandDeps } from '../deps.js'
 
-/** 阶段 2A 里恒为 false；阶段 2B 计划 Task 3 改为读 frozen_posts（调用点不用再改）。 */
-export function isPostFrozen(_deps: CommandDeps, _address: string): boolean {
-  return false
-}
+export const isPostFrozen = (deps: CommandDeps, address: string): boolean => deps.registry.getFrozen(address) !== null
+
+export const frozenError = (address: string): WinglineError =>
+  new WinglineError('input', 'post_frozen', `岗位 ${address} 已冻结`, { hint: `${address} 已冻结：解除用 wl dispatcher unfreeze ${address}` })

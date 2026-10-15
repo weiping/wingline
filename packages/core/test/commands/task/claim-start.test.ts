@@ -209,3 +209,11 @@ test('start rerun by the post itself reports self; rerun via --as from another t
   expect(await startTask(other.deps, { id: b, as: 'checker@duo' })).toEqual({ delivery: 'not_notified', already: true })
   expect(other.o.sent.length).toBe(n)
 })
+test('claim / start by a frozen post, reassign to a frozen post are rejected; hint says how to unfreeze', async () => {
+  const { deps, registry, add } = seed()
+  const open = await add(); const mine = await add([], 'builder@duo'); registry.setPlan('duo', mine, 'p')
+  registry.freezePost({ post: 'builder@duo', team: 'duo', reason: 'test' })
+  await expect(claimTask(deps, { id: open, as: 'builder@duo' })).rejects.toMatchObject({ code: 'post_frozen', hint: expect.stringContaining('wl dispatcher unfreeze builder@duo') })
+  await expect(startTask(deps, { id: mine, as: 'builder@duo' })).rejects.toMatchObject({ code: 'post_frozen' })
+  await expect(reassignTask(deps, { id: open, to: 'builder@duo' })).rejects.toMatchObject({ code: 'post_frozen' })
+})

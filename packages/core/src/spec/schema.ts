@@ -28,6 +28,27 @@ const budgetsSchema = z
   .strict()
   .default({})
 
+const notifySchema = z
+  .object({
+    webhook: z.string().url().refine((u) => /^https?:/.test(u), 'webhook 必须是 http: 或 https: URL').optional(),
+    command: z.array(z.string().min(1)).min(1).optional(),
+  })
+  .strict()
+
+const patrolSchema = z
+  .object({
+    no_progress_minutes: pos.default(20),
+    prompt_minutes: pos.default(5),
+    owner_idle_minutes: pos.default(30),
+    post_failure_streak: pos.default(3),
+    freeze_lead: z.boolean().default(false),
+    auto_recover: z.boolean().default(false),
+    worktree_comment: z.boolean().default(false),
+    notify: notifySchema.optional(),
+  })
+  .strict()
+  .default({})
+
 export const postSchema = z
   .object({
     id: z.string().regex(ID, idMessage),
@@ -53,6 +74,7 @@ export const teamSchema = z
     links: z.record(z.string(), linksSchema).default({}),
     gates: z.record(z.string(), z.string().min(1)).default({}),
     budgets: budgetsSchema,
+    patrol: patrolSchema,
   })
   .strict()
 

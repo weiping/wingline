@@ -45,6 +45,7 @@ export function specHash(spec: TeamSpec, readFile: (p: string) => Buffer = (p) =
       consults: p.consults ?? [],
     })),
     budgets: spec.budgets,
+    patrol: spec.patrol,
   }
   return sha256(JSON.stringify(canonical(normalised)))
 }

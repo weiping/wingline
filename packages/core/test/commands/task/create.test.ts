@@ -135,3 +135,9 @@ test('plan: unknown task → task_not_found; a failed task is terminal; a later 
   expect(registry.listTaskLog('p1').map((l) => l.action)).toEqual(['plan', 'plan'])
   expect(registry.getTaskExt('p3')!.plan).toBeNull()
 })
+test('create --post at a frozen post is rejected before any Orca write', async () => {
+  const o = new FakeOrca(); const { deps, registry } = seedRunningTeam(o)
+  registry.freezePost({ post: 'checker@duo', team: 'duo', reason: 'test' })
+  await expect(createTask(deps, { team: 'duo', title: 't', post: 'checker@duo' })).rejects.toMatchObject({ code: 'post_frozen', hint: expect.stringContaining('wl dispatcher unfreeze checker@duo') })
+  expect(o.orch).toEqual([])
+})
