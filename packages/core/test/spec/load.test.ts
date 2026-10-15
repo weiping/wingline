@@ -77,8 +77,8 @@ test('budgets.team present but empty is still field_removed', () => {
 test('a hands_to chain without a cycle is allowed and parsed', () => {
   const y = DUO_YAML + 'links:\n  builder:\n    hands_to: [checker]\n'
   const s = loadTeamSpec(mkTeam(y))
-  expect(s.posts[0].handsTo).toEqual(['checker'])
-  expect(s.posts[1].handsTo).toEqual([])
+  expect(s.posts[0]?.handsTo).toEqual(['checker'])
+  expect(s.posts[1]?.handsTo).toEqual([])
 })
 test('a 3-node hands_to cycle is reported with every post on it', () => {
   const y = DUO_YAML + `  - id: docs
