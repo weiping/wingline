@@ -1,5 +1,5 @@
 import { WinglineError } from '../../errors.js'
-import type { OrchestrationTaskStatus } from '../../orca/types.js'
+import type { OrchestrationTaskStatus, TerminalSummary } from '../../orca/types.js'
 import type { DoneVerdictRow, RequestState, TaskKind, TaskLogRow, TeamRow } from '../../registry/registry.js'
 import { loadTeamSpec } from '../../spec/load.js'
 import type { CommandDeps } from '../deps.js'
@@ -263,9 +263,13 @@ export function staleReasons(input: StaleInput, now: Date, th: StaleThresholds =
 }
 
 /** 一次 taskList + 一次 terminalList + 本地表。 */
-export async function gatherStaleInput(deps: CommandDeps, team: string): Promise<StaleInput> {
-  const tasks = await fetchTasks(deps, team)
-  const alive = new Set((await deps.orca.terminalList()).map((t) => t.handle))
+export async function gatherStaleInput(
+  deps: CommandDeps,
+  team: string,
+  pre?: { tasks: TaskRow[]; terminals: TerminalSummary[] },
+): Promise<StaleInput> {
+  const tasks = pre?.tasks ?? (await fetchTasks(deps, team))
+  const alive = new Set((pre?.terminals ?? (await deps.orca.terminalList())).map((t) => t.handle))
   const verdicts = new Map<string, DoneVerdictRow[]>()
   for (const t of tasks) if (t.status === 'completed' || t.status === 'failed') verdicts.set(t.id, deps.registry.listVerdictsOf(t.id))
   return {
