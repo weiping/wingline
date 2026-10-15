@@ -621,6 +621,11 @@ export class Registry {
       .run(s.team, s.post, s.signal, s.taskId, s.level, s.since, s.levelAt, s.lastNudgedAt, s.notifyCount, s.nextDueAt, s.clearedAt)
   }
 
+  /** unfreeze 用：该岗位所有巡查行回到 level 0 并标记已清除（spec 第 7 节）。 */
+  resetPatrolForPost(post: string, at: string): void {
+    this.db.prepare('UPDATE patrol_state SET level = 0, cleared_at = ?, last_nudged_at = NULL WHERE post = ?').run(at, post)
+  }
+
   freezePost(a: { post: string; team: string; reason: string; signal?: string | null }): void {
     this.db
       .prepare('INSERT INTO frozen_posts(post, team, reason, signal, frozen_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(post) DO NOTHING')
