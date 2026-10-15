@@ -56,14 +56,15 @@ async function main() {
     record(probe, '00-terminals', { t1, t3, w1, w2 })
     const run = await attempt('run-create', ['orchestration', 'run-create', '--objective', 'wingline r6 probe', '--from', t1, '--retry-request', randomUUID()])
     const runId = run.result.run.id as string
+    let coord = t1
     const create = async (title: string, spec = `probe ${title}`) =>
-      (await attempt(`task-create-${title}`, ['orchestration', 'task-create', '--spec', spec, '--task-title', title, '--run', runId, '--from', t1])).result.task.id as string
+      (await attempt(`task-create-${title}`, ['orchestration', 'task-create', '--spec', spec, '--task-title', title, '--run', runId, '--from', coord])).result.task.id as string
 
     // ---- S1：同一终端两个 dispatched 任务 ----
     const a = await create('A')
     const b = await create('B')
     const dA = await attempt('S1-dispatch-A-to-w1', ['orchestration', 'dispatch', '--task', a, '--to', w1, '--from', t1])
-    const dB = await attempt('S1-dispatch-B-to-w1-while-A-dispatched', ['orchestration', 'dispatch', '--task', b, '--to', w1, '--from', t1])
+    await attempt('S1-dispatch-B-to-w1-while-A-dispatched', ['orchestration', 'dispatch', '--task', b, '--to', w1, '--from', t1])
     record(probe, 'S1-states', { A: await taskState(runId, a), B: await taskState(runId, b) })
 
     // ---- S2：check / ack ----
@@ -80,10 +81,12 @@ async function main() {
       await attempt('S2-ack-d1-then-wait', ['orchestration', 'check', '--terminal', t1, '--run', runId, '--ack', d1, '--wait', '--timeout-ms', '3000'], 30_000)
       await attempt('S2-ack-d1-again', ['orchestration', 'check', '--terminal', t1, '--run', runId, '--ack', d1, '--wait', '--timeout-ms', '3000'], 30_000)
     }
+    const dB = await attempt('S2-dispatch-B-to-w1-after-A-done', ['orchestration', 'dispatch', '--task', b, '--to', w1, '--from', t1])
     if (dB.ok) await doneMsg(b, dB, 'B')
     const c3 = await attempt('S2-check-3', ['orchestration', 'check', '--terminal', t1, '--run', runId])
     const d2 = findString(c3.result, /delivery/i)
     await attempt('S2-run-use-to-t3', ['orchestration', 'run-use', '--id', runId, '--from', t3])
+    coord = t3
     if (d2) {
       await attempt('S2-old-coord-acks-d2', ['orchestration', 'check', '--terminal', t1, '--run', runId, '--ack', d2])
       await attempt('S2-new-coord-acks-d2', ['orchestration', 'check', '--terminal', t3, '--run', runId, '--ack', d2])
@@ -91,7 +94,7 @@ async function main() {
     await attempt('S2-new-coord-check-after', ['orchestration', 'check', '--terminal', t3, '--run', runId])
 
     // ---- S3：超过 60 s 的 check --wait ----
-    await attempt('S3-check-wait-75s', ['orchestration', 'check', '--terminal', t3, '--run', runId, '--wait', '--timeout-ms', '75000'], 110_000)
+    if (process.env.WINGLINE_SPIKE_SKIP_S3 !== '1') await attempt('S3-check-wait-75s', ['orchestration', 'check', '--terminal', t3, '--run', runId, '--wait', '--timeout-ms', '75000'], 110_000)
 
     // ---- S4：ask / reply 的身份 ----
     const c = await create('C')
