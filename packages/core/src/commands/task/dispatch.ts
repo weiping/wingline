@@ -58,7 +58,7 @@ async function ledgerDispatch(deps: CommandDeps, team: string, task: TaskRow, ta
         const sent = await deps.orca.dispatch(a)
         return { status: 'dispatched', dispatchId: sent.dispatchId, self, replayed: sent.replayed }
       },
-      beforeReplay: async (stored) => ((await aliveHandle(deps, stored.to)) ? 'replay' : 'settle'),
+      beforeReplay: async (stored) => (stored.to === target.handle && (await aliveHandle(deps, stored.to)) ? 'replay' : 'settle'),
     })
     deps.registry.setDispatchedAt(team, task.id, deps.now().toISOString())
     return r.replayed ? confirmReplay(deps, team, task, target, r, canBump) : r
@@ -72,6 +72,9 @@ async function ledgerDispatch(deps: CommandDeps, team: string, task: TaskRow, ta
 /** 重放的结果可能是上一轮的：任务此刻回到 ready 就进入新一轮（只一次）。 */
 async function confirmReplay(deps: CommandDeps, team: string, task: TaskRow, target: Target, r: Dispatched, canBump: boolean): Promise<DispatchOutcome> {
   const now = await findTask(deps, team, task.id)
+  if (now.status === 'dispatched' && now.assigneeHandle !== target.handle) {
+    throw new WinglineError('input', 'task_not_open', `任务 ${task.id} 已派给另一个终端 ${now.assigneeHandle}`, { hint: '先 wl task show 查看；需要时 wl task recover' })
+  }
   if (now.status !== 'ready' || !canBump) return r
   bumpRound(deps, team, now)
   return dispatchRound(deps, team, task.id, target, false)

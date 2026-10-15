@@ -71,8 +71,9 @@ async function attempt<A extends object, R>(x: Ctx<A, R>, row: RequestRow): Prom
   return value
 }
 
-async function reissue<A extends object, R>(x: Ctx<A, R>, team: TeamRow): Promise<RequestRow> {
-  x.deps.registry.reissueIntent(x.c.key, randomUUID(), await x.c.build(team))
+/** 换新 id：对旧 id 做比较后交换；别的进程已经换过，就沿用它换出来的 id，不再另起一个。 */
+async function reissue<A extends object, R>(x: Ctx<A, R>, team: TeamRow, old: RequestRow): Promise<RequestRow> {
+  x.deps.registry.reissueIntent(x.c.key, randomUUID(), await x.c.build(team), old.retryRequest!)
   return storedRow(x.deps, x.c.key)
 }
 
@@ -124,9 +125,12 @@ async function run<A extends object, R>(x: Ctx<A, R>, row: RequestRow, reissued 
   } catch (err) {
     if (fenced(err) && !reissued) {
       const team = await refreshCoordinator(x.deps, x.c.team)
-      return run(x, await reissue(x, team), true)
+      return run(x, await reissue(x, team, row), true)
     }
-    if (err instanceof WinglineError && err.kind === 'input') throw err
+    if (err instanceof WinglineError && err.kind === 'input') {
+      x.deps.registry.dropRequest(x.c.key)
+      throw err
+    }
     return settleFailure(x, row, err)
   }
 }
@@ -135,7 +139,7 @@ async function run<A extends object, R>(x: Ctx<A, R>, row: RequestRow, reissued 
 async function preSettle<A extends object, R>(x: Ctx<A, R>, row: RequestRow): Promise<RequestRow> {
   const state = await queryState(x.deps, row.retryRequest!)
   if (state === 'completed') return row
-  if (state === 'absent') return reissue(x, teamOf(x.deps, x.c.team))
+  if (state === 'absent') return reissue(x, teamOf(x.deps, x.c.team), row)
   const err = new WinglineError('uncertain', 'outcome_unknown', `请求 ${row.retryRequest} 的结果不确定`)
   const hint = state === 'pending' ? pendingHint(x, row) : hintFor(x, row, DEFAULT_HINT(row.retryRequest!))
   return markUncertain(x, err, hint)

@@ -209,6 +209,16 @@ export class Registry {
       .run(t.name, t.specPath, t.specHash, t.runId, t.coordinatorHandle, t.status, now())
   }
 
+  /** 只改状态这一列：不覆盖并发刷新过的 coordinator_handle / run_id（spec 第 5.2 节）。 */
+  setTeamStatus(team: string, status: TeamRow['status']): void {
+    this.db.prepare('UPDATE teams SET status = ?, updated_at = ? WHERE name = ?').run(status, now(), team)
+  }
+
+  /** 已有团队重新 wl up：只更新规格与状态。 */
+  markTeamUp(team: string, specPath: string, specHash: string): void {
+    this.db.prepare("UPDATE teams SET spec_path = ?, spec_hash = ?, status = 'up', updated_at = ? WHERE name = ?").run(specPath, specHash, now(), team)
+  }
+
   updateCoordinatorHandle(team: string, handle: string | null): void {
     this.db.prepare('UPDATE teams SET coordinator_handle = ?, updated_at = ? WHERE name = ?').run(handle, now(), team)
   }
@@ -260,10 +270,14 @@ export class Registry {
       .run(id, retryRequest, JSON.stringify(args), now())
   }
 
-  reissueIntent(id: string, retryRequest: string, args: unknown): void {
-    this.db
-      .prepare("UPDATE requests SET state = 'pending', receipt = NULL, retry_request = ?, args = ?, updated_at = ? WHERE id = ?")
-      .run(retryRequest, JSON.stringify(args), now(), id)
+  /** 换 id 与参数；给了 expectedOld 时是比较后交换：旧 id 已被别的进程换掉则不动，返回 false。 */
+  reissueIntent(id: string, retryRequest: string, args: unknown, expectedOld?: string): boolean {
+    const where = expectedOld === undefined ? 'id = ?' : 'id = ? AND retry_request = ?'
+    const binds = expectedOld === undefined ? [id] : [id, expectedOld]
+    const r = this.db
+      .prepare(`UPDATE requests SET state = 'pending', receipt = NULL, retry_request = ?, args = ?, updated_at = ? WHERE ${where}`)
+      .run(retryRequest, JSON.stringify(args), now(), ...binds)
+    return Number(r.changes) > 0
   }
 
   dropRequest(id: string): void {

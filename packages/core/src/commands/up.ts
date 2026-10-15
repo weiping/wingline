@@ -89,7 +89,8 @@ async function registerTeam(l: Launch): Promise<void> {
       hint: `不支持在线修改编队，请先执行 wl down ${l.spec.name}`,
     })
   }
-  registry.upsertTeam({ name: l.spec.name, specPath: l.spec.specPath, specHash: l.hash, runId: existing?.runId ?? null, coordinatorHandle: existing?.coordinatorHandle ?? null, status: 'up' })
+  if (existing) registry.markTeamUp(l.spec.name, l.spec.specPath, l.hash)
+  else registry.upsertTeam({ name: l.spec.name, specPath: l.spec.specPath, specHash: l.hash, runId: null, coordinatorHandle: null, status: 'up' })
   for (const p of l.spec.posts) {
     const address = postAddress(p.id, l.spec.name)
     const prev = registry.listPosts(l.spec.name).find((r) => r.address === address)
@@ -209,11 +210,19 @@ async function keepOrReclaim(l: Launch, runId: string, coordinator: string | nul
   return { outcome: 'reclaimed', runId }
 }
 
+/** 找回的 Run 当前的协调者终端还活着就不动它（可能是别的进程的派发器）；死了才为 lead 认领。 */
+async function adoptDiscovered(l: Launch, found: { id: string; coordinatorHandle: string | null }, leadHandle: string): Promise<RunStep> {
+  l.deps.registry.setRunId(l.spec.name, found.id)
+  l.deps.registry.updateCoordinatorHandle(l.spec.name, found.coordinatorHandle)
+  const r = await keepOrReclaim(l, found.id, found.coordinatorHandle, leadHandle)
+  return r.outcome === 'lost' ? r : { outcome: 'adopted', runId: found.id }
+}
+
 /** 注册表丢失时按 objective 找回 Run；没有候选返回 undefined。 */
 async function discoverRun(l: Launch, leadHandle: string): Promise<RunStep | undefined> {
   const found = (await l.deps.orca.runList()).filter((r) => r.objective === objectiveOf(l))
   if (found.length === 0) return undefined
-  if (found.length === 1) return adoptRun(l, found[0]!.id, leadHandle)
+  if (found.length === 1) return adoptDiscovered(l, found[0]!, leadHandle)
   return {
     outcome: 'ambiguous', runId: null, reason: `找到 ${found.length} 个候选 Run`,
     candidates: found.map((r) => ({ id: r.id, createdAt: r.createdAt })), retry: `wl up ${l.spec.specPath} --adopt-run <id>`,
@@ -224,9 +233,13 @@ async function runStep(l: Launch, args: UpArgs, leadHandle: string): Promise<Run
   const { registry } = l.deps
   const team = registry.getTeam(l.spec.name)!
   if (args.newRun) {
-    registry.setRunId(team.name, null)
-    registry.updateCoordinatorHandle(team.name, null)
-    registry.dropRequest(runKey(l))
+    // 上一次 --new-run 的 run-create 还没定案：续跑同一行，不另建第二个 Run
+    const open = registry.getRequest(runKey(l))
+    if (!open || open.state === 'done') {
+      registry.setRunId(team.name, null)
+      registry.updateCoordinatorHandle(team.name, null)
+      registry.dropRequest(runKey(l))
+    }
     return createRun(l, leadHandle)
   }
   if (args.adoptRun) return adoptRun(l, args.adoptRun, leadHandle)
@@ -239,7 +252,11 @@ async function ensureRun(l: Launch, posts: PostResult[], args: UpArgs): Promise<
   const lead = postAddress(l.spec.lead, l.spec.name)
   const leadResult = posts.find((p) => p.address === lead)
   if (leadResult?.outcome !== 'launched' && leadResult?.outcome !== 'already_live') {
-    return { outcome: 'deferred', runId: l.deps.registry.getTeam(l.spec.name)!.runId }
+    const pending = args.newRun ? '--new-run' : args.adoptRun ? '--adopt-run' : null
+    return {
+      outcome: 'deferred', runId: l.deps.registry.getTeam(l.spec.name)!.runId,
+      ...(pending ? { reason: `${pending} 尚未生效：lead 本轮没有就绪`, retry: `wl up ${l.spec.specPath} ${pending}${args.adoptRun ? ` ${args.adoptRun}` : ''}` } : {}),
+    }
   }
   try {
     return await runStep(l, args, l.deps.registry.getPost(lead)!.handle!)

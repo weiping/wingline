@@ -69,7 +69,15 @@ function runMethods(runner: OrcaRunner): Pick<OrcaClient, 'runCreate' | 'runUse'
       return { coordinatorHandle: r.run.coordinator_handle }
     },
     async runList() {
-      const r = await runner.json<{ runs: Array<{ id: string; objective: string; coordinator_handle: string | null; created_at: string }> }>(['orchestration', 'run-list'])
+      const r = await runner.json<{
+        runs: Array<{ id: string; objective: string; coordinator_handle: string | null; created_at: string }>
+        nextCursor?: string | null
+        page?: { nextCursor?: string | null }
+      }>(['orchestration', 'run-list'])
+      // 还有下一页就不能当成"找全了"：按 objective 找回 Run 会漏掉后面的候选
+      if (r.nextCursor ?? r.page?.nextCursor) {
+        throw new WinglineError('orca', 'run_list_truncated', 'run-list 结果不止一页，无法确认没有其他候选 Run', { hint: '用 wl up --adopt-run <id> 指定要找回的 Run' })
+      }
       return r.runs.map((x): RunSummary => ({ id: x.id, objective: x.objective, coordinatorHandle: x.coordinator_handle, createdAt: x.created_at }))
     },
     async requestShow(a) {
