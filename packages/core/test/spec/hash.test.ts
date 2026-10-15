@@ -56,3 +56,9 @@ test('hash changes when tags/gate/links/budgets change', () => {
   const withBudget = specHash(loadTeamSpec(mkTeam(DUO_YAML + 'budgets:\n  task:\n    gate_timeout_seconds: 30\n')))
   expect(new Set([base, withTag, withGate, withBudget]).size).toBe(4)
 })
+
+test('B-M9: consults participates in the spec hash (spec §4: the new fields all do)', () => {
+  const base = specHash(loadTeamSpec(mkTeam(DUO_YAML)))
+  const withConsults = specHash(loadTeamSpec(mkTeam(DUO_YAML + 'links:\n  builder:\n    consults: [checker]\n')))
+  expect(withConsults).not.toBe(base)
+})

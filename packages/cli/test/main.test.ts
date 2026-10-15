@@ -379,3 +379,22 @@ test('up --adopt-run together with --new-run reports through the normal error pa
   expect(JSON.parse(r.out)).toMatchObject({ ok: false, error: { kind: 'input' } })
   expect(r.err).toBe('')
 })
+
+test('B-M3: --json on a commander usage error still prints one JSON error document (exit 1)', async () => {
+  const r = await exec(['task', 'create', 'duo', '--json'])
+  expect(r.code).toBe(1)
+  expect(JSON.parse(r.out)).toMatchObject({ ok: false, error: { kind: 'input' } })
+})
+test('B-M8: wl up --new-run says the old tasks no longer appear in wl task list', async () => {
+  const c = cmds({ up: async () => ({ team: 'duo', posts: [{ address: 'builder@duo', outcome: 'launched' }], run: { outcome: 'created', runId: 'run-2' } }) })
+  const r = await exec(['up', 'x', '--new-run'], c)
+  expect(r.out).toContain('wl task list')
+})
+test('B-M10: wl task done names why a link target was not typed and suggests wl send', async () => {
+  const r = await exec(['task', 'done', 't1'], cmds({ doneTask: async () => ({
+    outcome: 'done', closure: { kind: 'sent_for_review', targets: ['checker@duo'] },
+    linkedTasks: [{ target: 'checker@duo', taskId: 'c1', delivery: 'not_notified', reason: 'at_prompt' }],
+  }) as never }))
+  expect(r.out).toContain('wl send checker@duo')
+  expect(r.out).toContain('at_prompt')
+})

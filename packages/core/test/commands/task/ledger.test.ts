@@ -228,12 +228,12 @@ test('landed + transport code, and the same-id replay also fails with a transpor
   expect(registry.getRequest('k')!.state).toBe('uncertain')
   expect(o.tasks).toHaveLength(1)
 })
-test('an input error propagates unchanged and leaves the row pending without asking request-show', async () => {
+test('an input error (the call never left this machine) propagates unchanged, drops the row so stale args cannot be replayed, and does not ask request-show', async () => {
   const err = new WinglineError('input', 'bad', 'x')
   const o = new FakeOrca(); const { deps, registry } = seedRunningTeam(o)
   o.faults.push({ method: 'taskCreate', when: 'transport', error: err })
   await expect(createCall(deps, o)).rejects.toBe(err)
-  expect(registry.getRequest('k')!.state).toBe('pending')
+  expect(registry.getRequest('k')).toBeNull()
   expect(o.callsOf('requestShow')).toHaveLength(0)
 })
 test.each([
