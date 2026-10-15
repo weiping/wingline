@@ -70,7 +70,7 @@ test('staleReasons: each reason with its copy-paste command', () => {
   const items = staleReasons(input({
     tasks: [
       row({ id: 'u', status: 'completed', claimedBy: 'builder@duo' }),
-      row({ id: 'd', status: 'dispatched', claimedBy: 'checker@duo', assigneeHandle: 'term-old' }),
+      row({ id: 'd', status: 'dispatched', claimedBy: 'docs@duo', assigneeHandle: 'term-old' }),
       row({ id: 'i', status: 'ready', claimedBy: 'checker@duo', readySince: ago(31) }),
       row({ id: 'b', status: 'completed', claimedBy: 'builder@duo', result: report }),
       row({ id: 'g', status: 'blocked', claimedBy: 'builder@duo' }),
@@ -245,4 +245,14 @@ test('listStale/gatherStaleInput: one taskList + one terminalList, and a task di
   expect(o.calls.filter((c) => c === 'terminalList')).toHaveLength(1)
   const input = await gatherStaleInput(deps, 'duo')
   expect(input.alive.has('term-b')).toBe(true); expect(input.alive.has('term-old')).toBe(false)
+})
+
+test('staleReasons: an owner whose dispatched task sits on a dead terminal is still "busy" — their ready tasks are not owner_idle (spec §10)', () => {
+  const items = staleReasons(input({
+    tasks: [
+      row({ id: 'd', status: 'dispatched', claimedBy: 'checker@duo', assigneeHandle: 'term-old' }),
+      row({ id: 'i', status: 'ready', claimedBy: 'checker@duo', readySince: ago(120) }),
+    ],
+  }), NOW)
+  expect(items.map((x) => [x.taskId, x.reason])).toEqual([['d', 'dead_assignee']])
 })
