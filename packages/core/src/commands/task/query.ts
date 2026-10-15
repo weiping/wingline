@@ -234,10 +234,17 @@ export async function gatherStaleInput(deps: CommandDeps, team: string): Promise
   }
 }
 
-/** 不给团队时扫描所有有 Run 的团队。 */
+/** 不给团队时扫描所有有 Run 的团队；某个团队扫描失败只告警，不影响其他团队。 */
 export async function listStale(deps: CommandDeps, team?: string): Promise<StaleItem[]> {
-  const names = team ? [team] : deps.registry.listTeams().filter((t) => t.runId).map((t) => t.name)
+  if (team) return staleReasons(await gatherStaleInput(deps, team), deps.now())
   const items: StaleItem[] = []
-  for (const name of names) items.push(...staleReasons(await gatherStaleInput(deps, name), deps.now()))
+  for (const t of deps.registry.listTeams().filter((x) => x.runId)) {
+    try {
+      items.push(...staleReasons(await gatherStaleInput(deps, t.name), deps.now()))
+    } catch (err) {
+      if (!(err instanceof WinglineError)) throw err
+      deps.warn(`团队 ${t.name} 的卡住任务扫描失败：${err.message}`)
+    }
+  }
   return items
 }

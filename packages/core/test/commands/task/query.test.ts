@@ -1,4 +1,5 @@
 import fs from 'node:fs'
+import { WinglineError } from '../../../src/errors.js'
 import { expect, test } from 'vitest'
 import { isPostFrozen } from '../../../src/commands/task/frozen.js'
 import { logTask } from '../../../src/commands/task/log.js'
@@ -255,4 +256,15 @@ test('staleReasons: an owner whose dispatched task sits on a dead terminal is st
     ],
   }), NOW)
   expect(items.map((x) => [x.taskId, x.reason])).toEqual([['d', 'dead_assignee']])
+})
+test('listStale without a team keeps going when one team\'s scan fails: the other team\'s rows are returned and a warning names the failed team', async () => {
+  const o = new FakeOrca(); const { deps, registry, warnings } = seedRunningTeam(o)
+  registry.upsertTeam({ name: 'aaa', specPath: '/x', specHash: 'h', runId: 'run-x', coordinatorHandle: null, status: 'up' })   // sorts before duo
+  const { id } = await o.taskCreate({ spec: 's', taskTitle: 'x', run: 'run-1', from: 'coord-1' })
+  registry.insertTaskExt({ taskId: id, team: 'duo', tags: [], kind: 'work', claimedBy: 'checker@duo' })
+  await o.dispatch({ task: id, to: 'term-old', from: 'coord-1' })
+  o.faults.push({ method: 'taskList', when: 'before', error: new WinglineError('orca', 'runtime_unavailable', 'down') })
+  const items = await listStale(deps)
+  expect(items.map((x) => [x.taskId, x.reason])).toEqual([[id, 'dead_assignee']])
+  expect(warnings.some((w) => w.includes('aaa'))).toBe(true)
 })
