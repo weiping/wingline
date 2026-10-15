@@ -231,7 +231,7 @@ export class FakeOrca implements OrcaClient {
   async terminalShow(a: { handle: string }): Promise<TerminalView> {
     this.read('terminalShow', a)
     const t = this.terminals.find((x) => x.handle === a.handle)
-    if (!t) throw orcaError('terminal_not_found', `终端 ${a.handle} 不存在`)
+    if (!t) throw orcaError('terminal_handle_stale', `终端 ${a.handle} 不存在`)    // 真机：orca terminal show --terminal <不存在的 handle> → terminal_handle_stale
     return { handle: t.handle, title: t.title, connected: t.connected, preview: this.previews.get(t.handle) ?? '❯ ' }
   }
 

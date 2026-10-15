@@ -143,7 +143,7 @@ test('onMutate runs before the ledger check; orch/callsOf record mutations but n
   expect(o.orch.map((x) => x.m)).toEqual(['taskCreate', 'taskCreate'])
 })
 
-test('runCreate makes the caller the coordinator; runUse of an unknown run → run_not_found; terminalShow of a missing handle → terminal_not_found, default preview', async () => {
+test('runCreate makes the caller the coordinator; runUse of an unknown run → run_not_found; terminalShow of a missing handle → terminal_handle_stale (real Orca), default preview', async () => {
   const o = new FakeOrca()
   o.terminals = [{ handle: 'h1', title: 'zsh', connected: true, worktreeId: 'w' }]
   const r = await o.runCreate({ objective: 'wingline:duo', from: 'h1' })
@@ -152,7 +152,7 @@ test('runCreate makes the caller the coordinator; runUse of an unknown run → r
   await expect(o.runUse({ id: 'run-ghost', from: 'h2' })).rejects.toMatchObject({ code: 'run_not_found' })
   expect(await o.runUse({ id: r.id, from: 'h2' })).toEqual({ coordinatorHandle: 'h2' })
   expect(await o.terminalShow({ handle: 'h1' })).toMatchObject({ preview: '❯ ' })
-  await expect(o.terminalShow({ handle: 'ghost' })).rejects.toMatchObject({ code: 'terminal_not_found' })
+  await expect(o.terminalShow({ handle: 'ghost' })).rejects.toMatchObject({ code: 'terminal_handle_stale' })
   await expect(o.gateResolve({ id: 'nope', resolution: 'x', from: 'h2' })).rejects.toMatchObject({ code: 'gate_not_found' })
 })
 
