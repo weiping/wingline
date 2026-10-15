@@ -169,6 +169,8 @@ async function launchPost(l: Launch, post: PostSpec, briefing: string): Promise<
 type RunStep = NonNullable<UpResult['run']>
 
 const runKey = (l: Launch) => `${l.spec.name}:run-create`
+/** 用户要求 --new-run 的意图标记：先落盘，再清旧 Run；被杀后下一次 wl up 据此继续新建，不会找回旧 Run。 */
+const newRunKey = (l: Launch) => `${l.spec.name}:new-run`
 const objectiveOf = (l: Launch) => `wingline:${l.spec.name}`
 
 function writeRun(l: Launch, runId: string, coordinator: string): void {
@@ -229,20 +231,27 @@ async function discoverRun(l: Launch, leadHandle: string): Promise<RunStep | und
   }
 }
 
+async function newRunStep(l: Launch, leadHandle: string): Promise<RunStep> {
+  const { registry } = l.deps
+  registry.openIntent(newRunKey(l), 'new-run', {})
+  // 上一次的 run-create 还没定案：续跑同一行，不另建第二个 Run
+  const open = registry.getRequest(runKey(l))
+  if (!open || open.state === 'done') {
+    registry.setRunId(l.spec.name, null)
+    registry.updateCoordinatorHandle(l.spec.name, null)
+    registry.dropRequest(runKey(l))
+  }
+  const created = await createRun(l, leadHandle)
+  registry.dropRequest(newRunKey(l))
+  return created
+}
+
 async function runStep(l: Launch, args: UpArgs, leadHandle: string): Promise<RunStep> {
   const { registry } = l.deps
   const team = registry.getTeam(l.spec.name)!
-  if (args.newRun) {
-    // 上一次 --new-run 的 run-create 还没定案：续跑同一行，不另建第二个 Run
-    const open = registry.getRequest(runKey(l))
-    if (!open || open.state === 'done') {
-      registry.setRunId(team.name, null)
-      registry.updateCoordinatorHandle(team.name, null)
-      registry.dropRequest(runKey(l))
-    }
-    return createRun(l, leadHandle)
-  }
+  if (args.newRun) return newRunStep(l, leadHandle)
   if (args.adoptRun) return adoptRun(l, args.adoptRun, leadHandle)
+  if (!team.runId && registry.getRequest(newRunKey(l))) return newRunStep(l, leadHandle)
   if (team.runId) return keepOrReclaim(l, team.runId, team.coordinatorHandle, leadHandle)
   const discovered = registry.getRequest(runKey(l)) ? undefined : await discoverRun(l, leadHandle)
   return discovered ?? createRun(l, leadHandle)
@@ -263,6 +272,9 @@ async function ensureRun(l: Launch, posts: PostResult[], args: UpArgs): Promise<
   } catch (err) {
     if (!(err instanceof WinglineError) || err.kind === 'input' || err.kind === 'internal') throw err
     const runId = l.deps.registry.getTeam(l.spec.name)!.runId
+    if (err.code === 'run_list_truncated') {
+      return { outcome: 'failed', runId, reason: `${err.message}；${err.hint ?? ''}`, retry: `wl up ${l.spec.specPath} --new-run（这个团队还没有 Run 时）或 --adopt-run <id>` }
+    }
     if (err.kind === 'orca') return { outcome: 'failed', runId, reason: err.message }
     return { outcome: 'uncertain', runId, reason: err.message, retry: `wl up ${l.spec.specPath}` }
   }

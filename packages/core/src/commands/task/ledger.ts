@@ -30,7 +30,8 @@ export interface LedgerCall<A extends object, R> {
   beforeReplay?: (stored: A) => Promise<'replay' | 'settle'>
 }
 
-type Ctx<A extends object, R> = { deps: CommandDeps; c: LedgerCall<A, R> }
+/** fresh：这一行是本次调用新开的（input 错误才能确定调用从未发出、可以安全丢掉）。 */
+type Ctx<A extends object, R> = { deps: CommandDeps; c: LedgerCall<A, R>; fresh: boolean }
 
 const DEFAULT_HINT = (id: string) => `原样重跑同一条命令即可（幂等 id ${id} 已记录）`
 
@@ -74,7 +75,10 @@ async function attempt<A extends object, R>(x: Ctx<A, R>, row: RequestRow): Prom
 /** 换新 id：对旧 id 做比较后交换；别的进程已经换过，就沿用它换出来的 id，不再另起一个。 */
 async function reissue<A extends object, R>(x: Ctx<A, R>, team: TeamRow, old: RequestRow): Promise<RequestRow> {
   x.deps.registry.reissueIntent(x.c.key, randomUUID(), await x.c.build(team), old.retryRequest!)
-  return storedRow(x.deps, x.c.key)
+  const current = x.deps.registry.getRequest(x.c.key)
+  if (current) return current
+  // 赢家已经把这一行定案并丢掉（再次被 fence）：输家不再往下走
+  throw new WinglineError('orca', 'consumer_fenced', '协调者在并发的另一次调用里又变了', { hint: '重跑同一条命令' })
 }
 
 async function queryState(deps: CommandDeps, id: string): Promise<'completed' | 'pending' | 'absent' | 'unknown'> {
@@ -128,7 +132,7 @@ async function run<A extends object, R>(x: Ctx<A, R>, row: RequestRow, reissued 
       return run(x, await reissue(x, team, row), true)
     }
     if (err instanceof WinglineError && err.kind === 'input') {
-      x.deps.registry.dropRequest(x.c.key)
+      if (x.fresh) x.deps.registry.dropRequest(x.c.key)
       throw err
     }
     return settleFailure(x, row, err)
@@ -147,8 +151,8 @@ async function preSettle<A extends object, R>(x: Ctx<A, R>, row: RequestRow): Pr
 
 /** spec 第 9.1 节 P1。done 行直接返回存下的结果（不调用 Orca）。 */
 export async function ledgered<A extends object, R>(deps: CommandDeps, c: LedgerCall<A, R>): Promise<R> {
-  const x: Ctx<A, R> = { deps, c }
   let row = deps.registry.getRequest(c.key)
+  const x: Ctx<A, R> = { deps, c, fresh: !row }
   if (row?.state === 'done') return JSON.parse(row.receipt!) as R
   if (!row) {
     deps.registry.openIntent(c.key, c.id ?? randomUUID(), await c.build(teamOf(deps, c.team)))

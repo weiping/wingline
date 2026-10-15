@@ -69,11 +69,17 @@ async function ledgerDispatch(deps: CommandDeps, team: string, task: TaskRow, ta
   }
 }
 
+function dispatchedElsewhere(task: TaskRow): WinglineError {
+  return new WinglineError('input', 'task_not_open', `任务 ${task.id} 已派给另一个终端 ${task.assigneeHandle}`, {
+    hint: `先 wl task escalate ${task.id} --reason <原因> 收回，再 wl task resolve <gate> --reassign <地址>，然后该岗位 wl task start ${task.id}`,
+  })
+}
+
 /** 重放的结果可能是上一轮的：任务此刻回到 ready 就进入新一轮（只一次）。 */
 async function confirmReplay(deps: CommandDeps, team: string, task: TaskRow, target: Target, r: Dispatched, canBump: boolean): Promise<DispatchOutcome> {
   const now = await findTask(deps, team, task.id)
   if (now.status === 'dispatched' && now.assigneeHandle !== target.handle) {
-    throw new WinglineError('input', 'task_not_open', `任务 ${task.id} 已派给另一个终端 ${now.assigneeHandle}`, { hint: '先 wl task show 查看；需要时 wl task recover' })
+    throw dispatchedElsewhere(now)
   }
   if (now.status !== 'ready' || !canBump) return r
   bumpRound(deps, team, now)
@@ -85,6 +91,7 @@ async function dispatchRound(deps: CommandDeps, team: string, taskId: string, ta
   const task = pickTask(tasks, taskId)
   const row = deps.registry.getRequest(dispatchKey(taskId, task.epoch))
   if (row?.state === 'done') {
+    if (task.status === 'dispatched' && task.assigneeHandle !== target.handle) throw dispatchedElsewhere(task)
     if (task.status !== 'ready' || !canBump) return JSON.parse(row.receipt!) as DispatchOutcome
     bumpRound(deps, team, task)
     return dispatchRound(deps, team, taskId, target, false)
