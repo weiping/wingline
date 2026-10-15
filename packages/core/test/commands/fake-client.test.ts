@@ -167,3 +167,26 @@ test('seedRunningTeam registers a running duo team with a real spec hash, coordi
   expect(deps.now()).toBeInstanceOf(Date)
   expect(mkDeps(o).deps.now).toBeTypeOf('function')
 })
+
+test('a "before" fault is taken after the ledger check: a landed id still replays while a fresh id fails', async () => {
+  const o = mk()
+  await newTask(o, 'c1')
+  o.faults.push({ method: 'taskCreate', when: 'before', error: new Error('boom') })
+  expect(await o.taskCreate({ spec: 's', taskTitle: 't', run: 'run-1', from: 'coord-1', retryRequest: 'c1' })).toMatchObject({ replayed: true })
+  await expect(o.taskCreate({ spec: 's', taskTitle: 't', run: 'run-1', from: 'coord-1', retryRequest: 'c2' })).rejects.toThrow('boom')
+})
+
+test('requestShow reports pending for ids in pendingIds, ahead of the ledger', async () => {
+  const o = mk()
+  o.pendingIds.add('p1')
+  expect(await o.requestShow({ request: 'p1' })).toEqual({ state: 'pending', receipt: null })
+})
+
+test('replaying a rejected workerDone with different args is request_mismatch, not the stored rejection', async () => {
+  const o = mk()
+  const t = await newTask(o)
+  const { dispatchId } = await o.dispatch({ task: t, to: 'term-b', from: 'coord-1' })
+  const base = { taskId: t, dispatchId, outcome: 'succeeded' as const, run: 'run-1', from: 'term-c', retryRequest: 'w1' }
+  await expect(o.workerDone({ ...base, subject: 'a' })).rejects.toMatchObject({ code: 'worker_identity_changed' })
+  await expect(o.workerDone({ ...base, subject: 'b' })).rejects.toMatchObject({ code: 'request_mismatch' })
+})
