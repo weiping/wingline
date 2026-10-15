@@ -228,14 +228,24 @@ test('landed + transport code, and the same-id replay also fails with a transpor
   expect(registry.getRequest('k')!.state).toBe('uncertain')
   expect(o.tasks).toHaveLength(1)
 })
-test('input/internal/non-Wingline errors propagate unchanged and leave the row pending', async () => {
-  for (const err of [new WinglineError('input', 'bad', 'x'), new WinglineError('internal', 'bug', 'x'), new TypeError('boom')]) {
-    const o = new FakeOrca(); const { deps, registry } = seedRunningTeam(o)
-    o.faults.push({ method: 'taskCreate', when: 'transport', error: err })
-    await expect(createCall(deps, o)).rejects.toBe(err)
-    expect(registry.getRequest('k')!.state).toBe('pending')
-    expect(o.callsOf('requestShow')).toHaveLength(0)
-  }
+test('an input error propagates unchanged and leaves the row pending without asking request-show', async () => {
+  const err = new WinglineError('input', 'bad', 'x')
+  const o = new FakeOrca(); const { deps, registry } = seedRunningTeam(o)
+  o.faults.push({ method: 'taskCreate', when: 'transport', error: err })
+  await expect(createCall(deps, o)).rejects.toBe(err)
+  expect(registry.getRequest('k')!.state).toBe('pending')
+  expect(o.callsOf('requestShow')).toHaveLength(0)
+})
+test.each([
+  ['internal error', () => new WinglineError('internal', 'bad_json', 'x')],
+  ['non-Wingline error (e.g. a receipt-shape TypeError)', () => new TypeError('boom')],
+])('spec §9.1 step 2: an %s is settled through request-show like any other failure (never landed → row dropped, exit-3 kind with the cause kept)', async (_n, mk) => {
+  const err = mk()
+  const o = new FakeOrca(); const { deps, registry } = seedRunningTeam(o)
+  o.faults.push({ method: 'taskCreate', when: 'transport', error: err })
+  await expect(createCall(deps, o)).rejects.toMatchObject({ kind: 'uncertain', cause: err })
+  expect(o.callsOf('requestShow')).toHaveLength(1)
+  expect(registry.getRequest('k')).toBeNull()
 })
 test('consumer_fenced is retried exactly once: two fences → two taskCreate calls, no third', async () => {
   const o = new FakeOrca(); const { deps } = seedRunningTeam(o)
