@@ -44,13 +44,13 @@ export async function down(deps: CommandDeps, args: { team: string; close: boole
   return registry.withTeamLock(args.team, async () => {
     const posts = registry.listPosts(args.team)
     if (!args.close) {
-      registry.upsertTeam({ ...team, status: 'stopped' })
+      registry.setTeamStatus(args.team, 'stopped')
       return { team: args.team, posts: posts.map((p) => ({ address: p.address, outcome: 'stopped' as const })) }
     }
     await preflight(deps)
     const results: PostResult[] = []
     for (const p of posts) results.push(await closePost(deps, p, team.specHash))
-    registry.upsertTeam({ ...team, status: 'stopped' })
+    registry.setTeamStatus(args.team, 'stopped')
     const result = { team: args.team, posts: results }
     if (results.some((r) => r.outcome === 'uncertain')) {
       throw new WinglineError('uncertain', 'close_unconfirmed', `团队 ${args.team} 有岗位未确认关闭，终端可能仍在运行`, {

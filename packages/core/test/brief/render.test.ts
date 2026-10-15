@@ -2,6 +2,7 @@ import { expect, test } from 'vitest'
 import { renderBriefing } from '../../src/brief/render.js'
 import type { TeamSpec } from '../../src/spec/load.js'
 
+const postDefaults = { selfClaim: false, tags: [], planFirst: false, gate: null, reviewedBy: [], handsTo: [] }
 const spec: TeamSpec = {
   version: 1,
   name: 'duo',
@@ -9,9 +10,10 @@ const spec: TeamSpec = {
   normsPath: '/t/NORMS.md',
   lead: 'builder',
   posts: [
-    { id: 'builder', agent: 'claude', launch: 'claude', worktree: 'current', briefPaths: ['/t/briefs/builder.md'] },
-    { id: 'checker', agent: 'codex', launch: 'codex', worktree: 'current', briefPaths: ['/t/briefs/c1.md', '/t/briefs/c2.md'] },
+    { id: 'builder', agent: 'claude', launch: 'claude', worktree: 'current', briefPaths: ['/t/briefs/builder.md'], ...postDefaults },
+    { id: 'checker', agent: 'codex', launch: 'codex', worktree: 'current', briefPaths: ['/t/briefs/c1.md', '/t/briefs/c2.md'], ...postDefaults },
   ],
+  budgets: { task: { maxGateFailures: 3, gateTimeoutSeconds: 600, maxMinutes: null } },
   dir: '/t',
   specPath: '/t/team.yaml',
 }

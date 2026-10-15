@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { LineCounter, parseDocument, type Document } from 'yaml'
 import { WinglineError } from '../errors.js'
-import { RESERVED_POST, RESERVED_TOP, teamSchema, type RawTeam } from './schema.js'
+import { teamSchema, type RawTeam } from './schema.js'
 
 export interface PostSpec {
   id: string
@@ -11,6 +11,19 @@ export interface PostSpec {
   launch: string
   worktree: string
   briefPaths: string[]
+  selfClaim: boolean
+  tags: string[]
+  planFirst: boolean
+  gate: string | null
+  reviewedBy: string[]
+  handsTo: string[]
+  consults?: string[]
+}
+
+export interface TaskBudgets {
+  maxGateFailures: number
+  gateTimeoutSeconds: number
+  maxMinutes: number | null
 }
 
 export interface TeamSpec {
@@ -20,6 +33,7 @@ export interface TeamSpec {
   normsPath: string
   lead: string
   posts: PostSpec[]
+  budgets: { task: TaskBudgets }
   dir: string
   specPath: string
 }
@@ -54,21 +68,6 @@ class Located {
 
 const toPosix = (p: string) => p.replace(/\\/g, '/')
 
-function rejectReserved(raw: unknown, at: Located): void {
-  const top = raw as Record<string, unknown>
-  for (const [key, phase] of Object.entries(RESERVED_TOP)) {
-    if (key in top) at.fail('field_not_yet_available', [key], `字段 ${key} 在阶段 ${phase} 开放`)
-  }
-  const posts = Array.isArray(top.posts) ? top.posts : []
-  posts.forEach((post, i) => {
-    for (const [key, phase] of Object.entries(RESERVED_POST)) {
-      if (post && typeof post === 'object' && key in post) {
-        at.fail('field_not_yet_available', ['posts', i, key], `字段 ${key} 在阶段 ${phase} 开放`)
-      }
-    }
-  })
-}
-
 function parseYaml(specPath: string): { raw: unknown; at: Located } {
   let source: string
   try {
@@ -88,14 +87,59 @@ function parseYaml(specPath: string): { raw: unknown; at: Located } {
 }
 
 function validate(raw: unknown, at: Located): RawTeam {
-  rejectReserved(raw, at)
   const parsed = teamSchema.safeParse(raw)
   if (!parsed.success) {
     const issue = parsed.error.issues[0]!
     const field = issue.path.join('.') || '(根)'
     at.fail('spec_invalid', issue.path as Path, `${field}：${issue.message}`)
   }
+  if (parsed.data.budgets.team !== undefined) {
+    at.fail('field_removed', ['budgets', 'team'], 'budgets.team.max_in_progress_per_post 已取消：Orca 限定每个岗位终端同时只有一个进行中的派发')
+  }
   return parsed.data
+}
+
+type Links = RawTeam['links']
+
+function checkLinks(links: Links, ids: Set<string>, at: Located): void {
+  for (const [key, entry] of Object.entries(links)) {
+    if (!ids.has(key)) at.fail('links_unknown_post', ['links', key], `links 中的岗位 ${key} 不在 posts 中`)
+    if (entry.reviewed_by?.length && entry.hands_to?.length) {
+      at.fail('links_conflict', ['links', key], `岗位 ${key} 不能同时有 reviewed_by 与 hands_to`)
+    }
+    for (const rel of ['reviewed_by', 'hands_to', 'consults'] as const) {
+      for (const target of entry[rel] ?? []) {
+        if (!ids.has(target)) at.fail('links_unknown_post', ['links', key, rel], `links.${key}.${rel} 引用了不存在的岗位 ${target}`)
+        if (target === key) at.fail('links_self', ['links', key, rel], `岗位 ${key} 不能通过 ${rel} 链接自己`)
+      }
+    }
+  }
+}
+
+/** hands_to 图上找环（白/灰/黑三色 DFS），返回环上的 id，首尾相同；无环返回 null。 */
+export function findHandsToCycle(links: Links): string[] | null {
+  const color = new Map<string, 1 | 2>()
+  const stack: string[] = []
+  const visit = (id: string): string[] | null => {
+    color.set(id, 1)
+    stack.push(id)
+    for (const next of links[id]?.hands_to ?? []) {
+      if (color.get(next) === 1) return [...stack.slice(stack.indexOf(next)), next]
+      if (!color.has(next)) {
+        const cycle = visit(next)
+        if (cycle) return cycle
+      }
+    }
+    stack.pop()
+    color.set(id, 2)
+    return null
+  }
+  for (const id of Object.keys(links)) {
+    if (color.has(id)) continue
+    const cycle = visit(id)
+    if (cycle) return cycle
+  }
+  return null
 }
 
 function crossCheck(team: RawTeam, at: Located): void {
@@ -105,6 +149,12 @@ function crossCheck(team: RawTeam, at: Located): void {
     seen.add(p.id)
   })
   if (!seen.has(team.lead)) at.fail('lead_unknown', ['lead'], `lead ${team.lead} 不是 posts 中的岗位`)
+  checkLinks(team.links, seen, at)
+  for (const id of Object.keys(team.gates)) {
+    if (!seen.has(id)) at.fail('gates_unknown_post', ['gates', id], `gates 中的岗位 ${id} 不在 posts 中`)
+  }
+  const cycle = findHandsToCycle(team.links)
+  if (cycle) at.fail('links_cycle', ['links'], `hands_to 形成环：${cycle.join(' → ')}`)
 }
 
 function launchOf(p: RawTeam['posts'][number], i: number, at: Located): string {
@@ -139,7 +189,21 @@ export function loadTeamSpec(specPath: string): TeamSpec {
       launch: launchOf(p, i, at),
       worktree: p.worktree,
       briefPaths: p.brief.map((b, j) => resolveFile(dir, b, at, ['posts', i, 'brief', j])),
+      selfClaim: p.self_claim,
+      tags: p.tags,
+      planFirst: p.plan_first,
+      gate: team.gates[p.id] ?? null,
+      reviewedBy: team.links[p.id]?.reviewed_by ?? [],
+      handsTo: team.links[p.id]?.hands_to ?? [],
+      consults: team.links[p.id]?.consults ?? [],
     })),
+    budgets: {
+      task: {
+        maxGateFailures: team.budgets.task.max_gate_failures,
+        gateTimeoutSeconds: team.budgets.task.gate_timeout_seconds,
+        maxMinutes: team.budgets.task.max_minutes ?? null,
+      },
+    },
     dir,
     specPath: abs,
   }

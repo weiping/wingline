@@ -224,16 +224,16 @@ task_log(                         -- 只追加的本地变迁记录（吸收项 
 
 ### 7.4 往岗位终端打字之前的画面检查
 
-`screenGuard(handle) → 'clear' | 'at_prompt' | 'unknown'`，2A 与 2B 共用同一个函数：
+`screenGuard(handle) → 'clear' | 'at_prompt' | 'shell' | 'unknown'`（终端不存在时另报 `offline`），2A 与 2B 共用同一个函数：
 
 1. `terminal show --terminal <handle>`，取 `preview` 的最后 8 行。终端不存在 → 调用方按 `post_offline` 处理；`preview` 为空或调用失败 → `unknown`。
 2. 任何一行命中下列任一模式 → `at_prompt`（大小写不敏感）：`\(y/n\)`、`\[y/n\]`、`\(yes/no\)`；以 `❯`/`>`/`›` 加数字加 `.`/`)` 开头的编号选项行；`Do you want to`、`Would you like to`、`Allow `、`Approve`、`Press Enter`、`Esc to cancel`、`trust (this|the) (folder|files|directory)`、`Continue\?`、`\?\s*$`（以问号结尾的行）。
-3. **最后一个非空行像 shell 提示符**（以 `$`、`%`、`#` 结尾，或形如 `PS …>`）→ `unknown`：agent 已经退出、终端回到了 shell，这时打字加回车等于执行命令（复审五 I-1）。`❯`/`>` 结尾不算，它们是 agent TUI 的输入行。
+3. 没有命中上面的任何模式，且**最后一个非空行像 shell 提示符**（以 `$`、`%`、`#` 结尾，或形如 `PS …>`，或 cmd.exe 的 `C:\…>`）→ `shell`：agent 已经退出、终端回到了 shell，这时打字加回车等于执行命令（复审五 I-1）。`❯`/`>` 结尾（不带盘符）不算，它们是 agent TUI 的输入行，仍判 `clear`。
 4. 否则 → `clear`。
 
 **插进通知里的外来文本一律中和 shell 元字符**：任务标题、2B 转述的 worker 原话，在清洗控制字符之外，把 `` ` ``、`$`、`;`、`|`、`&`、`<`、`>`、`\` 换成全角对应字符（`neutralize()`，与 `screenGuard` 放在同一个模块）。画面检查漏判时，打进去的也只是一行无害的文字。
 
-只有 `clear` 才打字。这是宁可漏发也不误答的启发式：漏判（画面是提示但没命中模式）会把文字打进提示，所以模式表偏宽；误判只是少发一条通知。R6 的实例（启动命令被 shell 别名展开、停在 `(Y/n)`）命中第一条；R6 那个画面的第一行就是 shell 提示符，若 agent 已退出只剩这一行，第 3 条把它判为 `unknown`。模式表放在一个常量里，附带单元测试覆盖 R6 记录的两种画面（`test/fixtures/receipts/orchestration-r6.json` 的 `terminal-show-at-yn-prompt` 应为 `at_prompt`，`terminal-show-idle-claude` 应为 `clear`）。
+只有 `clear` 才打字：`notifyPost` 遇到 `at_prompt`、`shell`、`unknown`、`offline` 一律不打。这是宁可漏发也不误答的启发式：漏判（画面是提示但没命中模式）会把文字打进提示，所以模式表偏宽；误判只是少发一条通知。R6 的实例（启动命令被 shell 别名展开、停在 `(Y/n)`）命中第一条；R6 那个画面的第一行就是 shell 提示符，若 agent 已退出只剩这一行，第 3 条把它判为 `shell`。模式表放在一个常量里，附带单元测试覆盖 R6 记录的两种画面（`test/fixtures/receipts/orchestration-r6.json` 的 `terminal-show-at-yn-prompt` 应为 `at_prompt`，`terminal-show-idle-claude` 应为 `clear`）。
 
 ## 8. 任务状态机
 
@@ -488,7 +488,7 @@ ready + claimed_by=X                                  │
 | --- | --- | --- |
 | **岗位不经 `wl task done`，直接用 Orca CLI 上报**（Orca 的 skill、agent 的习惯，或旧版本残留的 `--inject` 前言） | gate 不跑、连接不触发 | 2A 不再注入 Orca 前言；任务 spec 与通知都写明用 `wl task done`；`list --stale` 列出 `bypassed`，`wl task done` 可补跑 gate 与连接；2B 调度员看到"没有 `task_done` 的 `worker_done`"会通知人（2B spec） |
 | **画面检查是启发式**：漏判会把通知打进对方的确认或选择提示，或打进已经回到 shell 的终端 | 替对方回答提示；在 shell 里执行一行文字 | 模式表偏宽、只有 `clear` 才打字、拿不到画面或像 shell 提示符就不打；插入的外来文本中和 shell 元字符；模式表有单元测试，R6 的真实画面入库为样本 |
-| 阶段 1 的 `wl up` 启动包与 `wl send` 不经画面检查 | 首次启动时的"是否信任此文件夹"一类确认框可能被启动包的回车选中 | `wl up` 发启动包前改为先 `screenGuard`：`at_prompt` → 该岗位结果 `uncertain`（原因"岗位停在确认提示上，处理后重跑 wl up"），不发；`unknown` 照常发（刚启动的终端常常读不出画面）。`wl send` 是人显式要求的发送，保持不变 |
+| 阶段 1 的 `wl up` 启动包与 `wl send` 不经画面检查 | 首次启动时的"是否信任此文件夹"一类确认框可能被启动包的回车选中 | `wl up` 发启动包前改为先 `screenGuard`（重跑时 wait 步骤已完成也照样检查）：`at_prompt` → 该岗位结果 `uncertain`（原因"岗位停在确认提示上，处理后重跑 wl up"），不发；`shell` → 同样 `uncertain`（原因"岗位已退回 shell，处理后重跑 wl up"），不发（启动包含用户的 NORMS 与 brief 原文，在 shell 里会被逐行执行）；`unknown`（画面为空或读不出）照常发（刚启动的终端常常读不出画面）。`wl send` 是人显式要求的发送，保持不变 |
 | **每次 Orca 整个重启都会让所有终端 handle 失效** | 岗位重启后无法对手头任务 `done` | 终端被关闭时 Orca 自动回退（事实 3）；重启后是否回退未验证，`wl up` 会列出 `dead_assignee` 任务并给出 `wl task recover <id>` |
 | Orca 整个重启后旧 `coordinator_handle` 是否仍被接受未验证 | 2A 协调者调用失败 | 重启后下一次 `wl up` 按 5.2 节 `run-use` 到 lead 的新 handle |
 | Orca 清理旧回执，`request-show` 对"很久以前落地"的调用也报 `absent` | 隔很久之后重跑一个曾经超时的命令，可能重复执行 | 账本行通常在分钟级内被重放；清理周期未知，若实测较短再加"行龄超过 N 小时的不确定行不自动重放、只提示人工核对" |

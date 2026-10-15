@@ -31,21 +31,75 @@ test('model without launch on unknown agent is input error', () => {
   expect(() => loadTeamSpec(mkTeam(y))).toThrow(expect.objectContaining({ kind: 'input', code: 'launch_required' }))
 })
 
-test.each([
-  ['links', 'links: []\n', '阶段 2'],
-  ['gates', 'gates: {}\n', '阶段 2'],
-  ['budgets', 'budgets: {}\n', '阶段 2'],
-])('reserved top-level field %s is rejected with its phase', (_n, extra, phase) => {
-  expect(() => loadTeamSpec(mkTeam(DUO_YAML + extra))).toThrow(
-    expect.objectContaining({ kind: 'input', code: 'field_not_yet_available', message: expect.stringContaining(phase) }),
+test('post defaults: self_claim/tags/plan_first/gate/links', () => {
+  expect(loadTeamSpec(mkTeam(DUO_YAML)).posts[0]).toMatchObject({ selfClaim: false, tags: [], planFirst: false, gate: null, reviewedBy: [], handsTo: [] })
+})
+test('parses self_claim/tags/plan_first/gates/links', () => {
+  const y = DUO_YAML.replace('    brief: [briefs/builder.md]', '    brief: [briefs/builder.md]\n    self_claim: true\n    tags: [backend]\n    plan_first: true')
+    + 'links:\n  builder:\n    reviewed_by: [checker]\n  checker:\n    consults: [builder]\ngates:\n  builder: pnpm test\n'
+  expect(loadTeamSpec(mkTeam(y)).posts[0]).toMatchObject({ selfClaim: true, tags: ['backend'], planFirst: true, gate: 'pnpm test', reviewedBy: ['checker'] })
+})
+test('task budgets default to 3 / 600 / null; custom values parse', () => {
+  expect(loadTeamSpec(mkTeam(DUO_YAML)).budgets).toEqual({ task: { maxGateFailures: 3, gateTimeoutSeconds: 600, maxMinutes: null } })
+  const y = DUO_YAML + 'budgets:\n  task:\n    max_gate_failures: 2\n    gate_timeout_seconds: 30\n    max_minutes: 240\n'
+  expect(loadTeamSpec(mkTeam(y)).budgets).toEqual({ task: { maxGateFailures: 2, gateTimeoutSeconds: 30, maxMinutes: 240 } })
+})
+test('the removed budgets.team.max_in_progress_per_post → field_removed with the reason', () => {
+  const y = DUO_YAML + 'budgets:\n  team:\n    max_in_progress_per_post: 3\n'
+  expect(() => loadTeamSpec(mkTeam(y))).toThrow(expect.objectContaining({ code: 'field_removed', message: expect.stringContaining('一个进行中的派发') }))
+})
+test('reviewed_by + hands_to on the same post → links_conflict', () => {
+  const y = DUO_YAML + 'links:\n  builder:\n    reviewed_by: [checker]\n    hands_to: [checker]\n'
+  expect(() => loadTeamSpec(mkTeam(y))).toThrow(expect.objectContaining({ code: 'links_conflict' }))
+})
+test('unknown post id in links or gates is rejected', () => {
+  expect(() => loadTeamSpec(mkTeam(DUO_YAML + 'links:\n  builder:\n    reviewed_by: [ghost]\n'))).toThrow(expect.objectContaining({ code: 'links_unknown_post' }))
+  expect(() => loadTeamSpec(mkTeam(DUO_YAML + 'links:\n  ghost:\n    reviewed_by: [checker]\n'))).toThrow(expect.objectContaining({ code: 'links_unknown_post' }))
+  expect(() => loadTeamSpec(mkTeam(DUO_YAML + 'gates:\n  ghost: pnpm test\n'))).toThrow(expect.objectContaining({ code: 'gates_unknown_post' }))
+})
+test.each(['reviewed_by', 'hands_to', 'consults'])('a post linking to itself via %s → links_self', (k) => {
+  expect(() => loadTeamSpec(mkTeam(DUO_YAML + `links:\n  builder:\n    ${k}: [builder]\n`))).toThrow(expect.objectContaining({ code: 'links_self' }))
+})
+test('mutual reviewed_by is allowed (review tasks do not trigger links)', () => {
+  const y = DUO_YAML + 'links:\n  builder:\n    reviewed_by: [checker]\n  checker:\n    reviewed_by: [builder]\n'
+  expect(() => loadTeamSpec(mkTeam(y))).not.toThrow()
+})
+test('a hands_to cycle is rejected and names the posts on it', () => {
+  const y = DUO_YAML + 'links:\n  builder:\n    hands_to: [checker]\n  checker:\n    hands_to: [builder]\n'
+  expect(() => loadTeamSpec(mkTeam(y))).toThrow(expect.objectContaining({ code: 'links_cycle', message: expect.stringMatching(/builder.*checker|checker.*builder/) }))
+})
+test('unknown key under a links entry is rejected', () => {
+  expect(() => loadTeamSpec(mkTeam(DUO_YAML + 'links:\n  builder:\n    reports_to: [checker]\n'))).toThrow(expect.objectContaining({ code: 'spec_invalid' }))
+})
+test('budgets.team present but empty is still field_removed', () => {
+  expect(() => loadTeamSpec(mkTeam(DUO_YAML + 'budgets:\n  team: {}\n'))).toThrow(expect.objectContaining({ code: 'field_removed' }))
+})
+test('a hands_to chain without a cycle is allowed and parsed', () => {
+  const y = DUO_YAML + 'links:\n  builder:\n    hands_to: [checker]\n'
+  const s = loadTeamSpec(mkTeam(y))
+  expect(s.posts[0]?.handsTo).toEqual(['checker'])
+  expect(s.posts[1]?.handsTo).toEqual([])
+})
+test('a 3-node hands_to cycle is reported with every post on it', () => {
+  const y = DUO_YAML + `  - id: docs
+    agent: claude
+    model: opus
+    worktree: current
+    brief: [briefs/docs.md]
+links:
+  builder:
+    hands_to: [checker]
+  checker:
+    hands_to: [docs]
+  docs:
+    hands_to: [builder]
+`
+  expect(() => loadTeamSpec(mkTeam(y, { files: { 'briefs/docs.md': 'd' } }))).toThrow(
+    expect.objectContaining({ code: 'links_cycle', message: expect.stringMatching(/builder.*checker.*docs|builder.*docs.*checker|checker.*builder.*docs|checker.*docs.*builder|docs.*builder.*checker|docs.*checker.*builder/s) }),
   )
 })
-
-test('reserved post field is rejected with its phase', () => {
-  const y = DUO_YAML.replace('    worktree: current\n    brief: [briefs/builder.md]', '    worktree: current\n    plan_first: true\n    brief: [briefs/builder.md]')
-  expect(() => loadTeamSpec(mkTeam(y))).toThrow(
-    expect.objectContaining({ code: 'field_not_yet_available', message: expect.stringMatching(/plan_first.*阶段 2/s) }),
-  )
+test('a non-positive budget is rejected', () => {
+  expect(() => loadTeamSpec(mkTeam(DUO_YAML + 'budgets:\n  task:\n    max_gate_failures: 0\n'))).toThrow(expect.objectContaining({ code: 'spec_invalid' }))
 })
 
 test('error carries line number', () => {
@@ -96,4 +150,9 @@ test('a missing team.yaml is an input error naming the path', () => {
   expect(() => loadTeamSpec(missing)).toThrow(
     expect.objectContaining({ kind: 'input', code: 'spec_not_found', message: expect.stringContaining(missing) }),
   )
+})
+
+test('an empty reviewed_by next to a hands_to is not a conflict (nothing is reviewed)', () => {
+  const y = DUO_YAML + 'links:\n  builder:\n    reviewed_by: []\n    hands_to: [checker]\n'
+  expect(() => loadTeamSpec(mkTeam(y))).not.toThrow()
 })

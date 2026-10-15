@@ -1,6 +1,6 @@
 import { WinglineError } from '../errors.js'
 import type { OrcaRunner } from './run.js'
-import type { OrcaClient, SendStage } from './types.js'
+import type { OrcaClient, OrchestrationTask, RequestShowState, RunSummary, SendStage } from './types.js'
 
 /** terminal wait 自带超时；进程级超时多留一点余量，避免先于 Orca 自己的超时回执杀掉它。 */
 const WAIT_PROCESS_SLACK_MS = 15_000
@@ -25,21 +25,133 @@ function tabTitles(node: unknown, found = new Map<string, string>()): Map<string
   return found
 }
 
-/**
- * terminal create 没有 --retry-request（Orca 会以 invalid_argument 拒绝未知参数），
- * 所以创建靠“按标题查找”保证幂等；其余变更类调用才带重试 id。
- */
-export function createOrcaClient(runner: OrcaRunner): OrcaClient {
+const retryArgs = (a: { retryRequest?: string }) => (a.retryRequest ? ['--retry-request', a.retryRequest] : [])
+const replayedOf = (r: { mutation?: { replayed?: boolean } }) => r.mutation?.replayed ?? false
+
+type Mutation = { mutation?: { replayed?: boolean } }
+interface RawTask {
+  id: string
+  status: OrchestrationTask['status']
+  task_title: string
+  spec: string
+  parent_id?: string | null
+  assignee_handle?: string | null
+  dispatch_id?: string | null
+  result?: string | null
+}
+
+const toTask = (t: RawTask): OrchestrationTask => ({
+  id: t.id,
+  status: t.status,
+  title: t.task_title,
+  spec: t.spec,
+  parentId: t.parent_id ?? null,
+  assigneeHandle: t.assignee_handle ?? null,
+  dispatchId: t.dispatch_id ?? null,
+  result: t.result ?? null,
+})
+
+type OrchestrationMethods = Omit<OrcaClient, 'version' | 'status' | 'terminalList' | 'terminalCreate' | 'terminalWait' | 'terminalSend' | 'terminalClose'>
+
+function runMethods(runner: OrcaRunner): Pick<OrcaClient, 'runCreate' | 'runUse' | 'runShow' | 'runList' | 'requestShow'> {
+  type RunReply = { run: { id: string; coordinator_handle: string } }
   return {
-    async version() {
-      return (await runner.text(['--version'])).trim()
+    async runCreate(a) {
+      const r = await runner.json<RunReply & Mutation>(['orchestration', 'run-create', '--objective', a.objective, '--from', a.from, ...retryArgs(a)])
+      return { id: r.run.id, coordinatorHandle: r.run.coordinator_handle, replayed: replayedOf(r) }
     },
-
-    async status() {
-      const r = await runner.json<{ runtime: { reachable: boolean } }>(['status'])
-      return { reachable: r.runtime.reachable }
+    async runUse(a) {
+      const r = await runner.json<RunReply>(['orchestration', 'run-use', '--id', a.id, '--from', a.from])
+      return { coordinatorHandle: r.run.coordinator_handle }
     },
+    async runShow(a) {
+      const r = await runner.json<RunReply>(['orchestration', 'run-show', '--id', a.id])
+      return { coordinatorHandle: r.run.coordinator_handle }
+    },
+    async runList() {
+      const r = await runner.json<{
+        runs: Array<{ id: string; objective: string; coordinator_handle: string | null; created_at: string }>
+        nextCursor?: string | null
+        page?: { nextCursor?: string | null }
+      }>(['orchestration', 'run-list'])
+      // 还有下一页就不能当成"找全了"：按 objective 找回 Run 会漏掉后面的候选
+      if (r.nextCursor ?? r.page?.nextCursor) {
+        throw new WinglineError('orca', 'run_list_truncated', 'run-list 结果不止一页，无法确认没有其他候选 Run', { hint: '用 wl up --adopt-run <id> 指定要找回的 Run' })
+      }
+      return r.runs.map((x): RunSummary => ({ id: x.id, objective: x.objective, coordinatorHandle: x.coordinator_handle, createdAt: x.created_at }))
+    },
+    async requestShow(a) {
+      const r = await runner.json<{ state: RequestShowState; receipt?: unknown }>(['orchestration', 'request-show', '--request', a.request])
+      return { state: r.state, receipt: r.receipt ?? null }
+    },
+  }
+}
 
+function taskMethods(runner: OrcaRunner): Pick<OrcaClient, 'taskCreate' | 'taskList' | 'dispatch' | 'workerDone'> {
+  return {
+    async taskCreate(a) {
+      const r = await runner.json<{ task: { id: string } } & Mutation>([
+        'orchestration', 'task-create', '--spec', a.spec, '--task-title', a.taskTitle, '--run', a.run, '--from', a.from,
+        ...(a.parent ? ['--parent', a.parent] : []), ...retryArgs(a),
+      ])
+      return { id: r.task.id, replayed: replayedOf(r) }
+    },
+    async taskList(a) {
+      const r = await runner.json<{ tasks: RawTask[] }>(['orchestration', 'task-list', '--run', a.run])
+      return r.tasks.map(toTask)
+    },
+    async dispatch(a) {
+      const r = await runner.json<{ dispatch: { id: string } } & Mutation>([
+        'orchestration', 'dispatch', '--task', a.task, '--to', a.to, '--from', a.from, ...retryArgs(a),
+      ])
+      return { dispatchId: r.dispatch.id, replayed: replayedOf(r) }
+    },
+    async workerDone(a) {
+      const r = await runner.json<Mutation>([
+        'orchestration', 'send', '--type', 'worker_done', '--outcome', a.outcome, '--task-id', a.taskId,
+        '--dispatch-id', a.dispatchId, '--subject', a.subject, ...(a.body !== undefined ? ['--body', a.body] : []),
+        '--run', a.run, '--from', a.from, ...retryArgs(a),
+      ])
+      return { replayed: replayedOf(r) }
+    },
+  }
+}
+
+function gateAndViewMethods(runner: OrcaRunner): Pick<OrcaClient, 'gateCreate' | 'gateResolve' | 'terminalShow' | 'worktreeShow'> {
+  return {
+    async gateCreate(a) {
+      const r = await runner.json<{ gate: { id: string } } & Mutation>([
+        'orchestration', 'gate-create', '--task', a.task, '--question', a.question, '--from', a.from, ...retryArgs(a),
+      ])
+      return { id: r.gate.id, replayed: replayedOf(r) }
+    },
+    async gateResolve(a) {
+      const r = await runner.json<Mutation>([
+        'orchestration', 'gate-resolve', '--id', a.id, '--resolution', a.resolution, '--from', a.from, ...retryArgs(a),
+      ])
+      return { replayed: replayedOf(r) }
+    },
+    async terminalShow(a) {
+      const r = await runner.json<{ terminal: { title: string | null; connected: boolean; preview?: string } }>(['terminal', 'show', '--terminal', a.handle])
+      return { handle: a.handle, title: r.terminal.title, connected: r.terminal.connected, preview: r.terminal.preview ?? '' }
+    },
+    async worktreeShow(a) {
+      const r = await runner.json<{ worktree: { path: string } }>(['worktree', 'show', '--worktree', a.worktree])
+      return { path: r.worktree.path }
+    },
+  }
+}
+
+const orchestrationMethods = (runner: OrcaRunner): OrchestrationMethods => ({
+  ...runMethods(runner),
+  ...taskMethods(runner),
+  ...gateAndViewMethods(runner),
+})
+
+type TerminalMethods = Pick<OrcaClient, 'terminalList' | 'terminalCreate' | 'terminalWait' | 'terminalSend' | 'terminalClose'>
+
+function terminalMethods(runner: OrcaRunner): TerminalMethods {
+  return {
     async terminalList(a) {
       // 有界面的标签页：list 里的 title 是 shell 窗口标题，--title 设的自定义标题只在 visualLayouts 里。
       // 无界面（macOS CI 实测，tabId 形如 pty:10）的终端不在布局里，其 title 本身就是自定义标题。
@@ -84,6 +196,26 @@ export function createOrcaClient(runner: OrcaRunner): OrcaClient {
     async terminalClose(a) {
       const r = await runner.json<{ close: { ptyKilled: boolean } }>(['terminal', 'close', '--terminal', a.handle])
       return { ptyKilled: r.close.ptyKilled }
+    },
+  }
+}
+
+/**
+ * terminal create 没有 --retry-request（Orca 会以 invalid_argument 拒绝未知参数），
+ * 所以创建靠“按标题查找”保证幂等；其余变更类调用才带重试 id。
+ */
+export function createOrcaClient(runner: OrcaRunner): OrcaClient {
+  return {
+    ...orchestrationMethods(runner),
+    ...terminalMethods(runner),
+
+    async version() {
+      return (await runner.text(['--version'])).trim()
+    },
+
+    async status() {
+      const r = await runner.json<{ runtime: { reachable: boolean } }>(['status'])
+      return { reachable: r.runtime.reachable }
     },
   }
 }

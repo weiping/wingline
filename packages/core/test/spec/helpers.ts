@@ -32,3 +32,9 @@ export function mkTeam(yaml: string, opts: { dir?: string; files?: Record<string
   fs.writeFileSync(path.join(dir, 'team.yaml'), yaml)
   return path.join(dir, 'team.yaml')
 }
+
+/** builder 允许自领、带 backend 标签、先计划后动手；checker 保持默认。 */
+export const SELF_CLAIM_YAML = DUO_YAML.replace(
+  '    brief: [briefs/builder.md]',
+  '    brief: [briefs/builder.md]\n    self_claim: true\n    tags: [backend]\n    plan_first: true',
+)

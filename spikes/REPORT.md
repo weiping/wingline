@@ -452,3 +452,9 @@ macOS 真机（Orca 1.4.224）以**本机 claude × 2**（builder 与 checker �
 **对设计的影响（2A spec 第五次修订、2B spec 第四次修订）：** 2A 改为派发一律不带 `--inject`，改由雁阵自己发一行通知（含"完成后运行 `wl task done <id>`"），并在派发前本地检查"该岗位终端是否已有 `dispatched` 任务"；删去 `max_in_progress_per_post`。2B 被 fence 后丢弃 `pendingAck`、按消息 id 去重转述、`question` 的发送方从 `payload.taskId` 反查岗位、转述给出带 `--from <coordinator_handle>` 的 `reply` 命令；所有往终端打字的动作先经"画面检查"；调度员遇到"没有 `task_done` 记录的 `worker_done`"按"绕过闸门的上报"处理。
 
 收尾：三次运行共创建 Run `run_bb8fef4b8e07`、`run_d8d13fffb1b1`、`run_599a6de01532`（CLI 无法删除，残留待人工在 Orca 界面清理）；所有 `spike-r6-*` 终端均已关闭，`terminal list` 确认无残留；用户的 lima 实例状态未变。
+
+## 2A 契约抓取（Task 15，2026-10-15）
+
+`spikes/contract-capture.ts` 在真实 Orca 1.4.226（Linux）上跑了两次，产出 `test/fixtures/receipts/orchestration-2a.json`。每次会留下一个 Run（CLI 无法删除）：`run_74ee7e4f4a41`、`run_caa90732d2c1`（objective `wingline:contract-capture`）。终端在脚本结束时已关闭。
+
+实测结论：`task-list` 带 `parent_id`；终态/blocked 任务没有 `assignee_handle`/`dispatch_id`；`request-show` 的 `completed`/`absent` 如预期；对已完成派发重发 `worker_done` 会被**接受**；`worker_done` 引用不存在的派发时 Orca 报 `unknown_dispatch`，同一请求的 `request-show` 返回 `completed`，回执是主题为 "Rejected worker_done: …" 的消息。

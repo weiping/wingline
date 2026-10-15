@@ -12,6 +12,8 @@ export interface CommandDeps {
   /** 经 Windows .cmd 包装时为 false：换行无法安全传递。 */
   multilineSafe: boolean
   home: string
+  env: NodeJS.ProcessEnv
+  now: () => Date
 }
 
 export type Step = 'create' | 'wait' | 'brief' | 'send' | 'close'
@@ -19,7 +21,7 @@ export type Step = 'create' | 'wait' | 'brief' | 'send' | 'close'
 export const postAddress = (post: string, team: string) => `${post}@${team}`
 
 /**
- * 本地请求账本的键 `<team>:<post>:<step>:<hash8>`（不发给 Orca：Orca 的 --retry-request 只认它自己分配的 UUID）。
+ * 本地请求账本的键 `<team>:<post>:<step>:<hash8>`（`terminal` 命令族的 --retry-request 只认 Orca 分配的 UUID；编排命令族见 commands/task/ledger.ts）。
  * 同一岗位前一轮生命周期已完成（终端被关后重建）时，用 gen 后缀开新的一行。
  */
 export function requestId(team: string, post: string, step: Step, hash: string, gen = 0): string {

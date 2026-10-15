@@ -128,3 +128,96 @@ test('terminalWait: other Orca errors still propagate', async () => {
   }
   await expect(createOrcaClient(runner).terminalWait({ handle: 'h', forState: 'tui-idle', timeoutMs: 1 })).rejects.toMatchObject({ code: 'terminal_not_found' })
 })
+
+const m = (requestId: string, replayed = false) => ({ mutation: { requestId, replayed } })
+test('runCreate / runUse / runShow read run.coordinator_handle; runUse has no --retry-request', async () => {
+  const { client, calls } = clientWith({
+    'orchestration run-create': { run: { id: 'run-1', coordinator_handle: 'h1' }, ...m('r1') },
+    'orchestration run-use': { run: { id: 'run-1', coordinator_handle: 'h2' }, ...m('r2') },
+    'orchestration run-show': { run: { id: 'run-1', coordinator_handle: 'h2' } },
+  })
+  expect(await client.runCreate({ objective: 'wingline:duo', from: 'h1', retryRequest: 'rid' })).toEqual({ id: 'run-1', coordinatorHandle: 'h1', replayed: false })
+  expect(calls[0]).toEqual(['orchestration', 'run-create', '--objective', 'wingline:duo', '--from', 'h1', '--retry-request', 'rid'])
+  expect(await client.runUse({ id: 'run-1', from: 'h2' })).toEqual({ coordinatorHandle: 'h2' })
+  expect(calls[1]).toEqual(['orchestration', 'run-use', '--id', 'run-1', '--from', 'h2'])
+  expect(await client.runShow({ id: 'run-1' })).toEqual({ coordinatorHandle: 'h2' })
+  expect(calls[2]).toEqual(['orchestration', 'run-show', '--id', 'run-1'])
+})
+test('runList maps runs; requestShow reads state', async () => {
+  const { client, calls } = clientWith({
+    'orchestration run-list': { runs: [{ id: 'run-1', objective: 'wingline:duo', coordinator_handle: 'h1', created_at: '2026-10-15 01:00:00' }] },
+    'orchestration request-show': { state: 'completed', receipt: {} },
+  })
+  expect(await client.runList()).toEqual([{ id: 'run-1', objective: 'wingline:duo', coordinatorHandle: 'h1', createdAt: '2026-10-15 01:00:00' }])
+  expect(await client.requestShow({ request: 'rid' })).toEqual({ state: 'completed', receipt: {} })
+  expect(calls[1]).toEqual(['orchestration', 'request-show', '--request', 'rid'])
+})
+test('taskCreate passes quotes/newline/中文 verbatim and appends --parent / --retry-request only when given', async () => {
+  const { client, calls } = clientWith({ 'orchestration task-create': { task: { id: 't1' }, ...m('x', true) } })
+  expect(await client.taskCreate({ spec: 'a: 修"bug"\n中文', taskTitle: 't', run: 'run-1', from: 'c' })).toEqual({ id: 't1', replayed: true })
+  expect(calls[0]).toEqual(['orchestration', 'task-create', '--spec', 'a: 修"bug"\n中文', '--task-title', 't', '--run', 'run-1', '--from', 'c'])
+  await client.taskCreate({ spec: 's', taskTitle: 't', run: 'run-1', from: 'c', parent: 't0', retryRequest: 'rid' })
+  expect(calls[1]!.slice(-4)).toEqual(['--parent', 't0', '--retry-request', 'rid'])
+})
+test('taskList maps fields; blocked/terminal tasks without assignee keys map to null', async () => {
+  const { client } = clientWith({ 'orchestration task-list': { tasks: [
+    { id: 't1', status: 'blocked', task_title: 'x', spec: 's', parent_id: null, result: null },
+    { id: 't2', status: 'dispatched', task_title: 'y', spec: 's', parent_id: 't1', assignee_handle: 'h2', dispatch_id: 'ctx-1', result: null },
+  ] } })
+  expect(await client.taskList({ run: 'run-1' })).toEqual([
+    { id: 't1', status: 'blocked', title: 'x', spec: 's', parentId: null, assigneeHandle: null, dispatchId: null, result: null },
+    { id: 't2', status: 'dispatched', title: 'y', spec: 's', parentId: 't1', assigneeHandle: 'h2', dispatchId: 'ctx-1', result: null },
+  ])
+})
+test('dispatch never sends --inject; reads dispatch.id and replayed', async () => {
+  const { client, calls } = clientWith({ 'orchestration dispatch': { dispatch: { id: 'ctx-1' }, injected: false, ...m('rid') } })
+  expect(await client.dispatch({ task: 't1', to: 'h2', from: 'c', retryRequest: 'rid' })).toEqual({ dispatchId: 'ctx-1', replayed: false })
+  expect(calls[0]).toEqual(['orchestration', 'dispatch', '--task', 't1', '--to', 'h2', '--from', 'c', '--retry-request', 'rid'])
+})
+test('workerDone argv, --body only when given', async () => {
+  const { client, calls } = clientWith({ 'orchestration send': { message: {}, ...m('rid') } })
+  expect(await client.workerDone({ taskId: 't1', dispatchId: 'ctx-1', outcome: 'succeeded', subject: 'gate passed', run: 'run-1', from: 'h2', retryRequest: 'rid' })).toEqual({ replayed: false })
+  expect(calls[0]).toEqual(['orchestration', 'send', '--type', 'worker_done', '--outcome', 'succeeded', '--task-id', 't1', '--dispatch-id', 'ctx-1', '--subject', 'gate passed', '--run', 'run-1', '--from', 'h2', '--retry-request', 'rid'])
+})
+test('gateCreate / gateResolve argv', async () => {
+  const { client, calls } = clientWith({ 'orchestration gate-create': { gate: { id: 'gate-1' }, ...m('a') }, 'orchestration gate-resolve': { gate: {}, ...m('b') } })
+  expect(await client.gateCreate({ task: 't1', question: 'q', from: 'c', retryRequest: 'a' })).toEqual({ id: 'gate-1', replayed: false })
+  expect(calls[0]).toEqual(['orchestration', 'gate-create', '--task', 't1', '--question', 'q', '--from', 'c', '--retry-request', 'a'])
+  await client.gateResolve({ id: 'gate-1', resolution: 'retry', from: 'c', retryRequest: 'b' })
+  expect(calls[1]).toEqual(['orchestration', 'gate-resolve', '--id', 'gate-1', '--resolution', 'retry', '--from', 'c', '--retry-request', 'b'])
+})
+test('terminalShow reads preview (empty when missing); worktreeShow reads the path', async () => {
+  const { client, calls } = clientWith({
+    'terminal show': { terminal: { handle: 'h1', title: 'builder@duo', connected: true, preview: 'line1\n❯ ' } },
+    'worktree show': { worktree: { path: '/repo/wt' } },
+  })
+  expect(await client.terminalShow({ handle: 'h1' })).toEqual({ handle: 'h1', title: 'builder@duo', connected: true, preview: 'line1\n❯ ' })
+  expect(calls[0]).toEqual(['terminal', 'show', '--terminal', 'h1'])
+  expect(await client.worktreeShow({ worktree: 'id:w1' })).toEqual({ path: '/repo/wt' })
+  expect(calls[1]).toEqual(['worktree', 'show', '--worktree', 'id:w1'])
+})
+test('workerDone appends --body only when given', async () => {
+  const { client, calls } = clientWith({ 'orchestration send': { message: {}, ...m('rid', true) } })
+  expect(await client.workerDone({ taskId: 't1', dispatchId: 'ctx-1', outcome: 'failed', subject: 's', body: 'out\nput', run: 'run-1', from: 'h2' })).toEqual({ replayed: true })
+  expect(calls[0]).toEqual(['orchestration', 'send', '--type', 'worker_done', '--outcome', 'failed', '--task-id', 't1', '--dispatch-id', 'ctx-1', '--subject', 's', '--body', 'out\nput', '--run', 'run-1', '--from', 'h2'])
+})
+test('requestShow defaults receipt to null; absent and pending states pass through', async () => {
+  const { client } = clientWith({ 'orchestration request-show': { state: 'absent' } })
+  expect(await client.requestShow({ request: 'rid' })).toEqual({ state: 'absent', receipt: null })
+})
+test('terminalShow defaults preview to an empty string', async () => {
+  const { client } = clientWith({ 'terminal show': { terminal: { handle: 'h1', title: null, connected: false } } })
+  expect(await client.terminalShow({ handle: 'h1' })).toEqual({ handle: 'h1', title: null, connected: false, preview: '' })
+})
+test('runCreate / dispatch / gateCreate omit --retry-request when not given', async () => {
+  const { client, calls } = clientWith({
+    'orchestration run-create': { run: { id: 'r', coordinator_handle: 'h' } },
+    'orchestration dispatch': { dispatch: { id: 'd' } },
+    'orchestration gate-create': { gate: { id: 'g' } },
+  })
+  await client.runCreate({ objective: 'o', from: 'h' })
+  await client.dispatch({ task: 't', to: 'h2', from: 'c' })
+  await client.gateCreate({ task: 't', question: 'q', from: 'c' })
+  for (const c of calls) expect(c).not.toContain('--retry-request')
+  expect(calls[1]).not.toContain('--inject')
+})

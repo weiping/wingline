@@ -48,3 +48,17 @@ test('hash changes when the spec changes', () => {
   const b = specHash(loadTeamSpec(mkTeam(DUO_YAML.replace('model: opus', 'model: sonnet'))))
   expect(a).not.toBe(b)
 })
+
+test('hash changes when tags/gate/links/budgets change', () => {
+  const base = specHash(loadTeamSpec(mkTeam(DUO_YAML)))
+  const withTag = specHash(loadTeamSpec(mkTeam(DUO_YAML.replace('    brief: [briefs/builder.md]', '    brief: [briefs/builder.md]\n    tags: [backend]'))))
+  const withGate = specHash(loadTeamSpec(mkTeam(DUO_YAML + 'gates:\n  builder: pnpm test\n')))
+  const withBudget = specHash(loadTeamSpec(mkTeam(DUO_YAML + 'budgets:\n  task:\n    gate_timeout_seconds: 30\n')))
+  expect(new Set([base, withTag, withGate, withBudget]).size).toBe(4)
+})
+
+test('B-M9: consults participates in the spec hash (spec §4: the new fields all do)', () => {
+  const base = specHash(loadTeamSpec(mkTeam(DUO_YAML)))
+  const withConsults = specHash(loadTeamSpec(mkTeam(DUO_YAML + 'links:\n  builder:\n    consults: [checker]\n')))
+  expect(withConsults).not.toBe(base)
+})

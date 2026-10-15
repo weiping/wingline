@@ -1,0 +1,551 @@
+{
+  "_source": "spikes/contract-capture.ts，Orca unknown，linux，2026-10-15。只保留雁阵读取的命令回执；用户名与路径已脱敏，handle/id 为真实运行产生的随机值。",
+  "run-create": {
+    "ok": true,
+    "result": {
+      "run": {
+        "id": "run_caa90732d2c1",
+        "objective": "wingline:contract-capture",
+        "coordinator_handle": "term_57c09e8b-9e72-45c4-a875-e9da98498fad",
+        "consumer_generation": 1,
+        "legacy": 0,
+        "created_at": "2026-10-15T11:25:33Z",
+        "updated_at": "2026-10-15T11:25:33Z"
+      },
+      "mutation": {
+        "requestId": "35d9b0d9-cf79-46f6-a9bf-2e7e57f941cc",
+        "replayed": false
+      }
+    }
+  },
+  "run-list": {
+    "ok": true,
+    "result": {
+      "runs": [
+        {
+          "id": "run_caa90732d2c1",
+          "objective": "wingline:contract-capture",
+          "coordinator_handle": "term_57c09e8b-9e72-45c4-a875-e9da98498fad",
+          "consumer_generation": 1,
+          "legacy": 0,
+          "created_at": "2026-10-15T11:25:33Z",
+          "updated_at": "2026-10-15T11:25:33Z"
+        },
+        {
+          "id": "run_74ee7e4f4a41",
+          "objective": "wingline:contract-capture",
+          "coordinator_handle": "term_e6f132cb-85a3-4a78-845a-ce30e2b39362",
+          "consumer_generation": 1,
+          "legacy": 0,
+          "created_at": "2026-10-15T11:25:17Z",
+          "updated_at": "2026-10-15T11:25:17Z"
+        },
+        {
+          "id": "run_legacy_local",
+          "objective": "Legacy orchestration state (inspect only)",
+          "coordinator_handle": null,
+          "consumer_generation": 0,
+          "legacy": 1,
+          "created_at": "2026-10-15T04:34:54Z",
+          "updated_at": "2026-10-15T04:34:54Z"
+        }
+      ],
+      "nextCursor": null
+    }
+  },
+  "run-show": {
+    "ok": true,
+    "result": {
+      "run": {
+        "id": "run_caa90732d2c1",
+        "objective": "wingline:contract-capture",
+        "coordinator_handle": "term_57c09e8b-9e72-45c4-a875-e9da98498fad",
+        "consumer_generation": 1,
+        "legacy": 0,
+        "created_at": "2026-10-15T11:25:33Z",
+        "updated_at": "2026-10-15T11:25:33Z"
+      }
+    }
+  },
+  "task-create": {
+    "ok": true,
+    "result": {
+      "task": {
+        "id": "task_3badaa2263b1",
+        "run_id": "run_caa90732d2c1",
+        "parent_id": null,
+        "created_by_terminal_handle": "term_57c09e8b-9e72-45c4-a875-e9da98498fad",
+        "created_by_pane_key": "df27a880-395d-4b0c-86a1-47ea4e98a8b6:e78cf833-9b59-412e-936e-7d50d0a3c1de",
+        "created_by_process_incarnation": "d92c849e-fb20-4a4e-9a45-bd198722e87d::/Users/USER/workspace/dev/wingline-2a@@4d8fe11a:85ddf5cc-bfe6-4ea3-83f7-977c08669830",
+        "created_by_run_generation": 1,
+        "task_title": "T1",
+        "display_name": "T1",
+        "spec": "capture T1",
+        "status": "ready",
+        "deps": "[]",
+        "result": null,
+        "created_at": "2026-10-15 11:25:33",
+        "completed_at": null
+      },
+      "mutation": {
+        "requestId": "3a062e8b-ddba-457b-a7bd-b013cddd64eb",
+        "replayed": false
+      }
+    }
+  },
+  "task-create-with-parent": {
+    "ok": true,
+    "result": {
+      "task": {
+        "id": "task_fe30727431f7",
+        "run_id": "run_caa90732d2c1",
+        "parent_id": "task_3badaa2263b1",
+        "created_by_terminal_handle": "term_57c09e8b-9e72-45c4-a875-e9da98498fad",
+        "created_by_pane_key": "df27a880-395d-4b0c-86a1-47ea4e98a8b6:e78cf833-9b59-412e-936e-7d50d0a3c1de",
+        "created_by_process_incarnation": "d92c849e-fb20-4a4e-9a45-bd198722e87d::/Users/USER/workspace/dev/wingline-2a@@4d8fe11a:85ddf5cc-bfe6-4ea3-83f7-977c08669830",
+        "created_by_run_generation": 1,
+        "task_title": "T2-child",
+        "display_name": "T2-child",
+        "spec": "capture T2-child",
+        "status": "ready",
+        "deps": "[]",
+        "result": null,
+        "created_at": "2026-10-15 11:25:33",
+        "completed_at": null
+      },
+      "mutation": {
+        "requestId": "3312ecb1-b118-46b0-a9b3-b32e42f24d9a",
+        "replayed": false
+      }
+    }
+  },
+  "dispatch": {
+    "ok": true,
+    "result": {
+      "dispatch": {
+        "id": "ctx_d8ce2d5c9f8f",
+        "run_id": "run_caa90732d2c1",
+        "task_id": "task_3badaa2263b1",
+        "contract_version": 1,
+        "launch_token_hash": null,
+        "assignee_handle": "term_a4c38d5d-ae9d-4a70-b2c5-899df602fa44",
+        "assignee_pane_key": "8e8a55a1-7533-4a46-ae95-500af02a9a5c:8b212c83-2fe4-424b-83be-20d84770ec86",
+        "assignee_orca_session_id": null,
+        "capability_hash": null,
+        "process_incarnation": "d92c849e-fb20-4a4e-9a45-bd198722e87d::/Users/USER/workspace/dev/wingline-2a@@b3144e17:1f87e8a3-1bb9-4861-918e-7c218d256319",
+        "capability_revoked_at": null,
+        "retry_of_dispatch_id": null,
+        "creator_dispatch_id": null,
+        "creator_handle": "term_57c09e8b-9e72-45c4-a875-e9da98498fad",
+        "creator_pane_key": "df27a880-395d-4b0c-86a1-47ea4e98a8b6:e78cf833-9b59-412e-936e-7d50d0a3c1de",
+        "creator_orca_session_id": null,
+        "host_scope": null,
+        "status": "dispatched",
+        "failure_count": 0,
+        "last_failure": null,
+        "termination_reason": null,
+        "depth": 1,
+        "consumer_generation": 0,
+        "dispatched_at": "2026-10-15 11:25:33",
+        "completed_at": null,
+        "created_at": "2026-10-15 11:25:33",
+        "last_heartbeat_at": null
+      },
+      "injected": false,
+      "mutation": {
+        "requestId": "79aeecd3-7743-46f7-8e54-aa633a3f5e0d",
+        "replayed": false
+      }
+    }
+  },
+  "worker-done": {
+    "ok": true,
+    "result": {
+      "message": {
+        "id": "msg_d3be0a72c2a7",
+        "run_id": "run_caa90732d2c1",
+        "delivery_contract": "current_delivery",
+        "from_handle": "term_a4c38d5d-ae9d-4a70-b2c5-899df602fa44",
+        "to_handle": "run:run_caa90732d2c1",
+        "subject": "capture done",
+        "body": "",
+        "type": "worker_done",
+        "priority": "normal",
+        "thread_id": null,
+        "payload": "{\"taskId\":\"task_3badaa2263b1\",\"dispatchId\":\"ctx_d8ce2d5c9f8f\",\"outcome\":\"succeeded\"}",
+        "created_at": "2026-10-15T11:25:33Z",
+        "delivered_at": null
+      },
+      "lifecycle": {
+        "action": "completed",
+        "taskId": "task_3badaa2263b1",
+        "dispatchId": "ctx_d8ce2d5c9f8f"
+      },
+      "mutation": {
+        "requestId": "6e055fdc-956b-42ee-9fe9-d8fa39a6bdae",
+        "replayed": false
+      }
+    }
+  },
+  "request-show-completed": {
+    "ok": true,
+    "result": {
+      "requestId": "6e055fdc-956b-42ee-9fe9-d8fa39a6bdae",
+      "state": "completed",
+      "method": "orchestration.send",
+      "createdAt": "2026-10-15 11:25:33",
+      "updatedAt": "2026-10-15 11:25:33",
+      "receipt": {
+        "message": {
+          "id": "msg_d3be0a72c2a7",
+          "run_id": "run_caa90732d2c1",
+          "delivery_contract": "current_delivery",
+          "from_handle": "term_a4c38d5d-ae9d-4a70-b2c5-899df602fa44",
+          "to_handle": "run:run_caa90732d2c1",
+          "subject": "capture done",
+          "body": "",
+          "type": "worker_done",
+          "priority": "normal",
+          "thread_id": null,
+          "payload": "{\"taskId\":\"task_3badaa2263b1\",\"dispatchId\":\"ctx_d8ce2d5c9f8f\",\"outcome\":\"succeeded\"}",
+          "created_at": "2026-10-15T11:25:33Z",
+          "delivered_at": null
+        },
+        "lifecycle": {
+          "action": "completed",
+          "taskId": "task_3badaa2263b1",
+          "dispatchId": "ctx_d8ce2d5c9f8f"
+        },
+        "mutation": {
+          "requestId": "6e055fdc-956b-42ee-9fe9-d8fa39a6bdae",
+          "replayed": false
+        }
+      },
+      "interpretation": "Request 6e055fdc-956b-42ee-9fe9-d8fa39a6bdae already took effect (orchestration.send). Replaying it with --retry-request 6e055fdc-956b-42ee-9fe9-d8fa39a6bdae returns the recorded outcome and starts nothing new."
+    }
+  },
+  "request-show-completed-task-create": {
+    "ok": true,
+    "result": {
+      "requestId": "3a062e8b-ddba-457b-a7bd-b013cddd64eb",
+      "state": "completed",
+      "method": "orchestration.taskCreate",
+      "createdAt": "2026-10-15 11:25:33",
+      "updatedAt": "2026-10-15 11:25:33",
+      "receipt": {
+        "task": {
+          "id": "task_3badaa2263b1",
+          "run_id": "run_caa90732d2c1",
+          "parent_id": null,
+          "created_by_terminal_handle": "term_57c09e8b-9e72-45c4-a875-e9da98498fad",
+          "created_by_pane_key": "df27a880-395d-4b0c-86a1-47ea4e98a8b6:e78cf833-9b59-412e-936e-7d50d0a3c1de",
+          "created_by_process_incarnation": "d92c849e-fb20-4a4e-9a45-bd198722e87d::/Users/USER/workspace/dev/wingline-2a@@4d8fe11a:85ddf5cc-bfe6-4ea3-83f7-977c08669830",
+          "created_by_run_generation": 1,
+          "task_title": "T1",
+          "display_name": "T1",
+          "spec": "capture T1",
+          "status": "ready",
+          "deps": "[]",
+          "result": null,
+          "created_at": "2026-10-15 11:25:33",
+          "completed_at": null
+        },
+        "mutation": {
+          "requestId": "3a062e8b-ddba-457b-a7bd-b013cddd64eb",
+          "replayed": false
+        }
+      },
+      "interpretation": "Request 3a062e8b-ddba-457b-a7bd-b013cddd64eb already took effect (orchestration.taskCreate). Replaying it with --retry-request 3a062e8b-ddba-457b-a7bd-b013cddd64eb returns the recorded outcome and starts nothing new."
+    }
+  },
+  "request-show-absent": {
+    "ok": true,
+    "result": {
+      "requestId": "b1b1c5c3-abbc-4fa5-8343-652316a2fe86",
+      "state": "absent",
+      "interpretation": "No receipt for request b1b1c5c3-abbc-4fa5-8343-652316a2fe86 under this caller identity. It never reached this Orca runtime, failed before recording anything, or its receipt was pruned. Absent is not proof that nothing happened."
+    }
+  },
+  "worker-done-rejected": {
+    "ok": false,
+    "error": {
+      "code": "unknown_dispatch",
+      "kind": "orca",
+      "message": "worker_done references unknown dispatch ctx_nonexistent."
+    }
+  },
+  "request-show-rejected-worker-done": {
+    "ok": true,
+    "result": {
+      "requestId": "12325f96-068c-4b51-932d-4d1238ade76e",
+      "state": "completed",
+      "method": "orchestration.send",
+      "createdAt": "2026-10-15 11:25:33",
+      "updatedAt": "2026-10-15 11:25:33",
+      "receipt": {
+        "message": {
+          "id": "msg_4fa499552a8d",
+          "run_id": "run_caa90732d2c1",
+          "delivery_contract": "current_delivery",
+          "from_handle": "term_a4c38d5d-ae9d-4a70-b2c5-899df602fa44",
+          "to_handle": "run:run_caa90732d2c1",
+          "subject": "Rejected worker_done: capture done",
+          "body": "Orca rejected this worker_done: worker_done references unknown dispatch ctx_nonexistent.",
+          "type": "worker_done",
+          "priority": "high",
+          "thread_id": null,
+          "payload": "{\"taskId\":\"task_3badaa2263b1\",\"dispatchId\":\"ctx_nonexistent\",\"outcome\":\"succeeded\",\"_orcaLifecycleRejection\":{\"code\":\"unknown_dispatch\",\"reason\":\"worker_done references unknown dispatch ctx_nonexistent.\"}}",
+          "created_at": "2026-10-15T11:25:33Z",
+          "delivered_at": null
+        },
+        "lifecycle": {
+          "action": "rejected",
+          "code": "unknown_dispatch",
+          "reason": "worker_done references unknown dispatch ctx_nonexistent."
+        },
+        "mutation": {
+          "requestId": "12325f96-068c-4b51-932d-4d1238ade76e",
+          "replayed": false
+        }
+      },
+      "interpretation": "Request 12325f96-068c-4b51-932d-4d1238ade76e already took effect (orchestration.send). Replaying it with --retry-request 12325f96-068c-4b51-932d-4d1238ade76e returns the recorded outcome and starts nothing new."
+    }
+  },
+  "dispatch-t3": {
+    "ok": true,
+    "result": {
+      "dispatch": {
+        "id": "ctx_e7cf1e21c103",
+        "run_id": "run_caa90732d2c1",
+        "task_id": "task_2c26ccba2b05",
+        "contract_version": 1,
+        "launch_token_hash": null,
+        "assignee_handle": "term_f1169988-a359-4aa0-a86d-1fade6f1109c",
+        "assignee_pane_key": "a6a3423e-273e-40db-9b09-331a48d17aee:19ffc41f-ec3e-4045-b869-b9c7d58774e8",
+        "assignee_orca_session_id": null,
+        "capability_hash": null,
+        "process_incarnation": "d92c849e-fb20-4a4e-9a45-bd198722e87d::/Users/USER/workspace/dev/wingline-2a@@2f29a10d:bd5340cb-f43a-4206-82f3-bdf84df2b189",
+        "capability_revoked_at": null,
+        "retry_of_dispatch_id": null,
+        "creator_dispatch_id": null,
+        "creator_handle": "term_57c09e8b-9e72-45c4-a875-e9da98498fad",
+        "creator_pane_key": "df27a880-395d-4b0c-86a1-47ea4e98a8b6:e78cf833-9b59-412e-936e-7d50d0a3c1de",
+        "creator_orca_session_id": null,
+        "host_scope": null,
+        "status": "dispatched",
+        "failure_count": 0,
+        "last_failure": null,
+        "termination_reason": null,
+        "depth": 1,
+        "consumer_generation": 0,
+        "dispatched_at": "2026-10-15 11:25:33",
+        "completed_at": null,
+        "created_at": "2026-10-15 11:25:33",
+        "last_heartbeat_at": null
+      },
+      "injected": false,
+      "mutation": {
+        "requestId": "e3103157-6bc2-46bd-92de-bca065459f41",
+        "replayed": false
+      }
+    }
+  },
+  "gate-create": {
+    "ok": true,
+    "result": {
+      "gate": {
+        "id": "gate_0fdd35e9eee2",
+        "run_id": "run_caa90732d2c1",
+        "task_id": "task_bf06b138fcc8",
+        "question": "capture gate",
+        "options": "[]",
+        "status": "pending",
+        "resolution": null,
+        "created_at": "2026-10-15 11:25:34",
+        "resolved_at": null
+      },
+      "mutation": {
+        "requestId": "948687ac-287a-4d05-bdec-80ef83fe669c",
+        "replayed": false
+      }
+    }
+  },
+  "task-list-mixed": {
+    "ok": true,
+    "result": {
+      "runId": "run_caa90732d2c1",
+      "legacyReadOnly": false,
+      "tasks": [
+        {
+          "id": "task_bf06b138fcc8",
+          "run_id": "run_caa90732d2c1",
+          "parent_id": null,
+          "created_by_terminal_handle": "term_57c09e8b-9e72-45c4-a875-e9da98498fad",
+          "created_by_pane_key": "df27a880-395d-4b0c-86a1-47ea4e98a8b6:e78cf833-9b59-412e-936e-7d50d0a3c1de",
+          "created_by_process_incarnation": "d92c849e-fb20-4a4e-9a45-bd198722e87d::/Users/USER/workspace/dev/wingline-2a@@4d8fe11a:85ddf5cc-bfe6-4ea3-83f7-977c08669830",
+          "created_by_run_generation": 1,
+          "task_title": "T4",
+          "display_name": "T4",
+          "spec": "capture T4",
+          "status": "blocked",
+          "deps": "[]",
+          "result": null,
+          "created_at": "2026-10-15 11:25:33",
+          "completed_at": null
+        },
+        {
+          "id": "task_3badaa2263b1",
+          "run_id": "run_caa90732d2c1",
+          "parent_id": null,
+          "created_by_terminal_handle": "term_57c09e8b-9e72-45c4-a875-e9da98498fad",
+          "created_by_pane_key": "df27a880-395d-4b0c-86a1-47ea4e98a8b6:e78cf833-9b59-412e-936e-7d50d0a3c1de",
+          "created_by_process_incarnation": "d92c849e-fb20-4a4e-9a45-bd198722e87d::/Users/USER/workspace/dev/wingline-2a@@4d8fe11a:85ddf5cc-bfe6-4ea3-83f7-977c08669830",
+          "created_by_run_generation": 1,
+          "task_title": "T1",
+          "display_name": "T1",
+          "spec": "capture T1",
+          "status": "completed",
+          "deps": "[]",
+          "result": "{\"provenance\":\"worker_report\",\"outcome\":\"succeeded\",\"messageId\":\"msg_d3be0a72c2a7\",\"reportedBy\":\"term_a4c38d5d-ae9d-4a70-b2c5-899df602fa44\",\"subject\":\"capture done\",\"body\":\"\",\"completedBy\":\"term_a4c38d5d-ae9d-4a70-b2c5-899df602fa44\",\"filesModified\":[],\"reportPath\":null,\"completedAt\":\"2026-10-15T11:25:33.543Z\"}",
+          "created_at": "2026-10-15 11:25:33",
+          "completed_at": "2026-10-15T11:25:33.543Z"
+        },
+        {
+          "id": "task_2c26ccba2b05",
+          "run_id": "run_caa90732d2c1",
+          "parent_id": null,
+          "created_by_terminal_handle": "term_57c09e8b-9e72-45c4-a875-e9da98498fad",
+          "created_by_pane_key": "df27a880-395d-4b0c-86a1-47ea4e98a8b6:e78cf833-9b59-412e-936e-7d50d0a3c1de",
+          "created_by_process_incarnation": "d92c849e-fb20-4a4e-9a45-bd198722e87d::/Users/USER/workspace/dev/wingline-2a@@4d8fe11a:85ddf5cc-bfe6-4ea3-83f7-977c08669830",
+          "created_by_run_generation": 1,
+          "task_title": "T3",
+          "display_name": "T3",
+          "spec": "capture T3",
+          "status": "dispatched",
+          "deps": "[]",
+          "result": null,
+          "created_at": "2026-10-15 11:25:33",
+          "completed_at": null,
+          "assignee_handle": "term_f1169988-a359-4aa0-a86d-1fade6f1109c",
+          "dispatch_id": "ctx_e7cf1e21c103"
+        },
+        {
+          "id": "task_fe30727431f7",
+          "run_id": "run_caa90732d2c1",
+          "parent_id": "task_3badaa2263b1",
+          "created_by_terminal_handle": "term_57c09e8b-9e72-45c4-a875-e9da98498fad",
+          "created_by_pane_key": "df27a880-395d-4b0c-86a1-47ea4e98a8b6:e78cf833-9b59-412e-936e-7d50d0a3c1de",
+          "created_by_process_incarnation": "d92c849e-fb20-4a4e-9a45-bd198722e87d::/Users/USER/workspace/dev/wingline-2a@@4d8fe11a:85ddf5cc-bfe6-4ea3-83f7-977c08669830",
+          "created_by_run_generation": 1,
+          "task_title": "T2-child",
+          "display_name": "T2-child",
+          "spec": "capture T2-child",
+          "status": "ready",
+          "deps": "[]",
+          "result": null,
+          "created_at": "2026-10-15 11:25:33",
+          "completed_at": null
+        }
+      ],
+      "count": 4
+    }
+  },
+  "gate-resolve": {
+    "ok": true,
+    "result": {
+      "gate": {
+        "id": "gate_0fdd35e9eee2",
+        "run_id": "run_caa90732d2c1",
+        "task_id": "task_bf06b138fcc8",
+        "question": "capture gate",
+        "options": "[]",
+        "status": "resolved",
+        "resolution": "ok",
+        "created_at": "2026-10-15 11:25:34",
+        "resolved_at": "2026-10-15 11:25:34"
+      },
+      "mutation": {
+        "requestId": "82a49a56-022e-463c-aa69-983bf87f3a40",
+        "replayed": false
+      }
+    }
+  },
+  "worktree-show": {
+    "ok": true,
+    "result": {
+      "worktree": {
+        "id": "d92c849e-fb20-4a4e-9a45-bd198722e87d::/Users/USER/workspace/dev/wingline-2a",
+        "identity": {
+          "key": "wt2:local:f6badf3c-a1fb-485e-bb9e-91c5930e84e1",
+          "executionHostId": "local",
+          "instanceId": "f6badf3c-a1fb-485e-bb9e-91c5930e84e1"
+        },
+        "instanceId": "f6badf3c-a1fb-485e-bb9e-91c5930e84e1",
+        "repoId": "d92c849e-fb20-4a4e-9a45-bd198722e87d",
+        "hostId": "local",
+        "path": "/Users/USER/workspace/dev/wingline-2a",
+        "head": "49459cee835b19520ef254531c87186e1306aa61",
+        "branch": "refs/heads/feat/phase-2a-task1",
+        "isBare": false,
+        "isMainWorktree": false,
+        "displayName": "feat/phase-2a-task1",
+        "displayNameMode": "automatic",
+        "comment": "",
+        "linkedIssue": null,
+        "linkedPR": null,
+        "linkedLinearIssue": null,
+        "linkedLinearIssueWorkspaceId": null,
+        "linkedLinearIssueOrganizationUrlKey": null,
+        "linkedGitLabMR": null,
+        "linkedGitLabIssue": null,
+        "linkedBitbucketPR": null,
+        "linkedAzureDevOpsPR": null,
+        "linkedGiteaPR": null,
+        "linkedWorkItem": null,
+        "linkedTaskSourceContext": null,
+        "isArchived": false,
+        "isUnread": false,
+        "isPinned": false,
+        "sortOrder": 1792050889608,
+        "lastActivityAt": 0,
+        "workspaceStatus": "in-progress",
+        "parentWorktreeId": null,
+        "childWorktreeIds": [],
+        "lineage": null,
+        "git": {
+          "path": "/Users/USER/workspace/dev/wingline-2a",
+          "head": "49459cee835b19520ef254531c87186e1306aa61",
+          "branch": "refs/heads/feat/phase-2a-task1",
+          "isBare": false,
+          "isMainWorktree": false
+        },
+        "linkedItems": []
+      }
+    }
+  },
+  "terminal-show": {
+    "ok": true,
+    "result": {
+      "terminal": {
+        "handle": "term_a4c38d5d-ae9d-4a70-b2c5-899df602fa44",
+        "ptyId": "d92c849e-fb20-4a4e-9a45-bd198722e87d::/Users/USER/workspace/dev/wingline-2a@@b3144e17",
+        "incarnationId": "1f87e8a3-1bb9-4861-918e-7c218d256319",
+        "orphaned": false,
+        "worktreeId": "d92c849e-fb20-4a4e-9a45-bd198722e87d::/Users/USER/workspace/dev/wingline-2a",
+        "worktreePath": "/Users/USER/workspace/dev/wingline-2a",
+        "branch": "refs/heads/feat/phase-2a-task1",
+        "tabId": "8e8a55a1-7533-4a46-ae95-500af02a9a5c",
+        "leafId": "8b212c83-2fe4-424b-83be-20d84770ec86",
+        "title": "USER@lima-agent: /Users/USER/workspace/dev/wingline-2a",
+        "connected": true,
+        "writable": true,
+        "lastOutputAt": 1792063532880,
+        "preview": "USER@lima-agent:/Users/USER/workspace/dev/wingline-2a$ node -e \"process.stdin.resume()\"",
+        "executionHostId": "local",
+        "paneRuntimeId": -1,
+        "rendererGraphEpoch": 0,
+        "agentWait": null
+      }
+    }
+  }
+}
