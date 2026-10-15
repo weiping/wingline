@@ -294,3 +294,14 @@ test('A-M4: a second opener that lost the migration race re-reads user_version a
   expect((raw.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(MIGRATIONS.length)
   raw.close()
 })
+
+test('4-a: a database written by a newer wingline (user_version above this code\'s migrations) is refused with registry_too_new, not opened silently; the current version still opens', () => {
+  const file = tmpDb(); fs.mkdirSync(path.dirname(file), { recursive: true })
+  const raw = new DatabaseSync(file)
+  for (const m of MIGRATIONS) raw.exec(m)
+  raw.exec(`PRAGMA user_version = ${MIGRATIONS.length + 1}`)
+  raw.close()
+  expect(() => Registry.open(file)).toThrow(expect.objectContaining({ code: 'registry_too_new', hint: expect.any(String) }))
+  const ok = tmpDb(); Registry.open(ok).close()
+  expect(() => Registry.open(ok).close()).not.toThrow()
+})

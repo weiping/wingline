@@ -112,3 +112,11 @@ test('F-1: a prompt pattern still wins over a shell-looking last line, and scree
   o.previews.set('term-c', 'bye\nme@host:~$ ')
   expect(await screenGuard(deps, 'term-c')).toBe('shell')
 })
+
+test('1-a: an agent footer that ends in a percentage is clear, not a shell prompt; a real zsh % prompt is still shell', () => {
+  expect(classifyPreview('⏵⏵ accept edits on (shift+tab to cycle)   Context left until auto-compact: 9%')).toBe('clear')
+  expect(classifyPreview('working…\nctx 45%')).toBe('clear')
+  expect(classifyPreview('user@host ~ %')).toBe('shell')
+  expect(classifyPreview('% ')).toBe('shell')
+  expect(classifyPreview('USER@Mac-mini wingline % ')).toBe('shell')
+})

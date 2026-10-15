@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { expect, test } from 'vitest'
 import { requestId } from '../../src/commands/deps.js'
+import { gateCwd } from '../../src/commands/task/gate-exec.js'
 import { up } from '../../src/commands/up.js'
 import { renderBriefing } from '../../src/brief/render.js'
 import { specHash } from '../../src/spec/hash.js'
@@ -467,4 +468,29 @@ test('F-3: rerunning wl up from another worktree keeps the existing path: pin of
   await up(deps, { specPath: p })
   expect(registry.getPost('builder@duo')!.worktree).toBe('path:/repo/a')
   expect(registry.getPost('checker@duo')!.worktree).toBe('path:/repo/b')
+})
+
+test('2-a: when worktree show is uncertain for a post that is NOT live, its old path: pin does not survive — it is reset to the spec selector, and gate cwd never answers with the stale directory', async () => {
+  const o = new FakeOrca(); const { deps, registry } = mkDeps(o); const p = duo()
+  o.worktreePaths.set('current', '/repo/a')
+  await up(deps, { specPath: p })
+  await o.terminalClose({ handle: 'term-2' })                                              // checker's terminal is gone
+  o.worktreePaths.set('current', '/repo/b')                                                // the rerun happens from another worktree
+  o.faults.push({ method: 'worktreeShow', when: 'before', error: new WinglineError('uncertain', 'orca_timeout', 't') })
+  const r = await up(deps, { specPath: p })
+  expect(r.posts[1]!.outcome).toBe('launched')
+  expect(registry.getPost('builder@duo')!.worktree).toBe('path:/repo/a')                    // still live: keeps its pin
+  expect(registry.getPost('checker@duo')!.worktree).toBe('current')                         // not live + could not re-resolve: back to the spec value
+  expect(await gateCwd(deps, 'checker@duo').catch(() => null)).not.toBe('/repo/a')
+})
+test('2-b: a terminal list failure while pinning does not abort wl up: per-post results are still returned and existing pins are kept', async () => {
+  const o = new FakeOrca(); const { deps, registry } = mkDeps(o); const p = duo()
+  o.worktreePaths.set('current', '/repo/a')
+  await up(deps, { specPath: p })
+  o.faults.push({ method: 'terminalList', when: 'before', error: new WinglineError('uncertain', 'orca_timeout', 't') })
+  const r = await up(deps, { specPath: p })
+  expect(r.posts).toHaveLength(2)
+  expect(r.posts.map((x) => x.outcome)).toEqual(['already_live', 'already_live'])
+  expect(registry.getPost('builder@duo')!.worktree).toBe('path:/repo/a')
+  expect(registry.getPost('checker@duo')!.worktree).toBe('path:/repo/a')
 })
