@@ -139,7 +139,7 @@ test('up exits 3 when the Run step is uncertain even though every post launched'
 })
 test('up passes --adopt-run / --new-run through; ambiguous exits 1, lost exits 2', async () => {
   const seen: unknown[] = []
-  const mk = (outcome: string) => cmds({ up: async (_d, a) => { seen.push(a); return { team: 'duo', posts: [], run: { outcome, runId: null } } } })
+  const mk = (outcome: 'ambiguous' | 'lost') => cmds({ up: async (_d, a) => { seen.push(a); return { team: 'duo', posts: [], run: { outcome, runId: null } } } })
   expect((await exec(['up', 'x', '--adopt-run', 'run-9'], mk('ambiguous'))).code).toBe(1)
   expect((await exec(['up', 'x', '--new-run'], mk('lost'))).code).toBe(2)
   expect(seen).toEqual([expect.objectContaining({ adoptRun: 'run-9' }), expect.objectContaining({ newRun: true })])
