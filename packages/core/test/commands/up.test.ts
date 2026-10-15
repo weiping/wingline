@@ -439,3 +439,32 @@ test('after an at_prompt refusal, rerunning once the prompt is answered resumes:
   expect(o.created.filter((c) => c.title === 'builder@duo')).toHaveLength(1)
   expect(o.sent.filter((s) => s.handle === 'term-1')).toHaveLength(1)
 })
+
+test('F-1: wl up does not type the brief into a post that has dropped back to a shell; the reason says so; the other post is unaffected', async () => {
+  const o = new FakeOrca(); const { deps } = mkDeps(o)
+  o.onCreate = () => { if (o.terminals.length === 0) o.previews.set('term-1', 'agent crashed\nme@host:~/repo$ ') }
+  const r = await up(deps, { specPath: duo() })
+  expect(r.posts[0]).toMatchObject({ outcome: 'uncertain', reason: expect.stringContaining('岗位已退回 shell') })
+  expect(r.posts[1]!.outcome).toBe('launched')
+  expect(o.sent.map((s) => s.handle)).toEqual(['term-2'])
+})
+test('F-1 (rerun): the wait step is already done, the agent has since exited to a shell → the rerun refuses to type the brief', async () => {
+  const o = new FakeOrca(); const { deps } = mkDeps(o); const p = duo()
+  o.previews.set('term-1', 'Do you want to proceed?')
+  expect((await up(deps, { specPath: p })).posts[0]!.outcome).toBe('uncertain')            // wait done, brief refused at a prompt
+  o.previews.set('term-1', 'me@host:~/repo$ ')                                              // the agent then exited
+  const second = await up(deps, { specPath: p })
+  expect(second.posts[0]).toMatchObject({ outcome: 'uncertain', reason: expect.stringContaining('岗位已退回 shell') })
+  expect(o.sent.filter((s) => s.handle === 'term-1')).toEqual([])
+})
+test('F-3: rerunning wl up from another worktree keeps the existing path: pin of a post whose terminal is still live; a post that is relaunched is resolved fresh', async () => {
+  const o = new FakeOrca(); const { deps, registry } = mkDeps(o); const p = duo()
+  o.worktreePaths.set('current', '/repo/a')
+  await up(deps, { specPath: p })
+  expect(registry.getPost('builder@duo')!.worktree).toBe('path:/repo/a')
+  o.worktreePaths.set('current', '/repo/b')                                                // the rerun happens from another worktree
+  await o.terminalClose({ handle: 'term-2' })                                              // checker's terminal is gone; builder stays live
+  await up(deps, { specPath: p })
+  expect(registry.getPost('builder@duo')!.worktree).toBe('path:/repo/a')
+  expect(registry.getPost('checker@duo')!.worktree).toBe('path:/repo/b')
+})

@@ -1,3 +1,4 @@
+import fs from 'node:fs'
 import { PassThrough } from 'node:stream'
 import { afterEach, expect, test } from 'vitest'
 import { WinglineError, type CommandDeps } from '@wingline/core'
@@ -397,4 +398,13 @@ test('B-M10: wl task done names why a link target was not typed and suggests wl 
   }) as never }))
   expect(r.out).toContain('wl send checker@duo')
   expect(r.out).toContain('at_prompt')
+})
+
+test('F-5: the verified Orca range starts at 1.4.222 (the 2A orchestration semantics were verified there)', async () => {
+  const { inRange } = await import('@wingline/core')
+  const verified = JSON.parse(fs.readFileSync(new URL('../src/verified.json', import.meta.url), 'utf8')) as { verifiedOrca: string }
+  expect(inRange('1.4.221', verified.verifiedOrca)).toBe(false)
+  expect(inRange('1.4.222', verified.verifiedOrca)).toBe(true)
+  expect(inRange('1.4.224', verified.verifiedOrca)).toBe(true)
+  expect(inRange('1.5.0', verified.verifiedOrca)).toBe(false)
 })

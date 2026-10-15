@@ -15,11 +15,11 @@ test.each([
 ])('prompt pattern: %s → at_prompt', (line) => {
   expect(classifyPreview(`some output\n${line}`)).toBe('at_prompt')
 })
-test('a terminal back at a shell prompt is unknown, never clear (typing there would run a command); agent input lines are not shell prompts', () => {
-  expect(classifyPreview('build done\nUSER@Mac-mini wingline % ')).toBe('unknown')
-  expect(classifyPreview('user@host:~/repo$ ')).toBe('unknown')
-  expect(classifyPreview('root@box:/# ')).toBe('unknown')
-  expect(classifyPreview('PS C:\\repo> ')).toBe('unknown')
+test('a terminal back at a shell prompt is `shell`, never clear (typing there would run a command); agent input lines are not shell prompts', () => {
+  expect(classifyPreview('build done\nUSER@Mac-mini wingline % ')).toBe('shell')
+  expect(classifyPreview('user@host:~/repo$ ')).toBe('shell')
+  expect(classifyPreview('root@box:/# ')).toBe('shell')
+  expect(classifyPreview('PS C:\\repo> ')).toBe('shell')
   expect(classifyPreview('──────\n❯ \n──────\n⏵⏵ auto mode on')).toBe('clear')
 })
 test('neutralize defuses shell metacharacters and control characters in interpolated text', () => {
@@ -88,9 +88,27 @@ test('a send failure is also logged through deps.warn', async () => {
   expect(await notifyPost(deps, 'checker@duo', 'x')).toEqual({ outcome: 'not_notified', reason: 'send_failed' })
   expect(warnings).toHaveLength(1)
 })
-test('notifyPost does not type at a terminal that fell back to a shell prompt', async () => {
+test('notifyPost does not type at a terminal that fell back to a shell prompt (state shell), including cmd.exe', async () => {
   const o = new FakeOrca(); const { deps } = seedRunningTeam(o)
-  o.previews.set('term-c', 'agent exited\nuser@host:~/repo$ ')
-  expect(await notifyPost(deps, 'checker@duo', 'x')).toEqual({ outcome: 'not_notified', reason: 'screen_unknown' })
+  for (const preview of ['agent exited\nuser@host:~/repo$ ', 'Microsoft Windows\nC:\\Users\\me\\repo>']) {
+    o.previews.set('term-c', preview)
+    expect((await notifyPost(deps, 'checker@duo', 'x')).outcome).toBe('not_notified')
+  }
   expect(o.sent).toEqual([])
+})
+
+test('F-1: shell state — Unix prompts ($ % #), PowerShell and cmd.exe are `shell`; the R6 idle claude screen stays clear; `>` and `❯` endings are not added; blank stays unknown', () => {
+  for (const p of ['me@host:~/repo$ ', 'me@Mac wingline % ', 'root@box:/# ', 'PS C:\\repo> ', 'C:\\Users\\me\\repo>', 'Microsoft Windows [Version 10]\n\nD:\\work>']) {
+    expect(classifyPreview(p)).toBe('shell')
+  }
+  expect(classifyPreview(r6['terminal-show-idle-claude'].terminal.preview)).toBe('clear')
+  expect(classifyPreview('me@host ~/repo>')).toBe('clear')
+  expect(classifyPreview('~/repo ❯')).toBe('clear')
+  expect(classifyPreview('  \n')).toBe('unknown')
+})
+test('F-1: a prompt pattern still wins over a shell-looking last line, and screenGuard reports shell', async () => {
+  expect(classifyPreview('Continue? (y/n)\nme@host:~$ ')).toBe('at_prompt')
+  const o = new FakeOrca(); const { deps } = seedRunningTeam(o)
+  o.previews.set('term-c', 'bye\nme@host:~$ ')
+  expect(await screenGuard(deps, 'term-c')).toBe('shell')
 })

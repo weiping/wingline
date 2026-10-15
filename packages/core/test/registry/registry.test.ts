@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -268,4 +269,28 @@ test('N6: reissueIntent with expectedOld is compare-and-swap: a stale expectatio
   expect(r.reissueIntent('k', 'id-2', { a: 2 }, 'id-1')).toBe(true)
   expect(r.getRequest('k')).toMatchObject({ state: 'pending', retryRequest: 'id-2', args: JSON.stringify({ a: 2 }) })
   expect(r.reissueIntent('missing', 'x', {}, 'y')).toBe(false)
+})
+
+test('A-M4: a second opener that lost the migration race re-reads user_version after taking the write lock and does not re-run migration 2', async () => {
+  const file = tmpDb(); fs.mkdirSync(path.dirname(file), { recursive: true })
+  const phase1 = new DatabaseSync(file); phase1.exec(MIGRATIONS[0]!); phase1.exec('PRAGMA user_version = 1'); phase1.close()
+  // opener A (another process) holds BEGIN IMMEDIATE with migration 2 applied but not yet committed
+  const script = `
+    const { DatabaseSync } = require('node:sqlite')
+    const db = new DatabaseSync(process.argv[1])
+    db.exec('PRAGMA busy_timeout = 5000'); db.exec('PRAGMA journal_mode = WAL')
+    db.exec('BEGIN IMMEDIATE'); db.exec(process.argv[2]); db.exec('PRAGMA user_version = 2')
+    console.log('locked')
+    setTimeout(() => { db.exec('COMMIT'); db.close() }, 700)`
+  const child = spawn(process.execPath, ['-e', script, file, MIGRATIONS[1]!], { stdio: ['ignore', 'pipe', 'inherit'] })
+  const exited = new Promise<number | null>((res) => child.on('exit', res))
+  await new Promise<void>((res, rej) => { child.stdout.once('data', () => res()); child.once('error', rej) })
+  // opener B reads user_version = 1 (A has not committed), then waits for the lock; it must not re-apply the migration
+  const b = Registry.open(file)
+  expect(b.getTeam('nobody')).toBeNull()
+  b.close()
+  expect(await exited).toBe(0)
+  const raw = new DatabaseSync(file)
+  expect((raw.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(MIGRATIONS.length)
+  raw.close()
 })
