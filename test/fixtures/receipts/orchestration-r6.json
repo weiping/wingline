@@ -1,0 +1,112 @@
+{
+  "_source": "spikes/REPORT.md 补充探针六（R6），macOS Orca 1.4.224，2026-10-15。只保留雁阵用到的字段与少量上下文；用户名与路径已脱敏，handle/id 为真实运行产生的随机值。",
+  "dispatch-terminal-busy": {
+    "ok": false,
+    "error": {
+      "code": "runtime_error",
+      "message": "Terminal term_464ffde2-64b0-4403-b0dc-478467231f8b already has an active dispatch (ctx_4c5afdc1934a for task task_b7626ecc5db6) Orchestration mutation request ID: b0869420-6c94-4681-83b1-50e2d82cff89.",
+      "data": { "orchestrationRequestId": "b0869420-6c94-4681-83b1-50e2d82cff89" }
+    }
+  },
+  "dispatch-inject-ok": {
+    "ok": true,
+    "result": {
+      "dispatch": { "id": "ctx_47c26f1ce848", "task_id": "task_bee07e278a4b", "assignee_handle": "term_edaa025d-487c-456e-8d99-9a962932acd9", "status": "dispatched", "dispatched_at": "2026-10-15 02:07:25" },
+      "injected": true,
+      "prompt": { "requestId": "c3e4483a-9aaf-4714-9daf-df269c0a408a", "stages": ["input_accepted"], "provider": "unsupported", "observation": "unsupported", "baselinePermissionSequence": 0 },
+      "mutation": { "requestId": "c3e4483a-9aaf-4714-9daf-df269c0a408a", "replayed": false }
+    }
+  },
+  "check-batch": {
+    "ok": true,
+    "result": {
+      "runId": "run_599a6de01532",
+      "deliveryId": "delivery_062b05154920",
+      "messages": [
+        { "id": "msg_ce9c6b6d7414", "run_id": "run_599a6de01532", "from_handle": "term_464ffde2-64b0-4403-b0dc-478467231f8b", "to_handle": "run:run_599a6de01532", "subject": "done A", "body": "", "type": "worker_done", "priority": "normal", "thread_id": null, "payload": "{\"taskId\":\"task_b7626ecc5db6\",\"dispatchId\":\"ctx_4c5afdc1934a\",\"outcome\":\"succeeded\"}", "created_at": "2026-10-15T02:07:06Z" }
+      ],
+      "count": 1, "replayed": false, "acknowledged": null, "timedOut": false, "cancelled": false, "connectionLost": false,
+      "mutation": { "requestId": "6f9f9db8-0144-4822-be0d-9fca7331f07e", "replayed": false }
+    }
+  },
+  "check-batch-replayed": {
+    "ok": true,
+    "result": {
+      "runId": "run_599a6de01532",
+      "deliveryId": "delivery_062b05154920",
+      "messages": [
+        { "id": "msg_ce9c6b6d7414", "run_id": "run_599a6de01532", "from_handle": "term_464ffde2-64b0-4403-b0dc-478467231f8b", "to_handle": "run:run_599a6de01532", "subject": "done A", "body": "", "type": "worker_done", "priority": "normal", "thread_id": null, "payload": "{\"taskId\":\"task_b7626ecc5db6\",\"dispatchId\":\"ctx_4c5afdc1934a\",\"outcome\":\"succeeded\"}", "created_at": "2026-10-15T02:07:06Z" }
+      ],
+      "count": 1, "replayed": true, "acknowledged": null, "timedOut": false, "cancelled": false, "connectionLost": false
+    }
+  },
+  "check-ack-wait-timeout": {
+    "ok": true,
+    "result": { "runId": "run_599a6de01532", "deliveryId": null, "messages": [], "count": 0, "acknowledged": "delivery_062b05154920", "timedOut": true, "cancelled": false, "connectionLost": false }
+  },
+  "check-wait-75s-timeout": {
+    "ok": true,
+    "result": { "runId": "run_bb8fef4b8e07", "deliveryId": null, "messages": [], "count": 0, "acknowledged": null, "timedOut": true, "cancelled": false, "connectionLost": false }
+  },
+  "check-ack-old-generation-fenced": {
+    "ok": false,
+    "error": { "code": "consumer_fenced", "message": "This mailbox Delivery belongs to a fenced consumer generation. Orchestration mutation request ID: a04a2dfc-f101-4774-bdf5-d31f1f19c003." }
+  },
+  "check-question": {
+    "ok": true,
+    "result": {
+      "runId": "run_599a6de01532",
+      "deliveryId": "delivery_78ad1ce0cb0a",
+      "messages": [
+        { "id": "msg_7c8bf81870b1", "run_id": "run_599a6de01532", "from_handle": "dispatch:ctx_2fea0dc87772", "to_handle": "run:run_599a6de01532", "subject": "Question", "body": "r6 probe question?", "type": "question", "priority": "normal", "thread_id": "msg_7c8bf81870b1", "payload": "{\"taskId\":\"task_6eace60970a8\",\"dispatchId\":\"ctx_2fea0dc87772\",\"question\":\"r6 probe question?\",\"options\":[\"a\",\"b\"]}", "created_at": "2026-10-15T02:07:15Z" }
+      ],
+      "count": 1, "replayed": false, "acknowledged": null, "timedOut": false, "cancelled": false, "connectionLost": false
+    }
+  },
+  "ask-timeout": {
+    "ok": true,
+    "result": { "answer": null, "messageId": "msg_7c8bf81870b1", "threadId": "msg_7c8bf81870b1", "timedOut": true, "cancelled": false, "connectionLost": false, "timeoutMs": 3000 }
+  },
+  "reply-not-coordinator": {
+    "ok": false,
+    "error": { "code": "consumer_fenced", "message": "This coordinator terminal is no longer bound to Run run_599a6de01532. Orchestration mutation request ID: cd028f32-6f57-46d6-967a-1065b6363e81." }
+  },
+  "reply-no-sender": {
+    "ok": false,
+    "error": { "code": "no_active_sender_terminal", "message": "Could not determine the sender terminal for this orchestration command. Pass --from with your own terminal's handle — another pane's handle would act on its mailbox — or run the command inside a live Orca terminal with ORCA_TERMINAL_HANDLE set." }
+  },
+  "reply-ok": {
+    "ok": true,
+    "result": {
+      "message": { "id": "msg_92542c5ff532", "from_handle": "run:run_599a6de01532", "to_handle": "dispatch:ctx_2fea0dc87772", "subject": "Re: Question", "body": "from t3", "type": "status", "thread_id": "msg_7c8bf81870b1" },
+      "question": { "message_id": "msg_7c8bf81870b1", "dispatch_id": "ctx_2fea0dc87772", "asker_handle": "term_4e3c8b2a-1c85-469a-ab80-5688ac3e7e3f", "status": "answered", "answered_by_generation": 2 },
+      "duplicate": false,
+      "mutation": { "requestId": "1a67fa7a-873c-4e30-92ba-4998b75e0819", "replayed": false }
+    }
+  },
+  "worker-list": {
+    "ok": true,
+    "result": {
+      "workers": [
+        { "dispatchId": "ctx_47c26f1ce848", "taskId": "task_bee07e278a4b", "runId": "run_599a6de01532", "workerState": "unsupervised", "dispatchStatus": "dispatched", "agentTerminalHandle": "term_edaa025d-487c-456e-8d99-9a962932acd9", "terminalState": "retained",
+          "projection": { "provider": { "id": "claude", "model": null }, "stage": { "worker": "unsupervised", "dispatch": "dispatched", "detail": null, "activity": "done" }, "outcome": "in_progress", "liveness": { "verdict": "live", "observedAt": 1792030053205, "source": "agent_status" }, "attention": { "categories": [], "requiresAction": false } } },
+        { "dispatchId": "ctx_2fea0dc87772", "taskId": "task_6eace60970a8", "runId": "run_599a6de01532", "workerState": "unsupervised", "dispatchStatus": "dispatched", "agentTerminalHandle": "term_4e3c8b2a-1c85-469a-ab80-5688ac3e7e3f", "terminalState": "retained",
+          "projection": { "provider": null, "stage": { "worker": "unsupervised", "dispatch": "dispatched", "detail": null, "activity": "unknown" }, "outcome": "in_progress", "liveness": { "verdict": "unverifiable", "reason": "missing_status" }, "attention": { "categories": ["unverifiable"], "requiresAction": true } } },
+        { "dispatchId": "ctx_7d196b6344c7", "taskId": "task_098eaee36777", "runId": "run_599a6de01532", "workerState": "unsupervised", "dispatchStatus": "completed", "agentTerminalHandle": "term_464ffde2-64b0-4403-b0dc-478467231f8b", "terminalState": "retained",
+          "projection": { "provider": null, "stage": { "worker": "unsupervised", "dispatch": "completed", "detail": null, "activity": "unknown" }, "outcome": "succeeded", "liveness": { "verdict": "unverifiable", "reason": "unsupervised_settled" }, "attention": { "categories": ["root_completion"], "requiresAction": false } } }
+      ],
+      "page": { "limit": 100, "total": 3, "hasMore": false, "nextCursor": null }
+    }
+  },
+  "worker-list-pending-question-attention": {
+    "_note": "第一次运行 run_bb8fef4b8e07，岗位 ask 之后：attention.categories 含 input",
+    "attention": { "categories": ["input", "unverifiable"], "requiresAction": true }
+  },
+  "terminal-show-at-yn-prompt": {
+    "_note": "启动命令被用户 shell 别名展开成包装脚本，停在 (Y/n) 提问；agentIdentity 仍报 claude",
+    "terminal": { "title": "spike-r6-agent", "connected": true, "agentIdentity": "claude", "preview": "USER@Mac-mini wingline % ~/.local/bin/claude-lima '--dangerously-skip-permissions'\n? Do you want to start the instance now?  (Y/n)" }
+  },
+  "terminal-show-idle-claude": {
+    "terminal": { "title": "spike-r6-agent", "connected": true, "agentIdentity": "claude", "preview": "────────────────────────────────────────\n❯ Try \"write a test for client.test.ts\"\n────────────────────────────────────────\n⏵⏵ auto mode on (shift+tab to cycle) · ← for agents" }
+  }
+}

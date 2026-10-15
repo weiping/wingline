@@ -430,3 +430,25 @@ macOS 真机（Orca 1.4.224）以**本机 claude × 2**（builder 与 checker �
 **对设计的影响（待 2A spec/plan 修订）：** 第 9.1 节"新行 + 任意 `kind:'orca'` → 删行"对第 1 条的四个码不安全（首次 `run-create` 慢于 60 秒就会删行、重跑建出第二个删不掉的 Run），这四个码应与 `orca_timeout` 同样按"结果不确定"处理；事实 10 与 `FakeOrca`"失败一律不进账本"需按第 2 条区分方法；保留的 `dispatch` 行若存的 `--to` 已是死终端，重放会永远 `inject_rejected` 或派给死终端（第 4 条），而 `escalate`→`resolve` 不改变 `epoch`，脱不了身；`request-show` 可以替代"按错误码猜先后"。
 
 收尾：本轮只开了 1 个 shell 终端，已 `terminal close`，`terminal list` 确认 0 个终端；在旧 Run `run_3d9c053676fa` 里多出 2 个占位任务（`scopeA` 已派给一个已关闭的 handle，`scopeB` 为 `ready`），没有新建 Run。
+
+### 补充探针六：一个终端能挂几个派发 / check 的 ack 语义 / reply 的身份 / macOS 终端环境变量 / 真实 agent 上的 `--inject`（2026-10-15，macOS 真机 Orca 1.4.224，针对阶段 2 第四次复审，下称 R6）
+
+背景：第四次复审（`docs/superpowers/reviews/2026-10-15-phase-2-review.md`）留下几项只能实测的问题。探针脚本 `spikes/r6-probe.ts`，在 macOS 真机（有界面，Orca 1.4.224）上分三次跑完，由 Claude 经桌面连接代为执行；测试仓库是 `path:~/workspace/dev/wingline`。脱敏后的关键回执存在 `test/fixtures/receipts/orchestration-r6.json`。
+
+1. **一个终端同一时刻只能有一个进行中的派发（S1）。** 任务 A 已派给 w1，再把 B 派给 w1 → `ok:false`，错误码是泛化的 `runtime_error`，信息为 "Terminal … already has an active dispatch (ctx_… for task …)"；B 仍是 `ready`。A 上报 `worker_done` 后再派 B 给 w1 → 成功。**2A 的 `budgets.team.max_in_progress_per_post`（默认 3）没有意义：每个岗位终端同时最多一个 `dispatched` 任务，由 Orca 强制。** 错误码是 `runtime_error` 而不是专门的码，雁阵不能靠错误码识别这种情况，只能在派发前自己查（`task-list` 里该终端有没有 `dispatched` 任务）。
+2. **check 的 ack 语义（S2）。**
+   - 不 ack 再 check：同一批原样重放，`deliveryId` 不变，回执带 `replayed: true`。
+   - 同一个 `deliveryId` ack 两次：两次都 `ok:true`，`acknowledged` 都是它，没有副作用。
+   - **协调者换手后（`run-use`），旧协调者 ack → `consumer_fenced`；新协调者 ack 上一代的 `deliveryId` 也是 `consumer_fenced`（"This mailbox Delivery belongs to a fenced consumer generation"）；新协调者不带 ack 再 check，同一条消息以新的 `deliveryId` 重新投递。** 即：被 fence 后手里的 `pendingAck` 必须丢弃，否则之后每次带它的 check 都失败。转述去重不能靠 `deliveryId`（换手后会变），要靠消息 id。
+3. **超过 60 s 的 `check --wait`（S3）。** `--timeout-ms 75000` 空等，75.1 s 后 `ok:true`、`timedOut: true`。与 Orca CLI 源码 `src/cli/runtime/client.ts` 的 `resolveMethodTimeoutMs` 一致：`orchestration.check --wait` 与 `terminal.wait` 的 socket 超时按"等待时长 + 余量"放宽，不受 60 s 默认值限制。
+4. **ask / reply 的身份（S4）。** 岗位 `ask --timeout-ms 3000` 超时后问题保持待答（回执 `timedOut: true`、带 `messageId`）。协调者 check 拿到的 `question` 消息，**`from_handle` 是 `dispatch:<dispatch_id>` 而不是终端 handle**，`payload` 里有 `taskId`/`dispatchId`/`question`/`options`。`reply` 只认当前协调者：从提问者以外的岗位终端、从旧协调者 `--from` → 都是 `consumer_fenced`；不带 `--from` 且不在 Orca 终端里 → `no_active_sender_terminal`；`--from <当前协调者>` → 成功，问题变 `answered`。**`reply` 和 `task-create` 一样只做值匹配，所以牵头岗在自己终端里用 `--from <coordinator_handle>` 回复是可行的。**
+5. **macOS 上的 `ORCA_TERMINAL_HANDLE`（S5）。** Orca 终端里该变量存在且等于该终端自己的 handle（与 R3-D1 的 Linux 结论一致）；同时还有 `ORCA_PANE_KEY`、`ORCA_WORKTREE_ID`、`ORCA_TAB_ID` 等。Windows 仍未验证。
+6. **真实 agent 上的 `dispatch --inject`（S6）。** 对空闲的 Claude Code（`terminal wait --for tui-idle` 满足）`dispatch --inject` 成功，回执 `injected: true`。**注入的不只是任务文本，而是 Orca 的完整 worker 前言：要求 agent 完成后自己执行 `orca orchestration send --from <它的 handle> --type worker_done … --outcome succeeded`，每 5 分钟发 heartbeat，有问题用 `orca orchestration ask`，并在完成前 `check` 跟进消息；最后才是 `=== TASK ===` 加任务 spec。** 这意味着被 `--inject` 派发的岗位很可能绕过 `wl task done` 直接上报——gate 不跑、`reviewed_by`/`hands_to` 不触发；它的 `ask` 也只有协调者（调度员）能看到。
+   - 同一终端再派第二个任务不可能（第 1 条），所以"往正忙的 agent 第二次 `--inject`"这个复审问题不存在。
+   - `worker-list` 对每个 dispatch 给出 `projection`：`stage.activity`（实测 `done`/`unknown`）、`liveness.verdict`（真实 agent 为 `live`，来源 `agent_status`；占位进程为 `unverifiable`/`missing_status`）、`attention.categories`（实测出现过 `input`——有待答问题时、`unverifiable`、`root_completion`）与 `requiresAction`。`terminal show` 的 `preview` 是屏幕最后几行原文。`terminal send` 的回执里有 `baselinePermissionSequence`，说明 Orca 对 Claude 跟踪权限确认的次数。
+   - **没能复现"停在权限确认上"的画面：** 这台机器上的 Claude Code 以 auto 模式运行（不弹权限确认），且经一个模型代理转发，探针期间两次请求都返回 `API Error: 400`。这一项留待以后在默认权限模式下复测。
+   - **意外复现了复审汇总 B-C2 描述的风险：** 第二次运行时启动命令写的是 `claude`，被用户 shell 的别名展开成一个包装脚本，停在 `? Do you want to start the instance now? (Y/n)`；探针随后按设计用 `terminal send … --enter` 打进一行文字。这次因为文字不是合法回答而被拒绝（"is not a valid answer"），没有产生任何副作用；但如果打进去的是空行或以 `y` 开头的文字，就会替用户回答这个问题。这正是"往岗位终端打字之前必须先看它停在什么画面上"的实例。
+
+**对设计的影响（2A spec 第五次修订、2B spec 第四次修订）：** 2A 改为派发一律不带 `--inject`，改由雁阵自己发一行通知（含"完成后运行 `wl task done <id>`"），并在派发前本地检查"该岗位终端是否已有 `dispatched` 任务"；删去 `max_in_progress_per_post`。2B 被 fence 后丢弃 `pendingAck`、按消息 id 去重转述、`question` 的发送方从 `payload.taskId` 反查岗位、转述给出带 `--from <coordinator_handle>` 的 `reply` 命令；所有往终端打字的动作先经"画面检查"；调度员遇到"没有 `task_done` 记录的 `worker_done`"按"绕过闸门的上报"处理。
+
+收尾：三次运行共创建 Run `run_bb8fef4b8e07`、`run_d8d13fffb1b1`、`run_599a6de01532`（CLI 无法删除，残留待人工在 Orca 界面清理）；所有 `spike-r6-*` 终端均已关闭，`terminal list` 确认无残留；用户的 lima 实例状态未变。
