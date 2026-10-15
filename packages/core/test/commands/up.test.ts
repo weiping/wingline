@@ -19,8 +19,8 @@ test('fresh up does create → wait → brief per post', async () => {
   expect(r.posts.map((p) => p.outcome)).toEqual(['launched', 'launched'])
   expect(o.calls).toEqual([
     'version', 'status',
-    'terminalList', 'terminalCreate', 'terminalWait', 'terminalSend',
-    'terminalList', 'terminalCreate', 'terminalWait', 'terminalSend',
+    'terminalList', 'terminalCreate', 'terminalWait', 'terminalShow', 'terminalSend',
+    'terminalList', 'terminalCreate', 'terminalWait', 'terminalShow', 'terminalSend',
     'runList', 'runCreate', 'taskList', 'terminalList',
   ])
   expect(deps.registry.listPosts('duo').map((p) => [p.address, p.status, p.isLead])).toEqual([
@@ -400,4 +400,42 @@ test('a failing terminalList in the dead-assignee check does not fail up either'
   expect(r.posts.map((x) => x.outcome)).toEqual(['launched', 'launched'])
   expect(r.run).toEqual({ outcome: 'created', runId: 'run-1' })
   expect(r.deadAssignees ?? []).toEqual([])
+})
+
+test('wl up does not type the brief into a post sitting at a confirmation prompt', async () => {
+  const o = new FakeOrca(); const { deps } = mkDeps(o)
+  o.onCreate = () => { o.previews.set(`term-${o.terminals.length + 1}`, 'Do you trust the files in this folder?\n❯ 1. Yes') }
+  const r = await up(deps, { specPath: duo() })
+  expect(r.posts[0]).toMatchObject({ outcome: 'uncertain', reason: expect.stringContaining('确认提示') })
+  expect(o.sent).toEqual([])
+})
+test('at_prompt on the lead → the Run step is deferred; the other post is guarded independently', async () => {
+  const o = new FakeOrca(); const { deps } = mkDeps(o)
+  o.onCreate = () => { if (o.terminals.length === 0) o.previews.set('term-1', 'Allow this command to run? (Y/n)') }
+  const r = await up(deps, { specPath: duo() })
+  expect(r.posts.map((x) => x.outcome)).toEqual(['uncertain', 'launched'])
+  expect(r.run).toEqual({ outcome: 'deferred', runId: null })
+  expect(o.sent.map((s) => s.handle)).toEqual(['term-2'])
+})
+test('an unreadable screen (empty preview) or a failing terminalShow does not block the brief', async () => {
+  const o = new FakeOrca(); const { deps } = mkDeps(o)
+  o.onCreate = () => { o.previews.set(`term-${o.terminals.length + 1}`, '') }
+  const r = await up(deps, { specPath: duo() })
+  expect(r.posts.map((x) => x.outcome)).toEqual(['launched', 'launched'])
+  const o2 = new FakeOrca()
+  o2.faults.push({ method: 'terminalShow', when: 'before', error: new WinglineError('orca', 'runtime_unavailable', 'x') })
+  const r2 = await up(mkDeps(o2).deps, { specPath: duo() })
+  expect(r2.posts.map((x) => x.outcome)).toEqual(['launched', 'launched'])
+})
+test('after an at_prompt refusal, rerunning once the prompt is answered resumes: no second create, the brief is sent once', async () => {
+  const o = new FakeOrca(); const { deps } = mkDeps(o); const p = duo()
+  o.previews.set('term-1', 'Do you want to proceed?')
+  o.onCreate = () => {}
+  const first = await up(deps, { specPath: p })
+  expect(first.posts[0]!.outcome).toBe('uncertain')
+  o.previews.set('term-1', '❯ ')
+  const second = await up(deps, { specPath: p })
+  expect(second.posts[0]!.outcome).toBe('launched')
+  expect(o.created.filter((c) => c.title === 'builder@duo')).toHaveLength(1)
+  expect(o.sent.filter((s) => s.handle === 'term-1')).toHaveLength(1)
 })
