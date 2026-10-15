@@ -362,3 +362,20 @@ test('the registry is closed after a task command, also when it fails', async ()
   await exec(['task', 'release', 't1'], cmds({ releaseTask: async () => { throw new Error('boom') } }))
   expect(closed).toBe(before + 2)
 })
+
+test('wl task list --stale without a team is allowed and passes team undefined', async () => {
+  let team: unknown = 'unset'
+  const r = await exec(['task', 'list', '--stale'], cmds({ listStale: async (_d, t) => { team = t; return [] } }))
+  expect(r.code).toBe(0); expect(team).toBeUndefined()
+})
+test('wl task recover shows the real post address in the wl send suggestion', async () => {
+  const r = await exec(['task', 'recover', 't1'], cmds({ recoverTask: async () => ({ status: 'dispatched', epoch: 1, delivery: 'not_notified', owner: 'builder@duo' }) as never }))
+  expect(r.out).toContain('wl send builder@duo'); expect(r.out).not.toContain('<岗位地址>')
+})
+test('up --adopt-run together with --new-run reports through the normal error path: --json gets the error document, exit 1, up not called', async () => {
+  let called = 0
+  const r = await exec(['up', 'x', '--adopt-run', 'run-9', '--new-run', '--json'], cmds({ up: async () => { called++; return { team: 'duo', posts: [] } } }))
+  expect(r.code).toBe(1); expect(called).toBe(0)
+  expect(JSON.parse(r.out)).toMatchObject({ ok: false, error: { kind: 'input' } })
+  expect(r.err).toBe('')
+})

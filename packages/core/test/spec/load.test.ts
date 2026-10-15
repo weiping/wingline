@@ -151,3 +151,8 @@ test('a missing team.yaml is an input error naming the path', () => {
     expect.objectContaining({ kind: 'input', code: 'spec_not_found', message: expect.stringContaining(missing) }),
   )
 })
+
+test('an empty reviewed_by next to a hands_to is not a conflict (nothing is reviewed)', () => {
+  const y = DUO_YAML + 'links:\n  builder:\n    reviewed_by: []\n    hands_to: [checker]\n'
+  expect(() => loadTeamSpec(mkTeam(y))).not.toThrow()
+})
