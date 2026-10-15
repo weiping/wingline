@@ -171,6 +171,11 @@ export class Registry {
 
   private static migrate(db: DatabaseSync): void {
     const current = (db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version
+    if (current > MIGRATIONS.length) {
+      throw new WinglineError('input', 'registry_too_new', `注册表由更新版本的 wingline 写入（版本 ${current}，本程序只认识到 ${MIGRATIONS.length}）`, {
+        hint: '升级 wingline 后重试；不要用旧版本打开这个数据库',
+      })
+    }
     for (let v = current; v < MIGRATIONS.length; v++) {
       db.exec('BEGIN IMMEDIATE')
       try {

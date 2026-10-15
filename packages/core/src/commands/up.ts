@@ -72,19 +72,33 @@ async function pinWorktrees(l: Launch): Promise<void> {
   const { orca, registry } = l.deps
   const open = l.spec.posts.filter((p) => !p.worktree.startsWith('path:'))
   const anyPinned = open.some((p) => registry.getPost(postAddress(p.id, l.spec.name))?.worktree.startsWith('path:'))
-  const live = anyPinned ? new Set((await orca.terminalList()).map((t) => t.title)) : new Set<string | null>()
+  const isLive = await liveChecker(l, anyPinned)
   const resolved = new Map<string, string>()
   for (const p of open) {
     const address = postAddress(p.id, l.spec.name)
     const row = registry.getPost(address)!
-    if (row.worktree.startsWith('path:') && live.has(address)) continue
+    if (row.worktree.startsWith('path:') && isLive(address)) continue
     try {
       if (!resolved.has(p.worktree)) resolved.set(p.worktree, (await orca.worktreeShow({ worktree: p.worktree })).path)
     } catch (err) {
       if (!(err instanceof WinglineError) || err.kind === 'input' || err.kind === 'internal') throw err
+      // 解析不了：不能留着旧的 path: 固定值，退回规格里的选择器
+      registry.upsertPost({ ...row, worktree: p.worktree })
       continue
     }
     registry.upsertPost({ ...row, worktree: `path:${resolved.get(p.worktree)}` })
+  }
+}
+
+/** 哪些岗位的终端还活着；列不出来时保守地当作都还活着（保持现有固定值）。 */
+async function liveChecker(l: Launch, needed: boolean): Promise<(address: string) => boolean> {
+  if (!needed) return () => false
+  try {
+    const titles = new Set((await l.deps.orca.terminalList()).map((t) => t.title))
+    return (address) => titles.has(address)
+  } catch (err) {
+    if (!(err instanceof WinglineError) || err.kind === 'input' || err.kind === 'internal') throw err
+    return () => true
   }
 }
 
@@ -167,7 +181,7 @@ async function launchPost(l: Launch, post: PostSpec, briefing: string): Promise<
     const result = await startPost(l, post, briefing, located?.handle ?? null, gen)
     registry.setPostStatus(address, result === 'sent' ? 'live' : 'uncertain')
     if (result === 'sent') return { address, outcome: 'launched' }
-    const reason = REFUSE_REASON[result as 'at_prompt' | 'shell' | 'unconfirmed'] ?? '岗位未确认就绪，启动包未送达'
+    const reason = REFUSE_REASON[result]
     return { address, outcome: 'uncertain', reason, retry }
   } catch (err) {
     if (!(err instanceof WinglineError) || err.kind === 'input' || err.kind === 'internal') throw err
