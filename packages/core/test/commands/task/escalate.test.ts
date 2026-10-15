@@ -93,6 +93,7 @@ test('recover: dispatched to a dead handle → gate-create → gate-resolve → 
   const o = new FakeOrca(); const { deps, registry } = seedRunningTeam(o)
   const id = await dispatchedTask(o, deps, 'term-old')
   deps.registry.openIntent(`dispatch:${id}:0`, 'x', {}); deps.registry.finishRequest(`dispatch:${id}:0`, 'done', { status: 'dispatched', dispatchId: 'ctx-1', self: false, replayed: false })
+  o.calls.length = 0
   const r = await recoverTask(deps, { id })
   expect(r).toMatchObject({ status: 'dispatched', epoch: 1, delivery: 'notified' })
   expect(o.calls.filter((c) => ['gateCreate', 'gateResolve', 'dispatch'].includes(c))).toEqual(['gateCreate', 'gateResolve', 'dispatch'])
@@ -153,7 +154,7 @@ test('escalate on a ready task: gate created, task blocked, tookBackDispatch fal
   registry.insertTaskExt({ taskId: id, team: 'duo', tags: [], kind: 'work', claimedBy: 'builder@duo' })
   expect(await escalateTask(deps, { id, reason: 'x' })).toEqual({ gateId: 'gate-1', status: 'blocked', tookBackDispatch: false })
   const done = await dispatchedTask(o, deps)
-  await o.workerDone({ taskId: done, dispatchId: 'ctx-2', outcome: 'failed', subject: 's', run: 'run-1', from: 'term-b' })
+  await o.workerDone({ taskId: done, dispatchId: o.tasks.find((t) => t.id === done)!.dispatchId!, outcome: 'failed', subject: 's', run: 'run-1', from: 'term-b' })
   o.orch.length = 0
   await expect(escalateTask(deps, { id: done, reason: 'x' })).rejects.toMatchObject({ code: 'reopen_required' })
   expect(o.callsOf('gateCreate')).toEqual([])
@@ -177,7 +178,7 @@ test('resolve does not touch epoch or gate_failures, logs resolve as human, and 
   const ids = o.callsOf('gateResolve').map((a) => a.retryRequest)
   expect(ids).toHaveLength(2); expect(ids[1]).toBe(ids[0])
   expect(registry.getTaskExt(id)).toMatchObject({ claimedBy: 'checker@duo', epoch: 0, gateFailures: 1 })
-  expect(registry.listTaskLog(id).map((l) => [l.action, l.actor])).toContain(['resolve', 'human'])
+  expect(registry.listTaskLog(id).map((l) => [l.action, l.actor])).toContainEqual(['resolve', 'human'])
   expect(registry.getRequest(`resolve:${gateId}`)!.state).toBe('done')
 })
 test('recover on a task that is not dispatched → assignee_alive with a hint that nothing needs recovering; unknown task → task_not_found', async () => {
