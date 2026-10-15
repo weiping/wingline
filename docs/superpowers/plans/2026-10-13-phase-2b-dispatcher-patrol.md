@@ -27,7 +27,7 @@
 - 子进程一律 `spawn(file, args, { shell: false })`；本阶段不新增任何 shell 执行。`patrol.notify.command` 以参数数组启动；Windows 上 `.cmd`/`.bat` 在规格校验时就被拒绝。
 - **往终端里打字只经 2A 的 `notifyPost`**，外面再包一层本计划的 `typeTo`（静默检查 + 事件记录）。本计划不新增任何直接的 `terminalSend` 调用点。
 - **时间只取 `deps.now()`**；循环的睡眠经 `opts.sleep` 注入。测试里用一个可拨动的假时钟（`clock.advance(ms)`），不使用 `vi.useFakeTimers`。
-- 退出码四分类沿用总纲 7.8；新增输入错误 `post_frozen`、`post_not_frozen`、`dispatcher_stale`、`dispatcher_launch_unsupported`、`dispatcher_not_in_orca`、`notify_conflict`、`notify_command_unsupported`、`question_unknown`、`already_answered`、`duration_invalid` 为 1；`dispatcher_start_unconfirmed` 为 3；第二个调度员启动时的 `team_busy` 为 1。
+- 退出码四分类沿用总纲 7.8；新增输入错误 `post_frozen`、`post_not_frozen`、`dispatcher_stale`、`dispatcher_launch_unsupported`、`dispatcher_not_in_orca`、`dispatcher_superseded`、`notify_conflict`、`notify_command_unsupported`、`question_unknown`、`already_answered`、`duration_invalid` 为 1；`dispatcher_start_unconfirmed` 为 3；第二个调度员启动时的 `team_busy` 为 1。
 - CI 矩阵不变；启动命令按平台分支拼写（Task 4），测试对两个分支都显式传 `platform`。
 - **已实测、不再是假设**（`spikes/REPORT.md` R2、R3、R6；fixture `test/fixtures/receipts/orchestration-r6.json`）：`lastOutputAt` 是 Unix 毫秒数字；`check` 回执顶层字段 `runId`/`deliveryId`/`messages`/`count`/`replayed`/`acknowledged`/`timedOut`/`cancelled`/`connectionLost`；消息字段 `id`/`type`/`from_handle`/`subject`/`body`/`payload`/`thread_id`/`created_at`；不 ack 再 `check` 拿回同一 deliveryId 且 `replayed: true`；同一 deliveryId ack 两次无害；`run-use` 之后上一代 delivery 不论谁 ack 都 `consumer_fenced`，消息以新 deliveryId 重投；`check --wait 75000` 干净超时；`question` 消息 `from_handle` 为 `dispatch:<id>`、`payload` 含 `taskId`/`dispatchId`/`question`/`options`；`reply` 只认当前协调者，其他 handle `consumer_fenced`、不带 `--from` `no_active_sender_terminal`；`worker-list` 的 `projection.attention.categories` 在有待答提问时含 `input`。
 - `check`/`reply` 不带 `--retry-request`（2A spec 第 9.3 节表）。
@@ -54,7 +54,7 @@ packages/core/src/
   log/call-log.ts                   # 改：summarize 选项；导出 pruneCallLogs
   spec/schema.ts, spec/load.ts      # 改：team.yaml 的 patrol 字段（含 notify 校验）
   registry/migrations.ts            # 改：第三个迁移（locks.heartbeat_at、patrol_state、frozen_posts、hushes、patrol_cursor、questions、patrol_events）
-  registry/registry.ts              # 改：上述表的方法；withTeamLock 的 staleAfterMs 选项；listFinishedVerdictsAfter
+  registry/registry.ts              # 改：上述表的方法；withTeamLock 的 takeoverAfterMs 选项；heartbeat 返回是否仍持有；listFinishedVerdictsAfter
   commands/task/frozen.ts           # 改（2A 文件）：isPostFrozen 读 frozen_posts
   commands/dispatcher/lifecycle.ts  # 新：dispatcherHealth、dispatcherLaunchCommand、dispatcherUp、dispatcherDown
   commands/dispatcher/outlets.ts    # 新：typeTo、notifyHuman、worktreeComment
@@ -180,7 +180,7 @@ test('R6 worker-list: attention categories and liveness come through', async () 
   - `reply(a)`（coordinatorOnly，经 `mutate` 但不带 `retryRequest`）：问题不存在 → `orca`/`question_not_found`；标记 `answered`，返回 `{ messageId: msg-N, duplicate: 已回答过 }`。
   - `workerList`：对每个 `dispatched` 任务给一条 `WorkerView`，有未答问题的 dispatch `attention` 含 `input`；`workerListError?: Error` 时抛出。
   - `worktreeSet`：记入 `orch`；`comments: Array<{ worktree: string; comment: string }>`。
-  - 新增可拨动时钟 `export function clock(start = Date.parse('2026-10-15T10:00:00Z'))`：返回 `{ now: () => new Date(t), advance(ms) }`；`seedRunningTeam(o, { now: c.now })` 可用。
+  - 新增可拨动时钟 `export function clock(start = Date.parse('2026-10-15T10:00:00Z'))`：返回 `{ now: () => new Date(t), monotonic: () => m, advance(ms), sleepJump(ms) }`——`advance` 同时推进墙钟与单调时钟（正常经过的时间），`sleepJump` 只推进墙钟（模拟机器睡眠）；`seedRunningTeam(o, { now: c.now, monotonic: c.monotonic })` 可用。本任务同时给 `CommandDeps` 加 `monotonic: () => number`（CLI 填 `() => performance.now()`，`mkDeps` 缺省同）。
 - [ ] **Step 5：钉住收件箱模型**（`fake-inbox.test.ts`，与 R6 一一对应，全部写出）：①不 ack 再 `check` 返回同一 deliveryId、`replayed: true`；②同一 deliveryId ack 两次无害；③`runUse` 之后新旧协调者 ack 上一代 deliveryId 都 `consumer_fenced`，消息以新 deliveryId 重投；④`check` 只认当前协调者；⑤`reply` 只认当前协调者，回答后 `worker-list` 的 `attention` 不再含 `input`；⑥`workerDone` 自动产生一条 `worker_done` 消息。
 - [ ] **Step 6：运行确认通过** — `pnpm vitest run packages/core/test`；`pnpm typecheck`。
 - [ ] **Step 7：提交** — `git commit -m "feat(core): check/reply/worker-list/worktree-set on OrcaClient; FakeOrca inbox with R6 delivery semantics"`
@@ -196,9 +196,9 @@ test('R6 worker-list: attention categories and liveness come through', async () 
 - Produces：
   ```ts
   // locks
-  /** staleAfterMs 给定时，持锁者"死了"的判定改为：pid 不存活，或 heartbeat_at（缺省 at）早于 now - staleAfterMs（spec 第 2.2 节）。 */
-  withTeamLock<T>(key: string, fn: () => Promise<T> | T, o?: { staleAfterMs?: number }): Promise<T>
-  heartbeat(key: string): void                                      // 只更新本进程持有的那一行
+  /** takeoverAfterMs 给定时，持锁者"死了"的判定改为：pid 不存活，或 heartbeat_at（缺省 at）早于 now - takeoverAfterMs（spec 第 2.2 节）。 */
+  withTeamLock<T>(key: string, fn: () => Promise<T> | T, o?: { takeoverAfterMs?: number }): Promise<T>
+  heartbeat(key: string): boolean                                   // 只更新本进程持有的那一行；返回该行是否仍归本进程
   getLock(key: string): { pid: number; at: string; heartbeatAt: string | null } | null
 
   export type PatrolSignal = 'no_progress' | 'waiting_approval' | 'waiting_answer' | 'dead_assignee' | 'owner_idle'
@@ -245,16 +245,23 @@ test('R6 worker-list: attention categories and liveness come through', async () 
 
 ```ts
 const running: TeamRow = { ...team, runId: 'run-1', coordinatorHandle: 'coord-1' }
-test('withTeamLock with staleAfterMs takes over a lock whose heartbeat is old even if the pid is alive', async () => {
+test('withTeamLock with takeoverAfterMs takes over only after the long threshold; the superseded holder learns it from heartbeat()', async () => {
   let t = Date.parse('2026-10-15T10:00:00Z')
   const r = Registry.open(tmpDb(), { now: () => new Date(t) })
   let release!: () => void
-  const held = r.withTeamLock('dispatcher:duo', () => new Promise<void>((res) => { release = res }), { staleAfterMs: 180_000 })
-  await expect(r.withTeamLock('dispatcher:duo', () => 1, { staleAfterMs: 180_000 })).rejects.toMatchObject({ code: 'team_busy' })
+  const held = r.withTeamLock('dispatcher:duo', () => new Promise<void>((res) => { release = res }), { takeoverAfterMs: 600_000 })
   r.heartbeat('dispatcher:duo')
-  t += 181_000
-  await expect(r.withTeamLock('dispatcher:duo', () => 2, { staleAfterMs: 180_000 })).resolves.toBe(2)
+  t += 181_000                                                        // 显示上已"失联"，但不能接管
+  await expect(r.withTeamLock('dispatcher:duo', () => 1, { takeoverAfterMs: 600_000 })).rejects.toMatchObject({ code: 'team_busy' })
+  t += 420_000
+  let inner = false
+  await r.withTeamLock('dispatcher:duo', () => { inner = r.heartbeat('dispatcher:duo') }, { takeoverAfterMs: 600_000 })
+  expect(inner).toBe(true)
   release(); await held
+})
+test('heartbeat() reports false once another holder replaced the row', () => {
+  const r = Registry.open(tmpDb())
+  expect(r.heartbeat('dispatcher:duo')).toBe(false)                   // 没持有就不是本进程的
 })
 test('heartbeat updates only the row this process holds; getLock exposes it', async () => {
   const r = Registry.open(tmpDb())
@@ -325,7 +332,7 @@ test('listFinishedVerdictsAfter: only finished rows after the cursor, oldest fir
     task_id TEXT, action TEXT NOT NULL, outcome TEXT, message_id TEXT, detail TEXT);
   CREATE UNIQUE INDEX patrol_events_msg ON patrol_events(team, message_id) WHERE message_id IS NOT NULL;
   ```
-  `withTeamLock` 的 `acquire` 读 `heartbeat_at`；默认（不给 `staleAfterMs`）行为与阶段 1 完全一致。`appendPatrolEvent` 用 `INSERT … ON CONFLICT DO NOTHING` 并以 `changes` 判断。
+  `withTeamLock` 的 `acquire` 读 `heartbeat_at`；默认（不给 `takeoverAfterMs`）行为与阶段 1 完全一致。`heartbeat` 用 `UPDATE … WHERE team = ? AND pid = ?`，以 `changes === 1` 作为返回值（同一进程里被"接管"的测试场景中接管者也是本 pid，所以测试只覆盖"没持有 → false"；跨进程接管由 pid 不同保证）。`appendPatrolEvent` 用 `INSERT … ON CONFLICT DO NOTHING` 并以 `changes` 判断。
 - [ ] **Step 4：运行确认通过**（含阶段 1/2A 的全部注册表测试）。
 - [ ] **Step 5：提交** — `git commit -m "feat(core): registry tables for heartbeat, patrol state, freezes, hushes, cursors, questions and patrol events"`
 
@@ -424,7 +431,8 @@ test('recover with a frozen owner stops at ready', async () => {
 - Consumes：`mustTeamReady`（2A）、`locatePost`、`Registry.getLock`/`listPatrolEvents`（Task 2）
 - Produces：
   ```ts
-  export const HEARTBEAT_STALE_MS = 180_000
+  export const HEARTBEAT_STALE_MS = 180_000      // 显示"失联"的阈值
+  export const HEARTBEAT_TAKEOVER_MS = 600_000   // 允许另一个调度员接管锁的阈值（spec 第 2.2 节）
   export interface DispatcherHealth { state: 'running' | 'stale' | 'stopped' | 'never'; pid?: number; heartbeatAt?: string | null; ageMs?: number }
   /** spec 第 2.2 节：running = 锁行在、pid 存活、心跳在 HEARTBEAT_STALE_MS 内；stale = 锁行在但 pid 死或心跳过期；
    *  stopped = 没有锁行但有过巡查事件；never = 两者都没有（wl ps 不显示）。 */
@@ -457,7 +465,7 @@ test('Windows without node on PATH → dispatcher_launch_unsupported', () => {
 })
 /** 模拟调度员进程起来了：持有 dispatcher:<team> 锁并写一次心跳；返回释放函数。 */
 const fakeRunning = (registry: Registry) => { let release!: () => void
-  void registry.withTeamLock('dispatcher:duo', () => { registry.heartbeat('dispatcher:duo'); return new Promise<void>((res) => { release = res }) }, { staleAfterMs: HEARTBEAT_STALE_MS })
+  void registry.withTeamLock('dispatcher:duo', () => { registry.heartbeat('dispatcher:duo'); return new Promise<void>((res) => { release = res }) }, { takeoverAfterMs: HEARTBEAT_TAKEOVER_MS })
   return () => release() }
 test('dispatcherHealth: never / running / stale (old heartbeat) / stopped', async () => {
   const c = clock(); const o = new FakeOrca(); const { deps, registry } = seedRunningTeam(o, { now: c.now })
@@ -638,7 +646,7 @@ test('hushCmd defaults to 30 minutes; unhushCmd clears', async () => {
 - [ ] **Step 2：运行确认失败。**
 - [ ] **Step 3：实现。**
   - `typeTo`：`hushedUntil(address)` 晚于 `deps.now()` → `skip_hushed`；否则 `notifyPost` 的结果映射：`notified` → `ok`、`notified_unconfirmed` → `unconfirmed`、`not_notified` 按 `reason`：`at_prompt` → `skip_prompt`、`screen_unknown` → `skip_unknown`、`post_offline` → `skip_offline`、`send_failed` → `failed`；最后 `appendPatrolEvent({ team, post: meta.subject ?? address, signal, taskId, action: meta.action, outcome, detail: { to: address } })`。
-  - `notifyHuman`：①`n.post === spec.lead 的地址` → `skipped_self`；否则 `typeTo(lead, n.message, { action: 'notify', subject: n.post, … })`；②`spec.patrol.notify`：`webhook` → `io.fetch ?? fetch`，`POST`、`content-type: application/json`、`signal: AbortSignal.timeout(io.timeoutMs ?? 10_000)`，`res.ok` → `ok`，否则/抛错 → `failed`；`command` → `(io.spawn ?? spawn)(cmd[0], [...cmd.slice(1), n.message], { shell: false, stdio: 'ignore' })`，退出码 0 → `ok`，非 0、`error` 事件或超时（`kill()`）→ `failed`；③`appendPatrolEvent({ action: 'notify', outcome: \`lead:${lead};external:${external}\`, … })`。
+  - `notifyHuman`：①`n.post === spec.lead 的地址` → `skipped_self`；否则 `typeTo(lead, n.message, { action: 'notify_lead', subject: n.post, … })`（与下面 `notifyHuman` 自己记的 `notify` 事件区分开，每次通知恰好一条 `notify`）；②`spec.patrol.notify`：`webhook` → `io.fetch ?? fetch`，`POST`、`content-type: application/json`、`signal: AbortSignal.timeout(io.timeoutMs ?? 10_000)`，`res.ok` → `ok`，否则/抛错 → `failed`；`command` → `(io.spawn ?? spawn)(cmd[0], [...cmd.slice(1), n.message], { shell: false, stdio: 'ignore' })`，退出码 0 → `ok`，非 0、`error` 事件或超时（`kill()`）→ `failed`；③`appendPatrolEvent({ action: 'notify', outcome: \`lead:${lead};external:${external}\`, … })`。
   - `worktreeComment`：`spec.patrol.worktreeComment` 为假直接返回；`orca.worktreeSet({ worktree: registry.getPost(post)!.worktree, comment })`，失败记事件 `worktree_comment`、`failed:<code>`。
   - `controls.ts`：`freezePostCmd`/`unfreezePostCmd` 用 `registry.getPost` 校验岗位（团队不存在 → `team_unknown`）；`unfreezePostCmd` 在一个事务里删冻结行、把该岗位所有 `patrol_state` 行改为 `level = 0`、`clearedAt = now`，`setCursor(post, now)`，然后 `listDeliveries(post)` 过滤 `delivery === 'skipped_frozen'` 且 `taskList` 里该子任务仍是 `ready`（`taskList` 失败时不过滤，全部列出）；写事件 `unfreeze`。
 - [ ] **Step 4：运行确认通过。**
@@ -787,7 +795,10 @@ test('dispatcherReply answers as the current coordinator, refreshes once when fe
   export async function takeSnapshot(deps: CommandDeps, ctx: { team: TeamRow; spec: TeamSpec }, o: { wokeAt: Date | null }): Promise<ScanSnapshot>
   /** 没有游标的岗位以 now 为起点；游标之后出现 passed/bypassed 时推进到最后一条。 */
   export function syncCursors(deps: CommandDeps, team: string, posts: string[], snap: ScanSnapshot): void
-  export interface SignalHit { post: string; signal: PatrolSignal; taskId: string; minutes?: number; command?: string; question?: string; messageId?: string }
+  export interface SignalHit { post: string; signal: PatrolSignal; taskId: string; minutes?: number; command?: string; question?: string; messageId?: string
+    epoch?: number        // done_unfinished：要续跑的那一轮
+    ownerAlive?: boolean  // dead_assignee：主人岗位终端是否存活（自动 recover 的条件）
+  }
   export function detectSignals(snap: ScanSnapshot, spec: TeamSpec, state: PatrolStateRow[]): SignalHit[]   // 纯函数
   export interface Ladder { levels: readonly number[]; repeat: boolean }
   export const LADDERS: Readonly<Record<PatrolSignal, Ladder>>
@@ -828,6 +839,12 @@ test('waiting_answer: worker-list input wins; without worker-list the local open
   expect(detectSignals(snap({ workers: null, openQuestions: [q] }), SPEC, [])).toEqual([{ post: 'checker@duo', signal: 'waiting_answer', taskId: 't1', question: 'b', messageId: 'msg-1' }])
 })
 // 复审四 B-I2：我们自己的提示引起的输出不算恢复
+test('a revived row is not cleared again by output from before the revival (no clear/revive flip-flop)', () => {
+  // 提示过 → 宽限期后有过一次输出（被当作恢复）→ 又卡住、1 小时内复活：levelAt 是复活时刻
+  const revived = [st({ lastNudgedAt: iso(60), levelAt: iso(4) })]
+  expect(sig(detectSignals(snap({ terms: [term('term-c', 'checker@duo', min(30))] }), SPEC, revived))).toEqual([['checker@duo', 'no_progress', 't1']])
+  expect(detectSignals(snap({ terms: [term('term-c', 'checker@duo', min(30))] }), SPEC, [st({ lastNudgedAt: null, clearedAt: iso(1) })]).map((h) => h.signal)).toEqual(['no_progress'])
+})
 test('after a nudge, output inside the grace window is not recovery; output after it, or a task_log entry, is', () => {
   const nudged = [st({ lastNudgedAt: iso(3), levelAt: iso(3) })]
   const replied = [term('term-c', 'checker@duo', min(2))]                    // 提示后 1 分钟回了一句
@@ -894,7 +911,7 @@ test('syncCursors: a post without a cursor starts at now; a later pass moves it'
 - [ ] **Step 2：运行确认失败。**
 - [ ] **Step 3：实现。**
   - `takeSnapshot`：`fetchTasks`、`terminalList`（任一失败直接抛出，由调用方记 `scan_skipped`）；`workerList` 失败 → `null`；`gatherStaleInput` 用已取到的任务与终端构造（不再重复调用 Orca，2A 的 `gatherStaleInput` 加一个可选参数 `{ tasks, terminals }`，这是本任务对 2A 文件的唯一改动）+ `staleReasons(input, now, { ownerIdleMinutes: spec.patrol.ownerIdleMinutes, uncertainMinutes: 1 })`；候选 handle = `dispatched` 任务的 assignee 中 `now - lastOutputAt > promptMinutes` 的那些，逐个 `screenGuard`；`openQuestions`/`unfinished`/`lastLogAt`（每个任务 `listTaskLog` 的最后一条）/`lastVerdictAt`/`streakAfterCursor`（`listFinishedVerdictsAfter(post, getCursor(post))`，无游标时为空数组）。
-  - `detectSignals`：先算"在派发中"的任务：每个 `dispatched` 任务按 `claimedBy`（没有则按终端标题）得到岗位；assignee 不存活的交给 `dead_assignee`（来自 `stale`）。对存活的：`waiting_answer`（`workers` 非空看 `attention` 含 `input`，为 `null` 看 `openQuestions` 里同 `dispatchId` 未回答的）→ 命中则跳过后两项；`quiet = now - max(lastOutputAt, dispatchedAt, wokeAt)`；`screens.get(handle) === 'at_prompt'` 且 `quiet > promptMinutes` → `waiting_approval`；否则 `noProgress(task, state)`：已有该任务的 `no_progress` 行且 `lastNudgedAt` 非空 → 看进展证据（`lastOutputAt > lastNudgedAt + NUDGE_GRACE_MS`、`lastLogAt > levelAt`、`lastVerdictAt > levelAt`），没有证据即命中；否则 `quiet > noProgressMinutes` 命中。`overdue`：`maxMinutes` 非空且 `now - dispatchedAt > maxMinutes`，`taskId` 写 `<id>#<epoch>`。`stale` 里的五类原因各映射为同名信号（`done_unfinished` 另要求 `createdAt` 早于 2 分钟前，`owner` 取 `StaleItem.owner`，没有主人的跳过）。`gate_streak`：`streakAfterCursor` 里最后一个 `passed`/`bypassed` 之后的 `escalate` 条数 ≥ `postFailureStreak`。输出顺序：按信号在 `LADDERS` 里的声明顺序，其次按任务 id。拆分：每类信号一个小函数。
+  - `detectSignals`：先算"在派发中"的任务：每个 `dispatched` 任务按 `claimedBy`（没有则按终端标题）得到岗位；assignee 不存活的交给 `dead_assignee`（来自 `stale`）。对存活的：`waiting_answer`（`workers` 非空看 `attention` 含 `input`，为 `null` 看 `openQuestions` 里同 `dispatchId` 未回答的）→ 命中则跳过后两项；`quiet = now - max(lastOutputAt, dispatchedAt, wokeAt)`；`screens.get(handle) === 'at_prompt'` 且 `quiet > promptMinutes` → `waiting_approval`；否则 `noProgress(task, state)`：已有该任务的、**未清除的** `no_progress` 行且 `lastNudgedAt` 非空 → 看进展证据（`lastOutputAt > max(levelAt, lastNudgedAt + NUDGE_GRACE_MS)`、`lastLogAt > levelAt`、`lastVerdictAt > levelAt`），没有证据即命中（spec 第 6.1 节；`max(levelAt, …)` 让复活之前的旧输出不再算证据）；`dead_assignee` 命中时一并给出 `ownerAlive`（主人地址在 `byTitle` 里）；`done_unfinished` 命中时给出 `epoch`（未收尾判定的那一轮）；否则 `quiet > noProgressMinutes` 命中。`overdue`：`maxMinutes` 非空且 `now - dispatchedAt > maxMinutes`，`taskId` 写 `<id>#<epoch>`。`stale` 里的五类原因各映射为同名信号（`done_unfinished` 另要求 `createdAt` 早于 2 分钟前，`owner` 取 `StaleItem.owner`，没有主人的跳过）。`gate_streak`：`streakAfterCursor` 里最后一个 `passed`/`bypassed` 之后的 `escalate` 条数 ≥ `postFailureStreak`。输出顺序：按信号在 `LADDERS` 里的声明顺序，其次按任务 id。拆分：每类信号一个小函数。
   - `NUDGE_GRACE_MS = 300_000` 从 `advance.ts` 导入（Task 8 定义常量，本任务先在 `signals.ts` 里定义并由 Task 8 复用，避免循环依赖：常量放在 `signals.ts`）。
 - [ ] **Step 4：运行确认通过。**
 - [ ] **Step 5：提交** — `git commit -m "feat(core): patrol snapshot, cursors and pure signal detection with cause taxonomy"`
@@ -1006,21 +1023,24 @@ test('subjects are isolated and the level is written before acting: the lead off
   expect(w.o.sent.map((s) => s.handle)).toEqual(['term-c'])                          // owner_idle 第 1 级提示了 checker
   expect(w.registry.listPatrolEvents('duo').filter((e) => e.action === 'notify').every((e) => String(e.outcome).includes('skip_offline'))).toBe(true)
 })
-test('done_unfinished: level 1 reruns wl task done for the reporter up to 3 times with backoff, then notifies', async () => {
+test('done_unfinished: level 1 reruns wl task done (resume-only) up to 3 times, then notifies', async () => {
   const w = world(); w.ops.doneTask.mockRejectedValue(new WinglineError('uncertain', 'orca_timeout', 't'))
-  const h = hit({ post: 'builder@duo', signal: 'done_unfinished', taskId: 'u', command: 'wl task done u --as builder@duo' })
+  const h = hit({ post: 'builder@duo', signal: 'done_unfinished', taskId: 'u', epoch: 0, command: 'wl task done u --as builder@duo' })
   for (let i = 0; i < 12; i++) { await w.scan([h]); w.c.advance(P) }
   expect(w.ops.doneTask).toHaveBeenCalledTimes(MAX_RERUNS)
-  expect(w.ops.doneTask).toHaveBeenCalledWith(expect.anything(), { id: 'u', as: 'builder@duo' })
+  expect(w.ops.doneTask).toHaveBeenCalledWith(expect.anything(), { id: 'u', as: 'builder@duo', resumeEpoch: 0 })
   expect(w.lvl(h)).toBe(2)
 })
 test('dead_assignee: notify with the recover command by default; with auto_recover the second consecutive scan recovers', async () => {
-  const w1 = world(); const h = hit({ signal: 'dead_assignee', taskId: 'd', command: 'wl task recover d' })
+  const w1 = world(); const h = hit({ signal: 'dead_assignee', taskId: 'd', command: 'wl task recover d', ownerAlive: true })
   for (let i = 0; i < 2; i++) { await w1.scan([h]); w1.c.advance(P) }
   expect(w1.ops.recoverTask).not.toHaveBeenCalled(); expect(w1.o.sent.at(-1)!.text).toContain('wl task recover d')
   const w2 = world(DUO_YAML + 'patrol:\n  auto_recover: true\n')
   for (let i = 0; i < 2; i++) { await w2.scan([h]); w2.c.advance(P) }
   expect(w2.ops.recoverTask).toHaveBeenCalledWith(expect.anything(), { id: 'd' })
+  const w3 = world(DUO_YAML + 'patrol:\n  auto_recover: true\n')
+  for (let i = 0; i < 2; i++) { await w3.scan([{ ...h, ownerAlive: false }]); w3.c.advance(P) }
+  expect(w3.ops.recoverTask).not.toHaveBeenCalled()
 })
 test('once-only signals (bypassed, overdue, call_uncertain) notify once and stay quiet', async () => {
   const w = world(); const h = hit({ signal: 'overdue', taskId: 't1#0', minutes: 61 })
@@ -1054,9 +1074,9 @@ test('worktree_comment: levels 2 and 3 annotate the post\'s worktree, recovery a
     }
   }
   ```
-  - `step`：①无行 → 插入 `level 0`（`since = levelAt = now`），事件 `observe`，返回。②有行且 `clearedAt` 非空：`now - clearedAt <= REVIVE_WINDOW_MS` → 清掉 `clearedAt`、保留 `level`、`levelAt = now`，返回（本轮不动作）；否则按①重新开始。③冻结的岗位 → 返回。④`o.observeOnly` 或 `now - levelAt < PATROL_INTERVAL_MS` 或 `nextDueAt > now` → 返回。⑤`ladder = ladderFor(h.signal, spec)`（`dead_assignee` 且 `autoRecover` 时 `[0,1,2]`）；`next` = 序列里大于当前 `level` 的第一个：有 → 若 `next === 3` 且主体是牵头岗且 `!freezeLead` → 视为到达终点；否则**先写** `level = next`、`levelAt = now`，再 `act(next)`；没有（已到终点）→ `ladder.repeat` 为真时 `notifyCount += 1`、`nextDueAt = now + min(P × 2^notifyCount, MAX_BACKOFF_MS)`、再 `act(当前级别)`；否则不动。
-  - `done_unfinished` 的第 1 级例外：`notifyCount < MAX_RERUNS` 时停在第 1 级反复执行（每次 `notifyCount += 1`、`nextDueAt` 按同一退避），达到后才推进到第 2 级。
-  - `act(level)`：`1` → `no_progress`/`owner_idle`：`typeTo(主体, 提示文本)`，写 `lastNudgedAt = now`；结果为 `skip_prompt` 且信号是 `no_progress` → 该行写 `clearedAt = now` 并插入同主体的 `waiting_approval` 行（`level 0`）。`done_unfinished`：`ops.doneTask(deps, { id, as: post })`，成功记事件 `rerun_done`、`ok`。`dead_assignee`（`autoRecover`）：`ops.recoverTask(deps, { id })`。`2` → `notifyHuman(第 2 级文本)` + `worktreeComment`。`3` → `freezePost({ post, team, reason: \`patrol: ${signal}\`, signal })` + `notifyHuman(第 3 级文本)` + `worktreeComment`。
+  - `step`：①无行 → 插入 `level 0`（`since = levelAt = now`），事件 `observe`，返回。②有行且 `clearedAt` 非空：`now - clearedAt <= REVIVE_WINDOW_MS` → 清掉 `clearedAt`、保留 `level`、`levelAt = now`、`lastNudgedAt = null`，返回（本轮不动作）；否则按①重新开始。③冻结的岗位 → 返回。④`o.observeOnly` 或 `now - levelAt < PATROL_INTERVAL_MS` 或 `nextDueAt > now` → 返回。⑤`ladder = ladderFor(h.signal, spec)`（`dead_assignee` 且 `autoRecover` 时 `[0,1,2]`）；`next` = 序列里大于当前 `level` 的第一个：有 → 若 `next === 3` 且主体是牵头岗且 `!freezeLead` → 视为到达终点；否则**先写** `level = next`、`levelAt = now`，再 `act(next)`；没有（已到终点）→ `ladder.repeat` 为真时 `notifyCount += 1`、`nextDueAt = now + min(P × 2^notifyCount, MAX_BACKOFF_MS)`、再 `act(当前级别)`；否则不动。
+  - `done_unfinished` 的第 1 级例外（spec 第 6.4 节）：进入第 1 级就是第 1 次重跑（`notifyCount = 1`）；之后停在第 1 级，每个到期的周期（`nextDueAt = now + P`，不做指数退避）再重跑一次、`notifyCount += 1`；第 `MAX_RERUNS` 次仍失败 → 同一轮里立即推进到第 2 级并通知人。
+  - `act(level)`：`1` → `no_progress`/`owner_idle`：`typeTo(主体, 提示文本)`，写 `lastNudgedAt = now`；结果为 `skip_prompt` 且信号是 `no_progress` → 该行写 `clearedAt = now` 并插入同主体的 `waiting_approval` 行（`level 0`）。`done_unfinished`：`ops.doneTask(deps, { id, as: post, resumeEpoch: h.epoch })`，成功记事件 `rerun_done`、`ok`、清除这一行；抛 `verdict_missing` → 清除这一行（那一轮已收尾或已放弃）。`dead_assignee`（`autoRecover`）：`h.ownerAlive` 为真才 `ops.recoverTask(deps, { id })`，否则这一级改为通知人。第 2 级 `overdue` 文本里的任务 id 去掉 `#<epoch>` 后缀。`2` → `notifyHuman(第 2 级文本)` + `worktreeComment`。`3` → `freezePost({ post, team, reason: \`patrol: ${signal}\`, signal })` + `notifyHuman(第 3 级文本)` + `worktreeComment`。
   - `clearRow`：写 `clearedAt = now`，事件 `cleared`；`worktreeComment` 开启且原级别 ≥ 2 → 写"雁阵：<post> 已恢复（<时间>）"。
   - 拆分：`step`、`nextLevel`、`act`、`messageFor`、`clearRow` 各自一个函数。
 - [ ] **Step 4：运行确认通过。**
@@ -1076,14 +1096,15 @@ test('worktree_comment: levels 2 and 3 annotate the post\'s worktree, recovery a
 - Produces：
   ```ts
   export const CHECK_WAIT_MS = 60_000
-  export const WAKE_GAP_MS = 180_000
+  export const WAKE_GAP_MS = 60_000               // 墙钟比单调时钟多走这么多 → 视为睡醒
   export const BACKOFF_START_MS = 5_000
   export const BACKOFF_MAX_MS = 60_000
   export const CHECK_FAILURES_BEFORE_DROP = 3
   export const READ_ONLY_CALLS: ReadonlyArray<readonly [string, string]>   // [['orchestration','check'],['orchestration','task-list'],['orchestration','worker-list'],['orchestration','run-show'],['orchestration','request-show'],['terminal','list'],['terminal','show']]
   export interface LoopState {
     team: TeamRow; spec: TeamSpec; specHash: string
-    lastScanAt: number; lastLoopAt: number; wokeAt: number | null; observeOnlyNextScan: boolean
+    locked: boolean                      // 由 runDispatcherLoop 置真；为真时 heartbeat 返回 false 即退出
+    lastScanAt: number; lastWall: number; lastMono: number; wokeAt: number | null; observeOnlyNextScan: boolean
     pendingAck: string | null; checkFailures: number; backoffMs: number; logDay: string
   }
   export interface LoopOpts { signal?: AbortSignal; sleep?: (ms: number) => Promise<void>; ops?: PatrolOps; io?: OutletIo; waitMs?: number }
@@ -1098,7 +1119,7 @@ test('worktree_comment: levels 2 and 3 annotate the post\'s worktree, recovery a
 
 ```ts
 function dsp(yaml = DUO_YAML) {
-  const c = clock(); const o = new FakeOrca(); const s = seedRunningTeam(o, { now: c.now, yaml, env: { ORCA_TERMINAL_HANDLE: 'term-dsp' } })
+  const c = clock(); const o = new FakeOrca(); const s = seedRunningTeam(o, { now: c.now, monotonic: c.monotonic, yaml, env: { ORCA_TERMINAL_HANDLE: 'term-dsp' } })
   o.terminals.push({ handle: 'term-dsp', title: 'dispatcher@duo', connected: true, worktreeId: 'w' })
   const sleep = async (ms: number) => { c.advance(ms) }
   const start = async () => { const team = await connectDispatcher(s.deps, 'duo', 'term-dsp', { sleep }); return initialState(s.deps, team, loadTeamSpec(team.specPath)) }
@@ -1162,12 +1183,14 @@ test('the first scan happens one interval after start and only observes; the nex
   expect((await w.once(st)).scanned).toBe(false)
   w.c.advance(PATROL_INTERVAL_MS); expect((await w.once(st)).scanned).toBe(true)
   expect(w.registry.getPatrolState('duo', 'checker@duo', 'no_progress', id)!.level).toBe(0)
-  w.c.advance(PATROL_INTERVAL_MS); await w.once(st); w.c.advance(PATROL_INTERVAL_MS); await w.once(st)
+  w.c.advance(PATROL_INTERVAL_MS); await w.once(st)
   expect(w.registry.getPatrolState('duo', 'checker@duo', 'no_progress', id)!.level).toBe(1)
 })
-test('a wall-clock gap larger than WAKE_GAP_MS is a wake-up: the next scan only observes', async () => {
+test('wall clock running ahead of the monotonic clock is a wake-up; a merely slow round is not', async () => {
   const w = dsp(); const st = await w.start()
-  w.c.advance(WAKE_GAP_MS + 1)
+  w.c.advance(10 * 60_000)                                            // 一轮很慢，但两种时钟一起走
+  expect((await w.once(st)).woke).toBe(false)
+  w.c.sleepJump(WAKE_GAP_MS + 1)                                      // 合上笔记本：只有墙钟在走
   const r = await w.once(st)
   expect(r.woke).toBe(true); expect(st.observeOnlyNextScan).toBe(true)
   expect(w.registry.listPatrolEvents('duo').map((e) => e.action)).toContain('wake')
@@ -1177,7 +1200,11 @@ test('every round writes the heartbeat on the lock row', async () => {
   await w.registry.withTeamLock('dispatcher:duo', async () => {
     const st = await w.start(); w.c.advance(1000); await w.once(st)
     expect(w.registry.getLock('dispatcher:duo')!.heartbeatAt).toBe(w.c.now().toISOString())
-  }, { staleAfterMs: HEARTBEAT_STALE_MS })
+  }, { takeoverAfterMs: HEARTBEAT_TAKEOVER_MS })
+})
+test('a superseded dispatcher (heartbeat reports the row is no longer ours) stops with dispatcher_superseded', async () => {
+  const w = dsp(); const st = await w.start(); st.locked = true       // 声称持锁，但锁行并不归本进程：heartbeat() 返回 false
+  await expect(w.once(st)).rejects.toMatchObject({ code: 'dispatcher_superseded' })
 })
 test('spec reload follows teams.spec_hash: a valid new spec is adopted; a broken one keeps the old spec and is recorded', async () => {
   const w = dsp(); const st = await w.start()
@@ -1209,11 +1236,14 @@ test('a new day prunes call logs, gate outputs and old patrol events', async () 
 test('runDispatcherLoop: outside Orca → dispatcher_not_in_orca; a second one → team_busy; it releases its lock on abort', async () => {
   const w = dsp()
   await expect(runDispatcherLoop({ ...w.deps, env: {} }, 'duo', {})).rejects.toMatchObject({ code: 'dispatcher_not_in_orca' })
-  const ac = new AbortController(); let n = 0
-  w.o.onCheck = () => { if (++n === 2) ac.abort() }
+  const ac = new AbortController()
+  let entered!: () => void; const inLoop = new Promise<void>((r) => { entered = r })
+  let gate!: () => void; const hold = new Promise<void>((r) => { gate = r })
+  w.o.onCheck = async () => { entered(); await hold }                 // 第一个调度员停在第一次 check 里，直到测试放行
   const running = runDispatcherLoop(w.deps, 'duo', { signal: ac.signal, sleep: w.sleep, waitMs: 1 })
-  await new Promise((r) => setImmediate(r))
+  await inLoop
   await expect(runDispatcherLoop(w.deps, 'duo', { sleep: w.sleep })).rejects.toMatchObject({ code: 'team_busy' })
+  ac.abort(); w.o.onCheck = undefined; gate()
   await running
   expect(w.registry.getLock('dispatcher:duo')).toBeNull()
 })
@@ -1233,10 +1263,10 @@ test('summarized calls keep argv, timing and exit code but not stdout', () => {
 
 - [ ] **Step 2：运行确认失败。**
 - [ ] **Step 3：实现。**
-  - `connectDispatcher`：`mustTeamReady`；循环 `runUse({ id: runId, from: handle })`：成功 → `updateCoordinatorHandle`，返回 `getTeam`；`run_not_found` → 上抛；`opts.signal?.aborted` → 上抛；其他 → 事件 `connect_retry`，`sleep(backoff)`，`backoff = min(backoff × 2, BACKOFF_MAX_MS)`。
-  - `initialState`：`lastScanAt = lastLoopAt = now`、`observeOnlyNextScan = true`、`specHash = team.specHash`、`logDay = 今天`、`backoffMs = BACKOFF_START_MS`。
-  - `loopOnce`（spec 第 3 节的五步）：①`registry.heartbeat('dispatcher:<team>')`；②`now - lastLoopAt > WAKE_GAP_MS` → `wokeAt = now`、`observeOnlyNextScan = true`、事件 `wake`；`lastLoopAt = now`；③日期变了 → `pruneCallLogs(home/logs)`、`pruneGateOutputs(home, team)`、`prunePatrolEvents(now - 30 天)`；`getTeam().specHash !== state.specHash` → `reloadSpec`（成功且 `specHash(新规格) === teams.spec_hash` → 替换，事件 `spec_reload`；否则保留，事件 `spec_reload_failed`；两种情况都把 `state.specHash` 设为 `teams.spec_hash`，避免每轮重试）；④`check({ terminal: handle, run, ack: pendingAck ?? undefined, wait: true, timeoutMs: opts.waitMs ?? CHECK_WAIT_MS })`：成功且 `connectionLost` → 当作失败但**保留** `pendingAck`；成功 → `pendingAck = null`、`checkFailures = 0`、`backoffMs = BACKOFF_START_MS`，有消息则 `processBatch` 后 `pendingAck = deliveryId`；`fenced` → `pendingAck = null`，`connectDispatcher` 一次尝试（不循环），事件 `fenced_reclaim`，结果 `fenced`；其他失败 → `checkFailures += 1`，达到 `CHECK_FAILURES_BEFORE_DROP` 时 `pendingAck = null`，`sleep(backoffMs)` 并翻倍，结果 `failed`；⑤`now - lastScanAt >= PATROL_INTERVAL_MS` → `scan`：`takeSnapshot` 失败 → 事件 `scan_skipped`；成功 → `syncCursors` → `detectSignals` → `advancePatrol(observeOnly: observeOnlyNextScan)`；**不论成败** `lastScanAt = now`、`observeOnlyNextScan = false`、`wokeAt` 保留到下一次唤醒（"有效最近输出"的下限）。
-  - `runDispatcherLoop`：`handle = deps.env.ORCA_TERMINAL_HANDLE`，无 → `input`/`dispatcher_not_in_orca`；`registry.withTeamLock(\`dispatcher:${team}\`, async () => { connect; state = initialState; while (!signal?.aborted) { try { await loopOnce(...) } catch (err) { 事件 loop_error; await sleep(BACKOFF_START_MS) } } }, { staleAfterMs: HEARTBEAT_STALE_MS })`。
+  - `connectDispatcher`：`mustTeamReady`；循环（每次尝试前 `heartbeat`，返回 `false` 时抛 `dispatcher_superseded`；`runDispatcherLoop` 之外直接调用时没有锁行，此时不检查）`runUse({ id: runId, from: handle })`：成功 → `updateCoordinatorHandle`，返回 `getTeam`；`run_not_found` → 上抛；`opts.signal?.aborted` → 上抛；其他 → 事件 `connect_retry`，`sleep(backoff)`，`backoff = min(backoff × 2, BACKOFF_MAX_MS)`。
+  - `initialState`：`locked = false`、`lastScanAt = lastWall = now`、`lastMono = deps.monotonic()`、`observeOnlyNextScan = true`、`specHash = team.specHash`、`logDay = 今天`、`backoffMs = BACKOFF_START_MS`。
+  - `loopOnce`（spec 第 3 节的五步）：①`beat()` = `registry.heartbeat('dispatcher:<team>')`，返回 `false` 且 `state.locked` → 事件 `superseded` 后抛 `input`/`dispatcher_superseded`（直接调用 `loopOnce` 的测试不持锁，`locked` 为假，不检查）；**`beat()` 在本轮每一步之间都调用一次**（收件箱前后、巡查前后；`takeSnapshot` 接受一个 `onProgress` 回调，每完成一次 Orca 调用就调它，回调里也 `beat()`）；②`(now - lastWall) - (deps.monotonic() - lastMono) > WAKE_GAP_MS` → `wokeAt = now`、`observeOnlyNextScan = true`、事件 `wake`；更新 `lastWall`/`lastMono`；③日期变了 → `pruneCallLogs(home/logs)`、`pruneGateOutputs(home, team)`、`prunePatrolEvents(now - 30 天)`；`getTeam().specHash !== state.specHash` → `reloadSpec`（成功且 `specHash(新规格) === teams.spec_hash` → 替换，事件 `spec_reload`；否则保留，事件 `spec_reload_failed`；两种情况都把 `state.specHash` 设为 `teams.spec_hash`，避免每轮重试）；④`check({ terminal: handle, run, ack: pendingAck ?? undefined, wait: true, timeoutMs: opts.waitMs ?? CHECK_WAIT_MS })`：成功且 `connectionLost` → 当作失败但**保留** `pendingAck`；成功 → `pendingAck = null`、`checkFailures = 0`、`backoffMs = BACKOFF_START_MS`，有消息则 `processBatch` 后 `pendingAck = deliveryId`；`fenced` → `pendingAck = null`，`connectDispatcher` 一次尝试（不循环），事件 `fenced_reclaim`，结果 `fenced`；其他失败 → `checkFailures += 1`，达到 `CHECK_FAILURES_BEFORE_DROP` 时 `pendingAck = null`，`sleep(backoffMs)` 并翻倍，结果 `failed`；⑤`now - lastScanAt >= PATROL_INTERVAL_MS` → `scan`：`takeSnapshot` 失败 → 事件 `scan_skipped`；成功 → `syncCursors` → `detectSignals` → `advancePatrol(observeOnly: observeOnlyNextScan)`；**不论成败** `lastScanAt = now`、`observeOnlyNextScan = false`、`wokeAt` 保留到下一次唤醒（"有效最近输出"的下限）。
+  - `runDispatcherLoop`：`handle = deps.env.ORCA_TERMINAL_HANDLE`，无 → `input`/`dispatcher_not_in_orca`；`registry.withTeamLock(\`dispatcher:${team}\`, async () => { connect; state = initialState; state.locked = true; while (!signal?.aborted) { try { await loopOnce(...) } catch (err) { 事件 loop_error; await sleep(BACKOFF_START_MS) } } }, { takeoverAfterMs: HEARTBEAT_TAKEOVER_MS })`；`dispatcher_superseded` 不被循环吞掉，直接结束函数（锁已不归本进程，`withTeamLock` 的释放语句只删本 pid 的行，不会误删接管者的）。
   - CLI 侧（Task 11 接线）：`dispatcher run` 构造 deps 时 `createCallLog(..., { summarize: (a) => READ_ONLY_CALLS.some(([x, y]) => a[0] === x && a[1] === y) })`。
 - [ ] **Step 4：运行确认通过。**
 - [ ] **Step 5：提交** — `git commit -m "feat(core): dispatcher loop with heartbeat, wake detection, decoupled patrol, fenced self-heal and daily maintenance"`
@@ -1374,6 +1404,7 @@ test('wl attention prints commands and marks unavailable sources', async () => {
 ```
 
 - [ ] **Step 2：运行确认失败。**
+- [ ] **Step 3a：文档。** `teams/duo/team.yaml` 的岗位 `launch` 旁加注释、`README.md` 加一节"无人值守时的权限模式"：建议岗位使用不弹交互确认的权限模式，从源头减少停在确认框上的情形（复审四 §4 末段）；并列出 `wl attention`/`wl dispatcher` 的用法。
 - [ ] **Step 3：实现。** `Commands` 补 `dispatcherUp`/`dispatcherDown`/`runDispatcherLoop`/`dispatcherStatus`/`freezePostCmd`/`unfreezePostCmd`/`hushCmd`/`unhushCmd`/`dispatcherReply`/`attention`（以及 `ps` 渲染里用到的 `dispatcherHealth` 由 core 的 `ps` 直接返回，不进 `Commands`）——共 10 个字段加 `parseDuration` 的调用；注册子命令；`run` 不接 `--json`，异常走统一的 `renderError`/`exitCodeOf`。`index.ts` 补 `commands/dispatcher/*` 的导出。
 - [ ] **Step 4：运行确认通过** — `pnpm test`；`pnpm typecheck`。
 - [ ] **Step 5：提交** — `git commit -m "feat(cli): wl dispatcher and wl attention command surface"`

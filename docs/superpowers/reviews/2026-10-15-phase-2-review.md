@@ -84,3 +84,21 @@
 2. 按第 1、2 节修订 2A、2B spec（2A 以 R5 为主线），再同步两份计划，`FakeOrca` 语义与测试一并改。
 3. 第 4 节中标为 2A/2B 的吸收项，挑选后并入同一轮修订；其余写进总纲的阶段规划。
 4. 修订后做一次针对改动的复审，再进入 2A 实现。
+
+## 6. 修订后的针对性复审（复审五，2026-10-15）
+
+对 f9d3744..b7b95bc 的修订做了一次独立复审，结论"修改后可以实现"。提出的问题与处理：
+
+| # | 问题 | 处理 |
+| --- | --- | --- |
+| C-1 | "无进展"复活后被旧输出清除，在清除/复活之间来回切换 | 2B spec §6.1：输出证据改为 `lastOutputAt > max(level_at, last_nudged_at + 宽限)`，清除与复活时置空 `last_nudged_at`；计划 Task 7/8 同步并加测试 |
+| C-2 | 旧轮次未收尾的判定永远挂着，代为收尾可能对新一轮跑 gate 并上报 | 2A：加 epoch 时把上一轮未收尾判定收尾为 `abandoned`；`done_unfinished` 只看当前 epoch；`done` 增加只续跑模式 `resumeEpoch`（`verdict_missing`）；2B 代为收尾只用这个模式 |
+| C-3 | 唤醒检测只看墙钟间隔，慢循环与测试都会被误判 | 改为比较墙钟与单调时钟的经过时长（阈值 60 秒）；`CommandDeps.monotonic`，假时钟分 `advance`/`sleepJump` |
+| I-1 | 回到 shell 提示符的终端被判为可打字 | 2A §7.4：最后一行像 shell 提示符 → `unknown`；外来文本 `neutralize()` 中和 shell 元字符；`wl up` 启动包也先做画面检查 |
+| I-2 | FakeOrca 的 `request-show` 回执形状与 `fromReceipt` 不符 | FakeOrca 账本另存原始回执形状 |
+| I-3 | 通知事件重复记录，与测试断言矛盾 | 给牵头岗打字记 `notify_lead`，`notify` 每次通知恰好一条 |
+| I-4 | `runDispatcherLoop` 测试会挂住 | 用 deferred 控制第一个调度员停在 `check` 里 |
+| I-5 | 慢扫描/重试期间可能被第二个调度员接管 | 心跳在每一步之间写；接管阈值 600 秒（显示失联仍是 180 秒）；`heartbeat()` 返回是否仍持有，否则 `dispatcher_superseded` 退出 |
+| I-6 | 代为收尾的计数规则不清 | 进入第 1 级即第 1 次，之后每周期一次，第 3 次失败立即升级 |
+| I-7 | `recover` 中断在加 epoch 之后无法续跑 | 本地记录 `recover:<task>:open` 存下 dispatch_id 与 epoch，键改用 dispatch_id，记录存在时跳过前置检查 |
+| 次要 | 取画面范围、FakeOrca 故障注入范围、自动 recover 的主人存活条件、`--overdue`、`duo` 模板建议、`overdue` 文本里的 `#epoch`、`escalate` 权限 | 均已在 spec/计划中写明或补上 |

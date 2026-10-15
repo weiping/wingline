@@ -76,9 +76,10 @@
 
 - **运行中**：锁行存在、`pid` 存活、`heartbeat_at` 在 `HEARTBEAT_STALE_MS`（180 秒，约三个循环）以内。
 - **失联**：锁行存在，但 `pid` 不存活或心跳过期。两个条件都要看：只看 pid 会被 pid 复用骗过，只看心跳会被"进程刚被 kill、心跳还新"骗过（后者最多持续 180 秒，可接受）。
+- **心跳写得足够勤**：主循环每一步之间（收件箱前后、巡查前后、巡查里每次 Orca 调用之后）以及 connect 的每次重试都写心跳，所以一个仍在工作的调度员不会因为一次慢扫描或 Orca 宕机期间的重试而显得失联。`heartbeat()` 返回这一行是否仍归本进程；返回否（锁已被接管）→ 调度员记一条事件后立即退出（`dispatcher_superseded`），不和接管者争身份。
 - **已停止**：没有锁行（调度员正常退出时删除自己的锁行）。
 
-`withTeamLock` 的"持锁进程死了锁会被接管"沿用阶段 1；对调度员锁，"死了"的判定改为上面的"失联"，这样一个残留的锁行不会挡住新调度员，一个仍在跑的调度员也不会被第二个顶掉（第二个直接 `team_busy` 退出）。
+`withTeamLock` 的"持锁进程死了锁会被接管"沿用阶段 1；对调度员锁，接管条件是"pid 不存活"或"心跳超过 `HEARTBEAT_TAKEOVER_MS`（600 秒）"——比显示用的 180 秒宽得多：显示"失联"只是提醒人，接管则可能顶掉一个只是暂时卡住的进程（复审五 I-5）。这样一个残留的锁行不会挡住新调度员，一个仍在跑的调度员也不会被第二个顶掉（第二个直接 `team_busy` 退出）。
 
 ## 3. 调度员主循环
 
@@ -92,13 +93,13 @@ connect：循环执行 run-use --id <run_id> --from $ORCA_TERMINAL_HANDLE，直�
 state = {
   startedAt: now, lastScanAt: now,        // 第一轮巡查在启动满一个周期后才做（定时器第一个间隔不立即触发）
   observeOnlyNextScan: true,              // 重启后第一轮只观察、不升级
-  lastLoopAt: now, pendingAck: null, checkFailures: 0,
+  lastWall: now, lastMono: 单调时钟, pendingAck: null, checkFailures: 0,
   spec: 启动时加载的规格, specHash: teams.spec_hash, logDay: 今天
 }
 循环（每一轮）：
-  1. 心跳：锁行 heartbeat_at = now
-  2. 睡眠唤醒检测：now - lastLoopAt > WAKE_GAP_MS（180 秒）→ wokeAt = now，observeOnlyNextScan = true，记事件 wake
-     lastLoopAt = now
+  1. 心跳：锁行 heartbeat_at = now（本轮每一步之间都会再写；发现锁行已不归自己 → 退出）
+  2. 睡眠唤醒检测：(墙钟经过时长) - (单调时钟经过时长) > WAKE_GAP_MS（60 秒）→ wokeAt = now，observeOnlyNextScan = true，记事件 wake
+     lastWall = now，lastMono = 单调时钟
   3. 维护：日期变了 → 清理 7 天前的 CallLog 与 gate 输出文件、30 天前的 patrol_events；
            teams.spec_hash ≠ state.specHash → 重载规格（第 8 节）
   4. 收件箱：
@@ -170,7 +171,7 @@ state = {
 - `terminal list --include-visual-layouts`（必需）：存活终端、标题、`lastOutputAt`（Unix 毫秒，R2 #5）。
 - `orchestration worker-list --run <run_id>`（可选，失败视为没有）：每个 dispatch 的 `projection.attention.categories`、`projection.liveness`（R6 `worker-list`）。
 - 本地：`task_ext`、`task_done`、`gates`、`requests`、`questions`、`frozen_posts`、`hushes`、`patrol_state`、`patrol_cursor`。
-- `screenGuard(handle)`（2A 第 7.4 节）：只对本轮命中"无进展"候选或将要被打字的岗位调用，不是每个岗位都调。
+- `screenGuard(handle)`（2A 第 7.4 节）：只对有 `dispatched` 任务、且静默已超过 `patrol.prompt_minutes` 的岗位调用（"等批准"与"无进展"的候选），以及将要被打字的岗位；不是每个岗位都调。
 
 `wl task list --stale` 的判定（2A 第 10 节）抽成一个纯函数 `staleReasons(tasks, terminals, local, now, thresholds)`，2A 的命令与这里的扫描共用；下面凡是与它同名的原因都由这个函数给出。
 
@@ -185,8 +186,8 @@ state = {
 | `waiting_answer` 等回答 | 岗位有 `dispatched` 任务，且：`worker-list` 可用时该 dispatch 的 `attention.categories` 含 `input`；不可用时本地 `questions` 有该 `dispatch_id` 未回答的行 | 岗位 + 任务 | 观察 → 通知人（"<岗位> 在等回答：<摘要>；wl dispatcher reply …"），按退避重复；不冻结 |
 | `dead_assignee` 派发失主 | `staleReasons` 的 `dead_assignee`：`dispatched` 且 `assignee_handle` 不在存活终端里（复审四 B-I4：Orca 重启后新终端有输出，"无进展"永远发现不了这种任务） | 主人岗位 + 任务 | 观察 → 通知人，附 `wl task recover <id>`；`patrol.auto_recover: true` 时改为自动 recover（6.4） |
 | `owner_idle` 有主人却没开始 | `staleReasons` 的 `owner_idle`：`ready`、有 `claimed_by`、`now - ready_since > patrol.owner_idle_minutes`（默认 30），**且主人手上没有 `dispatched` 任务**（手上有任务时这是正常排队） | 主人岗位 + 任务 | 观察 → 提示主人（"你有待开始的任务 <id>：wl task start <id>"）→ 通知人；不冻结 |
-| `overdue` 逾期 | `budgets.task.max_minutes` 已配置，任务 `dispatched`，`now - dispatched_at > max_minutes` | 岗位 + 任务 | 通知人一次（每个 `(task, epoch)` 只一次）；不提示、不冻结 |
-| `done_unfinished` 已上报未收尾 | `staleReasons` 的 `done_unfinished`，且 `task_done.created_at` 已超过 2 分钟（不和正在跑的 `wl task done` 抢） | 上报岗位 + 任务 | 调度员代为重跑（6.4），最多 3 次；仍未收尾 → 通知人 |
+| `overdue` 逾期 | `budgets.task.max_minutes` 已配置，任务 `dispatched`，`now - dispatched_at > max_minutes` | 岗位 + 任务 | 通知人一次（每个 `(task, epoch)` 只一次，消息里只写任务 id）；不提示、不冻结。没有单独的 `wl task list --overdue`，逾期任务在 `wl attention` 里列出 |
+| `done_unfinished` 已上报未收尾 | `staleReasons` 的 `done_unfinished`，且 `task_done.created_at` 已超过 2 分钟（不和正在跑的 `wl task done` 抢） | 上报岗位 + 任务 | 调度员代为重跑（6.4，只续跑当前 epoch 的已有判定），进入第 1 级即第 1 次，之后每个到期的周期一次，第 3 次仍失败立即升到通知人 |
 | `bypassed` 绕过直接上报 | 收件箱里的 `worker_done` 没有对应 `task_done`（第 4 节）；扫描时也用 `staleReasons` 的 `bypassed` 兜底（消息可能在调度员没在跑时就被别人 ack 了） | 主人岗位 + 任务 | 直接通知人一次；不自动补跑（补跑会执行 gate，那是岗位工作目录里的任意命令，应当由人或岗位决定） |
 | `call_uncertain` 调用不确定 | `staleReasons` 的 `call_uncertain` | 相关岗位 + 任务 | 通知人一次，附原命令；不自动重跑（P2 需要人给 `--retry-request`，P1 由 `done_unfinished` 覆盖） |
 | `gate_streak` 闸门连败 | 6.1 末尾 | 岗位 | 通知人 → 冻结；跳过"提示岗位" |
@@ -238,9 +239,9 @@ patrol_state(
 
 1. **新命中、没有行** → 插入 `level = 0`（只观察，不动作）。所有信号都从观察开始：重启、唤醒后的第一轮和一次偶然的抖动都不会立刻打扰任何人（复审四 B-I3）。
 2. **已有行、本轮未命中**：
-   - `no_progress` 需要**进展证据**才算恢复（复审四 B-I2）：自 `level_at` 以来任务状态或 `dispatch_id` 变了、有新的 `task_done` 行、`task_log` 有该任务的新记录，或出现了不在提示宽限期内的输出（`lastOutputAt > last_nudged_at + NUDGE_GRACE_MS`）。岗位回一句"收到"刷新的 `lastOutputAt` 落在宽限期内，不算恢复。
+   - `no_progress` 在**已提示过**（`last_nudged_at` 非空、行未清除）时需要**进展证据**才算恢复（复审四 B-I2）：自 `level_at` 以来任务状态或 `dispatch_id` 变了、有新的 `task_done` 行、`task_log` 有该任务的新记录，或出现了 `lastOutputAt > max(level_at, last_nudged_at + NUDGE_GRACE_MS)` 的输出。岗位回一句"收到"刷新的 `lastOutputAt` 落在宽限期内，不算恢复；`max(level_at, …)` 保证复活之后，复活之前的旧输出不会再被当成证据（复审五 C-1：否则会在"清除/复活"之间来回切换、永远不动作）。没有提示过的行按普通静默时长判定。
    - 其他信号：未命中即恢复。
-   - 恢复 → 写 `cleared_at`，记事件 `cleared`。**行不删除**：同一主体同一信号在 `cleared_at` 之后 1 小时内再次命中，从原来的 `level` 继续（而不是从观察重新开始），避免"提示 → 回一句 → 恢复 → 又卡住 → 再提示"的循环永远升不上去。超过 1 小时再命中按新命中处理。
+   - 恢复 → 写 `cleared_at`、**置空 `last_nudged_at`**，记事件 `cleared`。**行不删除**：同一主体同一信号在 `cleared_at` 之后 1 小时内再次命中，从原来的 `level` 继续（而不是从观察重新开始），避免"提示 → 回一句 → 恢复 → 又卡住 → 再提示"的循环永远升不上去。超过 1 小时再命中按新命中处理。
 3. **已有行、本轮仍命中**：本轮是 `observeOnlyNextScan` 的一轮 → 不动作；否则满足 `now - level_at >= PATROL_INTERVAL_MS` 且 `now >= next_due_at`（为空视为满足）→ 推进到这个信号的下一级并执行动作（6.2）。已在终点级别的信号（"通知人"是终点的那些）→ 重复通知，`notify_count += 1`，`next_due_at = now + PATROL_INTERVAL_MS × 2^notify_count`，上限 4 小时。
 各信号经过哪几级、终点在哪，见 5.2 表最后一列；跳过的级别直接越过（例如 `waiting_answer` 从 0 直接到 2）。`done_unfinished` 的"代为收尾"占第 1 级，`dead_assignee` 开启 `auto_recover` 时"自动 recover"占第 1 级。
 4. **level 在执行动作之前写入**，含义是"这一级已经尝试过"：动作失败不回滚，下一轮在信号仍在时照常推进（通知没送达不代表信号消失；卡在同一级重发同一条只会刷屏）。
@@ -283,7 +284,7 @@ patrol_state(
 
 ### 6.4 两个代跑动作
 
-- **代为收尾 `done_unfinished`**：调用 2A `wl task done` 的同一个内部函数，`--as` 为 `task_done.post`。2A 的步骤 2 保证"有判定但未完成 → 直接从后续步骤继续，不重跑 gate"，每一步都是账本 P1，与岗位自己同时重跑也会收敛到同一组调用（2A 第 10 节"锁"）。结果：`done` → 记事件、清除信号；`uncertain` 或 Orca 报错 → 记事件，`notify_count + 1`，下一轮按退避再试；第 3 次仍未成功 → 转为通知人（附 `wl task done <id> --as <post>`），不再自动重试。这一路径的 `report_from` 是上报岗位的 handle，从调度员终端代发属于 2A 第 14 节记录的"代发只在占位进程上验证过"的情形；被拒会被 `request-show` 定案为"被记下的拒绝"并删行（2A 第 9.1 节），退出码 2 计为一次失败。
+- **代为收尾 `done_unfinished`**：调用 2A `wl task done` 的同一个内部函数的**只续跑模式**（`resumeEpoch` = 该判定的 `epoch`，2A 第 10 节），`--as` 为 `task_done.post`。只续跑模式在该轮没有判定或不是当前轮时报 `verdict_missing`，绝不跑 gate、绝不对新一轮下判定（复审五 C-2）；2A 的步骤 2 保证"有判定但未完成 → 直接从后续步骤继续"，每一步都是账本 P1，与岗位自己同时重跑也会收敛到同一组调用（2A 第 10 节"锁"）。结果：`done` → 记事件、清除信号；`verdict_missing` → 清除信号（那一轮已被收尾或放弃）；`uncertain` 或 Orca 报错 → 记事件，`notify_count + 1`，下一个周期再试（不做指数退避）；第 3 次仍未成功 → 立即转为通知人（附 `wl task done <id> --as <post>`），不再自动重试。这一路径的 `report_from` 是上报岗位的 handle，从调度员终端代发属于 2A 第 14 节记录的"代发只在占位进程上验证过"的情形；被拒会被 `request-show` 定案为"被记下的拒绝"并删行（2A 第 9.1 节），退出码 2 计为一次失败。
 - **自动 recover（`patrol.auto_recover: true`）**：`dead_assignee` 在连续两轮扫描（相隔至少一个周期）都命中、且主人岗位终端存活时，调用 2A `wl task recover` 的同一个内部函数（P1，键带 epoch，中断可续）。默认关闭：Orca 整个重启的过程中 `terminal list` 可能短暂地不完整，误判的代价是把一个正在干活的派发收回。
 
 ### 6.5 `wl attention <team>`
@@ -340,7 +341,7 @@ frozen_posts(post TEXT PRIMARY KEY, team TEXT NOT NULL REFERENCES teams(name), r
 
 - **日志**：阶段 1 的 `CallLog` 对每次调用记完整 stdout。调度员的只读轮询（`check` 空批、`task-list`、`terminal list`、`worker-list`、`terminal show`）只记摘要（argv、`ok`/错误码、耗时、消息条数），否则一天上千条完整回执。写调用照常完整记录。清理在日期变化时做（第 3 节第 3 步），不只在启动时。
 - **规格重载**：调度员不看 `team.yaml` 文件本身，而是每轮比对 `teams.spec_hash`（只有 `wl up` 会改它）与已加载规格的哈希。不一致 → 重新 `loadTeamSpec(teams.spec_path)`：成功且哈希等于 `teams.spec_hash` → 换用新规格，事件 `spec_reload`；文件读不到、校验失败、或哈希又对不上（文件在 `wl up` 之后又被改过）→ 沿用旧规格、事件 `spec_reload_failed`，`wl dispatcher status` 显示这条警告。规格问题从不让调度员退出（只有 `run_not_found` 致命）。
-- **睡眠唤醒**：两轮之间的墙钟间隔超过 `WAKE_GAP_MS`（180 秒，约为一轮最长耗时的两倍）视为机器刚睡醒：`wokeAt = now`，下一轮巡查只观察，`no_progress` 的"有效最近输出"至少取 `wokeAt`。否则合上笔记本一晚，打开的第一轮巡查会把所有岗位一起升级。
+- **睡眠唤醒**：比较两轮之间墙钟（`Date.now()`）与单调时钟（`performance.now()`，机器睡眠期间不走）各自经过的时长，墙钟多出 `WAKE_GAP_MS`（60 秒）以上视为机器刚睡醒。只看墙钟间隔会把一轮慢的循环（60 秒 `check` + 退避 + 慢扫描）误判为唤醒、持续压住"无进展"（复审五 C-3）。睡醒后：`wokeAt = now`，下一轮巡查只观察，`no_progress` 的"有效最近输出"至少取 `wokeAt`。否则合上笔记本一晚，打开的第一轮巡查会把所有岗位一起升级。
 - **退避**：connect 与 `check` 失败用指数退避（5 秒起，翻倍，上限 60 秒），成功后归零。
 
 ## 9. 错误处理
@@ -348,7 +349,7 @@ frozen_posts(post TEXT PRIMARY KEY, team TEXT NOT NULL REFERENCES teams(name), r
 - 主循环每一轮包在一个异常边界里：未预料的异常只记日志、退避后继续。**只有 connect 阶段的 `run_not_found` 与 `dispatcher_not_in_orca` 让进程退出**。`consumer_fenced` 在循环里自愈（第 3 节）。退出时删除自己的锁行。
 - 收件箱处理不会抛出（第 4 节）。
 - 巡查：`task-list` 或 `terminal list` 失败 → 这一轮整体跳过（事件 `scan_skipped`），**`lastScanAt` 仍然更新**（否则每一轮都会重试一次完整扫描，Orca 不可达时等于每分钟打一轮调用）；`worker-list` 失败 → 用本地 `questions` 兜底判断"等回答"；`terminal show` 失败 → 该岗位 `screenGuard` 为 `unknown`。单个主体的失败被隔离（第 6.2 节）。
-- 新增错误码：输入错误（退出码 1）`dispatcher_stale`、`dispatcher_launch_unsupported`、`dispatcher_not_in_orca`、`post_frozen`、`notify_conflict`、`notify_command_unsupported`、`question_unknown`（`reply` 的 message id 不在本地 `questions` 里且 Orca 也拒绝）；结果不确定（退出码 3）`dispatcher_start_unconfirmed`。
+- 新增错误码：输入错误（退出码 1）`dispatcher_superseded`、`dispatcher_stale`、`dispatcher_launch_unsupported`、`dispatcher_not_in_orca`、`post_frozen`、`notify_conflict`、`notify_command_unsupported`、`question_unknown`（`reply` 的 message id 不在本地 `questions` 里且 Orca 也拒绝）；结果不确定（退出码 3）`dispatcher_start_unconfirmed`。
 
 ## 10. 测试
 
@@ -361,6 +362,9 @@ frozen_posts(post TEXT PRIMARY KEY, team TEXT NOT NULL REFERENCES teams(name), r
 假 `OrcaClient` 在 2A 要求的语义之上再模拟：delivery 的生成与重放（不 ack 再 `check` 返回同一 deliveryId 和 `replayed: true`；同一 deliveryId ack 两次无害）；`run-use` 之后上一代的 delivery 被任何人 ack 都 `consumer_fenced`，未 ack 的消息以新 deliveryId 重投（R6-2）；`question` 消息与 `reply` 的协调者校验（R6-4）；`worker-list` 的 `attention.categories`。
 
 ## 11. 不做的事（阶段 2B）
+
+- 不提供 `wl task list --overdue`：逾期任务出现在 `wl attention` 的"处理中的信号"里。
+- 不改阶段 1 的 `wl send`（人显式要求的发送）；`wl up` 的启动包在 2A 里已改为先做画面检查。
 
 - 不做"消耗过快""原地打转""上下文快满""用量上限"信号（后两者需要解析画面，阶段 3）。
 - 不做"陪护"诊断岗。

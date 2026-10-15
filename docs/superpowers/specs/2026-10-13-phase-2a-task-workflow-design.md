@@ -228,9 +228,12 @@ task_log(                         -- 只追加的本地变迁记录（吸收项 
 
 1. `terminal show --terminal <handle>`，取 `preview` 的最后 8 行。终端不存在 → 调用方按 `post_offline` 处理；`preview` 为空或调用失败 → `unknown`。
 2. 任何一行命中下列任一模式 → `at_prompt`（大小写不敏感）：`\(y/n\)`、`\[y/n\]`、`\(yes/no\)`；以 `❯`/`>`/`›` 加数字加 `.`/`)` 开头的编号选项行；`Do you want to`、`Would you like to`、`Allow `、`Approve`、`Press Enter`、`Esc to cancel`、`trust (this|the) (folder|files|directory)`、`Continue\?`、`\?\s*$`（以问号结尾的行）。
-3. 否则 → `clear`。
+3. **最后一个非空行像 shell 提示符**（以 `$`、`%`、`#` 结尾，或形如 `PS …>`）→ `unknown`：agent 已经退出、终端回到了 shell，这时打字加回车等于执行命令（复审五 I-1）。`❯`/`>` 结尾不算，它们是 agent TUI 的输入行。
+4. 否则 → `clear`。
 
-只有 `clear` 才打字。这是宁可漏发也不误答的启发式：漏判（画面是提示但没命中模式）会把文字打进提示，所以模式表偏宽；误判只是少发一条通知。R6 的实例（启动命令被 shell 别名展开、停在 `(Y/n)`）命中第一条。模式表放在一个常量里，附带单元测试覆盖 R6 记录的两种画面（`test/fixtures/receipts/orchestration-r6.json` 的 `terminal-show-at-yn-prompt` 应为 `at_prompt`，`terminal-show-idle-claude` 应为 `clear`）。
+**插进通知里的外来文本一律中和 shell 元字符**：任务标题、2B 转述的 worker 原话，在清洗控制字符之外，把 `` ` ``、`$`、`;`、`|`、`&`、`<`、`>`、`\` 换成全角对应字符（`neutralize()`，与 `screenGuard` 放在同一个模块）。画面检查漏判时，打进去的也只是一行无害的文字。
+
+只有 `clear` 才打字。这是宁可漏发也不误答的启发式：漏判（画面是提示但没命中模式）会把文字打进提示，所以模式表偏宽；误判只是少发一条通知。R6 的实例（启动命令被 shell 别名展开、停在 `(Y/n)`）命中第一条；R6 那个画面的第一行就是 shell 提示符，若 agent 已退出只剩这一行，第 3 条把它判为 `unknown`。模式表放在一个常量里，附带单元测试覆盖 R6 记录的两种画面（`test/fixtures/receipts/orchestration-r6.json` 的 `terminal-show-at-yn-prompt` 应为 `at_prompt`，`terminal-show-idle-claude` 应为 `clear`）。
 
 ## 8. 任务状态机
 
@@ -311,7 +314,7 @@ ready + claimed_by=X                                  │
 | `task-create`（子任务） | `wl task done` | `done:<task>:<epoch>:link:<目标地址>` | P1，每个目标一行 |
 | `gate-create` | `wl task done`（escalate） | `done:<task>:<epoch>:gate` | P1 |
 | `gate-create` | `wl task escalate` | `oneshot:<id>` | P2 |
-| `gate-create` / `gate-resolve` | `wl task recover` | `recover:<task>:<epoch>:gate` / `…:resolve` | P1 |
+| `gate-create` / `gate-resolve` | `wl task recover` | `recover:<task>:<dispatch_id>:gate` / `…:resolve`（另有本地记录 `recover:<task>:open`） | P1 |
 | `gate-resolve` | `wl task resolve` | `resolve:<gate_id>` | P1 |
 | `request-show` | 账本定案 | — | 只读 |
 | `check`/`check --ack`/`reply` | 调度员（2B） | — | 见 2B |
@@ -322,7 +325,7 @@ ready + claimed_by=X                                  │
 
 1. 读 `task_ext.epoch` 得到键；`task-list --run` 取任务此刻的状态与全部 `dispatched` 任务的 assignee（同一次调用，供"岗位忙"检查用）。
 2. 按这个键的状态分支：
-   - 已 `done`，任务此刻是 `ready` → 本轮派发已经结束（`resolve`、终端关闭自动回退、`recover`）：`bumpEpoch`（上一轮判定是 `escalate` 时同时 `gate_failures = 0`），写 `task_log`（`epoch_bump`），换新键，到第 3 步。
+   - 已 `done`，任务此刻是 `ready` → 本轮派发已经结束（`resolve`、终端关闭自动回退、`recover`）：`bumpEpoch`（上一轮判定是 `escalate` 时同时 `gate_failures = 0`），写 `task_log`（`epoch_bump`），换新键，到第 3 步。**上一轮若留有未收尾的 `task_done`（例如上报被记下的拒绝、删行后人工 resolve 重开），同时把它收尾为 `result = { outcome: 'abandoned' }`**（复审五 C-2：否则它永远挂在 `--stale` 里，2B 的代为收尾还会把它和新一轮混在一起）。
    - 已 `done`，任务此刻是其他状态 → 本轮派发已经完成：直接返回存下的结果，不调用 Orca。
    - 没有行：任务此刻不是 `ready` → `task_not_open`；是 `ready` → 第 3 步。
    - `pending`/`uncertain` → 第 4 步（按第 9.1 节重放，含"`--to` 已死"的例外）。
@@ -353,7 +356,7 @@ ready + claimed_by=X                                  │
 
 | 原因 | 判定 | 处理命令 |
 | --- | --- | --- |
-| `done_unfinished` | `task_done` 有行但 `finished_at` 为空 | 原样重跑 `wl task done <id> --as <post>` |
+| `done_unfinished` | **当前 `epoch`** 的 `task_done` 有行但 `finished_at` 为空 | 原样重跑 `wl task done <id> --as <post>` |
 | `call_uncertain` | 该任务相关的账本行为 `pending`/`uncertain` 且超过 1 分钟 | 重跑写在行里的那条命令（`wl task start`/`done`/`resolve`/`recover`） |
 | `dead_assignee` | `dispatched` 且 `assignee_handle` 不在存活终端里 | `wl task recover <id>` |
 | `owner_idle` | `ready`、有 `claimed_by`、主人手上没有 `dispatched` 任务、`ready_since` 超过 `patrol.owner_idle_minutes`（2B 字段，缺省 30）分钟 | `wl task start <id> --as <owner>`，或 `release`/`reassign` |
@@ -423,6 +426,8 @@ ready + claimed_by=X                                  │
    - `escalate`：①上报 `worker_done --outcome failed`（`--subject "gate failed"`，键 `…:report`）——任务转 `failed`；②`gate-create --task <id> --question "连续 <n> 次 gate 失败（输出见 <gate 输出文件路径>）。resolve 后任务回到 ready：原岗位 wl task start 即重试；改派用 wl task resolve <gate> --reassign <地址>；不想继续就不要 resolve" --from <coordinator_handle>`（键 `…:gate`）——任务转 `blocked`；本地 `gates` 插入一行；③经画面检查尽力通知牵头岗一次"[雁阵] <post> 的任务 <id> 连续 <n> 次 gate 失败，已转人工决策：wl task resolve <gate_id> …"（失败只记 `deps.warn`，吸收项 B-4）。**顺序只能是先上报后建 gate**（gate 会先把 dispatch 结束掉，事实 3）。
 5. 写 `task_done.result`（含 `closure`：`passed` 且无连接 → `completed`；有 `hands_to` → `handed_to` + 目标；有 `reviewed_by` → `sent_for_review` + 目标；`escalate` → `escalated`）与 `finished_at`，`task_log`（`done` 或 `escalate`），返回。
 
+**只续跑模式（2B 用）：** `done` 的内部函数接受 `resumeEpoch`：只在 `task_done(task_id, resumeEpoch)` 存在且未收尾时从第 4 步继续；该轮没有判定、或 `resumeEpoch` 不等于当前 `epoch` → `verdict_missing`（退出码 1），**绝不进入第 3 步跑 gate**。2B 调度员代为收尾只用这个模式（复审五 C-2）。
+
 **为什么一律"先上报、再做后续"：** 上报是唯一绑定"那个 dispatch、那个终端"的调用，越早落地越不容易因为终端被关而永远失败；若上报失败，还没有任何子任务被建出来。上报落地后中途退出留下的"已上报、未收尾"由 `task_done.finished_at` 为空标识，`wl task list --stale` 会列出（`done_unfinished`），2B 调度员会代为重跑（2B spec）。
 
 **gate 的执行：**
@@ -433,7 +438,7 @@ ready + claimed_by=X                                  │
 
 **`wl task escalate <id> --reason <text> [--reopen] [--retry-request <id>]`**
 
-人工或任务主人可调用。任务 `completed`/`failed` → 需要 `--reopen`（否则 `reopen_required`，提示"已终态的任务 escalate 后 resolve 会回到 ready，会在新的一轮重新走 gate 与连接"；对 `completed` 任务 `gate-create` 的行为未验证，见第 14 节）。`gate-create --task <id> --question <reason> --from <coordinator_handle>`（P2），本地 `gates` 插入一行、`task_log`（`escalate`），经画面检查尽力通知牵头岗。任务若是 `dispatched`，正在进行的 dispatch 被 Orca 结束，岗位之后的 `wl task done` 会失败——输出里写明这一点。
+人工（调用方解析不到岗位）、任务主人或牵头岗可调用，其他岗位 → `not_your_task`。任务 `completed`/`failed` → 需要 `--reopen`（否则 `reopen_required`，提示"已终态的任务 escalate 后 resolve 会回到 ready，会在新的一轮重新走 gate 与连接"；对 `completed` 任务 `gate-create` 的行为未验证，见第 14 节）。`gate-create --task <id> --question <reason> --from <coordinator_handle>`（P2），本地 `gates` 插入一行、`task_log`（`escalate`），经画面检查尽力通知牵头岗。任务若是 `dispatched`，正在进行的 dispatch 被 Orca 结束，岗位之后的 `wl task done` 会失败——输出里写明这一点。
 
 **`wl task resolve <gate_id> --resolution <text> [--reassign <addr>]`**
 
@@ -441,13 +446,13 @@ ready + claimed_by=X                                  │
 
 **`wl task recover <id> [--as <addr>]`**（吸收项 B-2）
 
-用于 `dispatched` 且 assignee 终端已不在存活列表里的任务（Orca 整个重启后、或派发落在一个随后被重建的终端上）。前置：任务 `dispatched` 且 assignee 不存活（否则 `assignee_alive`，退出码 1）。步骤（每步 P1，键带当前 `epoch`）：`gate-create --task <id> --question "雁阵 recover：原派发对象已不存在"`（键 `recover:<task>:<epoch>:gate`）→ `gate-resolve --id <gate> --resolution "recover"`（键 `…:resolve`）→ 任务回到 `ready` → `dispatchTo(任务, claimed_by)`（`epoch + 1`，主人忙则 `queued`）。三步都有自己的键，中途中断后原样重跑继续。写 `task_log`（`recover`）。
+用于 `dispatched` 且 assignee 终端已不在存活列表里的任务（Orca 整个重启后、或派发落在一个随后被重建的终端上）。前置：任务 `dispatched` 且 assignee 不存活（否则 `assignee_alive`，退出码 1）。开始时先落一条本地记录 `recover:<task>:open`，存下**这次 recover 针对的 `dispatch_id` 与 `epoch`**；之后各步的键都用这两个值：`gate-create --task <id> --question "雁阵 recover：原派发对象已不存在"`（键 `recover:<task>:<dispatch_id>:gate`）→ `gate-resolve --id <gate> --resolution "recover"`（键 `…:resolve`）→ 任务回到 `ready` → `dispatchTo(任务, claimed_by)`（`epoch + 1`，主人忙则 `queued`）→ 删除 `recover:<task>:open`。**`recover:<task>:open` 存在时跳过前置检查、直接用记录里的值续跑**（复审五 I-7：中断可能发生在 `dispatchTo` 加了 epoch 之后，此时任务已是 `ready`/`dispatched`，按当前 epoch 找不到原来的键）。写 `task_log`（`recover`）。
 
 ## 11. 错误处理
 
 沿用总纲 7.8 的四类退出码。
 
-- 输入错误（退出码 1）：`run_not_ready`、`run_ambiguous`、`task_not_found`、`self_claim_disabled`、`tags_mismatch`、`task_not_open`、`not_claimed_by_you`、`not_your_task`、`plan_required`、`post_busy`、`task_dispatched`、`task_not_dispatched`、`not_dispatched_to_you`、`task_terminal`、`reopen_required`、`assignee_alive`、`actor_required`、`post_unknown`、`gate_unknown`、`gate_cwd_unknown`、`links_conflict`、`links_unknown_post`、`links_self`、`links_cycle`、`gates_unknown_post`、`field_removed`、`team_spec_changed`、`spec_not_found`、`retry_request_args_changed`；以及 `done` 的 `gate_failed`/`escalated`/`gate_failed_after_bypass` 结果。
+- 输入错误（退出码 1）：`verdict_missing`、`run_not_ready`、`run_ambiguous`、`task_not_found`、`self_claim_disabled`、`tags_mismatch`、`task_not_open`、`not_claimed_by_you`、`not_your_task`、`plan_required`、`post_busy`、`task_dispatched`、`task_not_dispatched`、`not_dispatched_to_you`、`task_terminal`、`reopen_required`、`assignee_alive`、`actor_required`、`post_unknown`、`gate_unknown`、`gate_cwd_unknown`、`links_conflict`、`links_unknown_post`、`links_self`、`links_cycle`、`gates_unknown_post`、`field_removed`、`team_spec_changed`、`spec_not_found`、`retry_request_args_changed`；以及 `done` 的 `gate_failed`/`escalated`/`gate_failed_after_bypass` 结果。
 - Orca 明确报错（退出码 2）：经第 9.1 节第 3 步由 `request-show` 定案为"未落地"或"被记下的拒绝"后，原样附上 Orca 错误码，如 `inactive_dispatch`/`worker_identity_changed`（提示"这一轮派发已经不属于这个终端：先 `wl task show <id>`；若任务已回到 `ready`，`wl task start <id>`；若派给了已不存在的终端，`wl task recover <id>`"）、`run_lost`。
 - **`consumer_fenced`** 不直接报给用户：按第 5.2 节刷新协调者后重试一次；重试仍被 fence 才报 Orca 错误。
 - **结果不确定（退出码 3）**：`request-show` 为 `pending` 或本身失败，或原错误为传输/不确定类而 `request-show` 为 `absent`。P1 的提示是"原样重跑同一条命令"；P2 的提示带上这次用的 id。`wl up` 的 Run 建立步骤不确定时记为 `uncertain`、退出码 3。
@@ -482,7 +487,8 @@ ready + claimed_by=X                                  │
 | 风险 | 影响 | 对策 |
 | --- | --- | --- |
 | **岗位不经 `wl task done`，直接用 Orca CLI 上报**（Orca 的 skill、agent 的习惯，或旧版本残留的 `--inject` 前言） | gate 不跑、连接不触发 | 2A 不再注入 Orca 前言；任务 spec 与通知都写明用 `wl task done`；`list --stale` 列出 `bypassed`，`wl task done` 可补跑 gate 与连接；2B 调度员看到"没有 `task_done` 的 `worker_done`"会通知人（2B spec） |
-| **画面检查是启发式**：漏判会把通知打进对方的确认或选择提示 | 替对方回答提示 | 模式表偏宽、只有 `clear` 才打字、拿不到画面就不打；通知只是提醒，漏发的代价很小；模式表有单元测试，R6 的真实画面入库为样本 |
+| **画面检查是启发式**：漏判会把通知打进对方的确认或选择提示，或打进已经回到 shell 的终端 | 替对方回答提示；在 shell 里执行一行文字 | 模式表偏宽、只有 `clear` 才打字、拿不到画面或像 shell 提示符就不打；插入的外来文本中和 shell 元字符；模式表有单元测试，R6 的真实画面入库为样本 |
+| 阶段 1 的 `wl up` 启动包与 `wl send` 不经画面检查 | 首次启动时的"是否信任此文件夹"一类确认框可能被启动包的回车选中 | `wl up` 发启动包前改为先 `screenGuard`：`at_prompt` → 该岗位结果 `uncertain`（原因"岗位停在确认提示上，处理后重跑 wl up"），不发；`unknown` 照常发（刚启动的终端常常读不出画面）。`wl send` 是人显式要求的发送，保持不变 |
 | **每次 Orca 整个重启都会让所有终端 handle 失效** | 岗位重启后无法对手头任务 `done` | 终端被关闭时 Orca 自动回退（事实 3）；重启后是否回退未验证，`wl up` 会列出 `dead_assignee` 任务并给出 `wl task recover <id>` |
 | Orca 整个重启后旧 `coordinator_handle` 是否仍被接受未验证 | 2A 协调者调用失败 | 重启后下一次 `wl up` 按 5.2 节 `run-use` 到 lead 的新 handle |
 | Orca 清理旧回执，`request-show` 对"很久以前落地"的调用也报 `absent` | 隔很久之后重跑一个曾经超时的命令，可能重复执行 | 账本行通常在分钟级内被重放；清理周期未知，若实测较短再加"行龄超过 N 小时的不确定行不自动重放、只提示人工核对" |
