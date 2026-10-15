@@ -227,7 +227,7 @@ async function ensureRun(l: Launch, posts: PostResult[], args: UpArgs): Promise<
 }
 
 /** 只读：派给已不存在终端的任务。 */
-async function reportDeadAssignees(l: Launch, runId: string): Promise<NonNullable<UpResult['deadAssignees']>> {
+async function findDeadAssignees(l: Launch, runId: string): Promise<NonNullable<UpResult['deadAssignees']>> {
   const tasks = await l.deps.orca.taskList({ run: runId })
   const live = new Set((await l.deps.orca.terminalList()).map((t) => t.handle))
   return tasks
@@ -235,6 +235,17 @@ async function reportDeadAssignees(l: Launch, runId: string): Promise<NonNullabl
     .map((t) => ({
       taskId: t.id, title: t.title, owner: l.deps.registry.getTaskExt(t.id)?.claimedBy ?? null, command: `wl task recover ${t.id}`,
     }))
+}
+
+/** 只是提示性核对：读失败只告警，不影响 up 的结果。 */
+async function reportDeadAssignees(l: Launch, runId: string): Promise<NonNullable<UpResult['deadAssignees']>> {
+  try {
+    return await findDeadAssignees(l, runId)
+  } catch (err) {
+    if (!(err instanceof WinglineError) || err.kind === 'input' || err.kind === 'internal') throw err
+    l.deps.warn(`未能核对派给已消失终端的任务：${err.message}`)
+    return []
+  }
 }
 
 export async function up(deps: CommandDeps, args: UpArgs): Promise<UpResult> {
