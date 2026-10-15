@@ -368,7 +368,7 @@ export function mkDeps(orca: FakeOrca, over: Partial<CommandDeps> = {}) {
   const warnings: string[] = []
   const deps: CommandDeps = {
     orca, registry, warn: (m) => warnings.push(m),
-    verifiedOrca: '>=1.4.214 <1.5.0', multilineSafe: true, home, env: {}, now: () => new Date(), monotonic: () => performance.now(), ...over,
+    verifiedOrca: '>=1.4.214 <1.5.0', multilineSafe: true, home, orcaPath: '/usr/bin/orca', env: {}, now: () => new Date(), monotonic: () => performance.now(), ...over,
   }
   return { deps, warnings, registry, home }
 }

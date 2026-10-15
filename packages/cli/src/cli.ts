@@ -67,6 +67,7 @@ export function defaultMakeDeps(env: NodeJS.ProcessEnv, warn: (m: string) => voi
     verifiedOrca: verified.verifiedOrca,
     multilineSafe: !exe.viaCmd,
     home,
+    orcaPath: exe.cmdPath ?? exe.file,
     env,
     now: () => new Date(),
     monotonic: () => performance.now(),

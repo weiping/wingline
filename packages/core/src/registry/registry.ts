@@ -232,7 +232,7 @@ const postRow = (r: Row): PostRow => ({
   isLead: r.is_lead === 1,
 })
 
-function pidAlive(pid: number): boolean {
+export function pidAlive(pid: number): boolean {
   try {
     process.kill(pid, 0)
     return true
