@@ -379,3 +379,25 @@ test('run step deferred → no dead-assignee report and no taskList call', async
   expect(r.deadAssignees ?? []).toEqual([])
   expect(o.calls).not.toContain('taskList')
 })
+
+test('a failing taskList in the dead-assignee check does not fail up: posts and Run are still returned, deadAssignees omitted', async () => {
+  const o = new FakeOrca(); const { deps, registry } = mkDeps(o)
+  o.faults.push({ method: 'taskList', when: 'before', error: new WinglineError('orca', 'runtime_unavailable', 'down') })
+  const r = await up(deps, { specPath: duo() })
+  expect(r.posts.map((x) => x.outcome)).toEqual(['launched', 'launched'])
+  expect(r.run).toEqual({ outcome: 'created', runId: 'run-1' })
+  expect(r.deadAssignees ?? []).toEqual([])
+  expect(registry.getTeam('duo')).toMatchObject({ runId: 'run-1', status: 'up' })
+})
+test('a failing terminalList in the dead-assignee check does not fail up either', async () => {
+  const o = new FakeOrca(); const { deps } = mkDeps(o)
+  const taskList = o.taskList.bind(o)
+  o.taskList = async (a) => {                      // terminalList is called right after taskList in the check
+    o.faults.push({ method: 'terminalList', when: 'before', error: new WinglineError('orca', 'runtime_unavailable', 'down') })
+    return taskList(a)
+  }
+  const r = await up(deps, { specPath: duo() })
+  expect(r.posts.map((x) => x.outcome)).toEqual(['launched', 'launched'])
+  expect(r.run).toEqual({ outcome: 'created', runId: 'run-1' })
+  expect(r.deadAssignees ?? []).toEqual([])
+})
