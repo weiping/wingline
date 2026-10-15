@@ -356,9 +356,11 @@ ready + claimed_by=X                                  │
 | `done_unfinished` | `task_done` 有行但 `finished_at` 为空 | 原样重跑 `wl task done <id> --as <post>` |
 | `call_uncertain` | 该任务相关的账本行为 `pending`/`uncertain` 且超过 1 分钟 | 重跑写在行里的那条命令（`wl task start`/`done`/`resolve`/`recover`） |
 | `dead_assignee` | `dispatched` 且 `assignee_handle` 不在存活终端里 | `wl task recover <id>` |
-| `owner_idle` | `ready`、有 `claimed_by`、`ready_since` 超过 30 分钟 | `wl task start <id> --as <owner>`，或 `release`/`reassign` |
+| `owner_idle` | `ready`、有 `claimed_by`、主人手上没有 `dispatched` 任务、`ready_since` 超过 `patrol.owner_idle_minutes`（2B 字段，缺省 30）分钟 | `wl task start <id> --as <owner>`，或 `release`/`reassign` |
 | `bypassed` | `completed`/`failed`、`kind = work`、`result.provenance = worker_report`，且本地没有该 `(task, 当前 epoch)` 的 `task_done` 行 | `wl task done <id> --as <owner>`（补跑 gate 与连接，见下） |
 | `blocked_waiting` | `blocked` 且本地 `gates` 有对应行 | `wl task resolve <gate_id> --resolution …` |
+
+这些判定写成一个纯函数 `staleReasons(tasks, terminals, local, now, thresholds)`（输入是一次 `task-list`、一次 `terminal list` 与本地表），2B 的巡查扫描与 `wl attention` 复用同一个函数。
 
 **`wl task show <id> [--team <team>] [--history] [--json]`**
 
