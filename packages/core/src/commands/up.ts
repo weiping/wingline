@@ -8,6 +8,7 @@ import { loadTeamSpec, type PostSpec, type TeamSpec } from '../spec/load.js'
 import { postAddress, preflight, requestId, type CommandDeps, type Step } from './deps.js'
 import { locatePost } from './locate.js'
 import { ledgered } from './task/ledger.js'
+import { screenGuard } from './task/notify.js'
 
 export type UpOutcome = 'already_live' | 'launched' | 'failed' | 'uncertain'
 
@@ -92,7 +93,9 @@ function briefText(l: Launch, post: PostSpec, briefing: string): string {
 
 type PostResult = UpResult['posts'][number]
 
-async function startPost(l: Launch, post: PostSpec, briefing: string, existingHandle: string | null, gen: number) {
+type StartResult = 'sent' | 'unconfirmed' | 'at_prompt'
+
+async function startPost(l: Launch, post: PostSpec, briefing: string, existingHandle: string | null, gen: number): Promise<StartResult> {
   const { orca, registry } = l.deps
   const address = postAddress(post.id, l.spec.name)
   const rid = (step: Step) => requestId(l.spec.name, post.id, step, l.hash, gen)
@@ -107,15 +110,16 @@ async function startPost(l: Launch, post: PostSpec, briefing: string, existingHa
   }
   if (!stepDone(registry, rid('wait'))) {
     const waited = await recorded(registry, rid('wait'), () => orca.terminalWait({ handle, forState: 'tui-idle', timeoutMs: WAIT_TIMEOUT_MS }), (v) => v.satisfied)
-    if (!waited.confirmed) return false
+    if (!waited.confirmed) return 'unconfirmed'
   }
+  if ((await screenGuard(l.deps, handle)) === 'at_prompt') return 'at_prompt'
   const text = briefText(l, post, briefing)
   const id = rid('brief')
   const sent = await recorded(registry, id, () =>
     orca.terminalSend({ handle: handle!, text, enter: true, waitSubmitSec: WAIT_SUBMIT_SEC }),
     (v) => v.accepted,
   )
-  return sent.confirmed
+  return sent.confirmed ? 'sent' : 'unconfirmed'
 }
 
 async function launchPost(l: Launch, post: PostSpec, briefing: string): Promise<PostResult> {
@@ -131,9 +135,11 @@ async function launchPost(l: Launch, post: PostSpec, briefing: string): Promise<
       registry.setPostStatus(address, 'live')
       return { address, outcome: 'already_live' }
     }
-    const ok = await startPost(l, post, briefing, located?.handle ?? null, gen)
-    registry.setPostStatus(address, ok ? 'live' : 'uncertain')
-    return ok ? { address, outcome: 'launched' } : { address, outcome: 'uncertain', reason: '岗位未确认就绪，启动包未送达', retry }
+    const result = await startPost(l, post, briefing, located?.handle ?? null, gen)
+    registry.setPostStatus(address, result === 'sent' ? 'live' : 'uncertain')
+    if (result === 'sent') return { address, outcome: 'launched' }
+    const reason = result === 'at_prompt' ? '岗位停在确认提示上，处理后重跑 wl up' : '岗位未确认就绪，启动包未送达'
+    return { address, outcome: 'uncertain', reason, retry }
   } catch (err) {
     if (!(err instanceof WinglineError) || err.kind === 'input' || err.kind === 'internal') throw err
     const outcome = err.kind === 'orca' ? 'failed' : 'uncertain'
