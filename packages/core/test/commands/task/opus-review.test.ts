@@ -30,11 +30,12 @@ test('A-I1: a never-landed uncertain dispatch row is not replayed to the OLD pos
   const id = o.tasks[0]!.id
   await reassignTask(s.deps, { id, to: 'checker@duo' })
   s.deps.env.ORCA_TERMINAL_HANDLE = 'term-c'
-  await startTask(s.deps, { id }).catch(() => {})
+  const started = await startTask(s.deps, { id })
   const t = o.tasks.find((x) => x.id === id)!
   expect(t.assigneeHandle === 'term-b').toBe(false)            // never the old post's terminal
   expect(t).toMatchObject({ status: 'dispatched', assigneeHandle: 'term-c' })
-  expect(o.sent.filter((m) => m.handle === 'term-c' && m.text.includes('新任务'))).toHaveLength(1)
+  expect(started).toMatchObject({ delivery: 'self' })           // checker started it from its own terminal: nothing typed anywhere
+  expect(o.sent).toEqual([])
 })
 
 // —— A-I2：更早 epoch 留下的 open 行不能永远算 call_uncertain ——
@@ -148,10 +149,10 @@ test('B-M1: run-list with a non-null nextCursor is followed or refused — never
     async json<T>(args: string[]) { calls.push(args); return (args.some((a) => a.includes('cur-1')) ? page([mkRun('run-2')], null) : page([mkRun('run-1')], 'cur-1')) as T },
     async text() { return '' },
   }
-  const r = await createOrcaClient(runner).runList().catch((e) => e)
+  const r: unknown = await createOrcaClient(runner).runList().catch((e: unknown) => e)
   if (r instanceof Error) return                                           // failing closed is acceptable
   expect(calls.length).toBeGreaterThan(1)
-  expect(r.map((x) => x.id)).toEqual(['run-1', 'run-2'])
+  expect((r as Array<{ id: string }>).map((x) => x.id)).toEqual(['run-1', 'run-2'])
 })
 
 // —— B-M2：靠 run-list 找回的 Run 不能从存活终端手里拿走协调者 ——
