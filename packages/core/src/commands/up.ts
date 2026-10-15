@@ -7,12 +7,23 @@ import { specHash } from '../spec/hash.js'
 import { loadTeamSpec, type PostSpec, type TeamSpec } from '../spec/load.js'
 import { postAddress, preflight, requestId, type CommandDeps, type Step } from './deps.js'
 import { locatePost } from './locate.js'
+import { ledgered } from './task/ledger.js'
 
 export type UpOutcome = 'already_live' | 'launched' | 'failed' | 'uncertain'
+
+export interface UpArgs {
+  specPath: string
+  adoptRun?: string
+  newRun?: boolean
+}
+
+export type RunOutcome = 'created' | 'adopted' | 'kept' | 'reclaimed' | 'deferred' | 'failed' | 'uncertain' | 'ambiguous' | 'lost'
 
 export interface UpResult {
   team: string
   posts: Array<{ address: string; outcome: UpOutcome; reason?: string; retry?: string }>
+  run?: { outcome: RunOutcome; runId: string | null; reason?: string; retry?: string; candidates?: Array<{ id: string; createdAt: string }> }
+  deadAssignees?: Array<{ taskId: string; title: string; owner: string | null; command: string }>
 }
 
 const WAIT_TIMEOUT_MS = 60_000
@@ -131,7 +142,102 @@ async function launchPost(l: Launch, post: PostSpec, briefing: string): Promise<
   }
 }
 
-export async function up(deps: CommandDeps, args: { specPath: string }): Promise<UpResult> {
+type RunStep = NonNullable<UpResult['run']>
+
+const runKey = (l: Launch) => `${l.spec.name}:run-create`
+const objectiveOf = (l: Launch) => `wingline:${l.spec.name}`
+
+function writeRun(l: Launch, runId: string, coordinator: string): void {
+  l.deps.registry.setRunId(l.spec.name, runId)
+  l.deps.registry.updateCoordinatorHandle(l.spec.name, coordinator)
+}
+
+async function createRun(l: Launch, leadHandle: string): Promise<RunStep> {
+  const { orca } = l.deps
+  const r = await ledgered(l.deps, {
+    key: runKey(l),
+    team: l.spec.name,
+    build: () => ({ objective: objectiveOf(l), from: leadHandle }),
+    call: (a) => orca.runCreate(a),
+  })
+  writeRun(l, r.id, r.coordinatorHandle)
+  return { outcome: 'created', runId: r.id }
+}
+
+async function adoptRun(l: Launch, id: string, leadHandle: string): Promise<RunStep> {
+  await l.deps.orca.runUse({ id, from: leadHandle })
+  writeRun(l, id, leadHandle)
+  return { outcome: 'adopted', runId: id }
+}
+
+/** 协调者终端还在就保持不动（可能是别的进程的派发器）；不在了才为 lead 重新认领。 */
+async function keepOrReclaim(l: Launch, runId: string, coordinator: string | null, leadHandle: string): Promise<RunStep> {
+  const terminals = await l.deps.orca.terminalList()
+  if (coordinator && terminals.some((t) => t.handle === coordinator)) return { outcome: 'kept', runId }
+  try {
+    await l.deps.orca.runUse({ id: runId, from: leadHandle })
+  } catch (err) {
+    if (!(err instanceof WinglineError) || err.code !== 'run_not_found') throw err
+    return {
+      outcome: 'lost', runId, reason: '原 Run 已不存在，旧任务无法恢复', retry: `wl up ${l.spec.specPath} --new-run`,
+    }
+  }
+  l.deps.registry.updateCoordinatorHandle(l.spec.name, leadHandle)
+  return { outcome: 'reclaimed', runId }
+}
+
+/** 注册表丢失时按 objective 找回 Run；没有候选返回 undefined。 */
+async function discoverRun(l: Launch, leadHandle: string): Promise<RunStep | undefined> {
+  const found = (await l.deps.orca.runList()).filter((r) => r.objective === objectiveOf(l))
+  if (found.length === 0) return undefined
+  if (found.length === 1) return adoptRun(l, found[0]!.id, leadHandle)
+  return {
+    outcome: 'ambiguous', runId: null, reason: `找到 ${found.length} 个候选 Run`,
+    candidates: found.map((r) => ({ id: r.id, createdAt: r.createdAt })), retry: `wl up ${l.spec.specPath} --adopt-run <id>`,
+  }
+}
+
+async function runStep(l: Launch, args: UpArgs, leadHandle: string): Promise<RunStep> {
+  const { registry } = l.deps
+  const team = registry.getTeam(l.spec.name)!
+  if (args.newRun) {
+    registry.setRunId(team.name, null)
+    registry.updateCoordinatorHandle(team.name, null)
+    registry.dropRequest(runKey(l))
+    return createRun(l, leadHandle)
+  }
+  if (args.adoptRun) return adoptRun(l, args.adoptRun, leadHandle)
+  if (team.runId) return keepOrReclaim(l, team.runId, team.coordinatorHandle, leadHandle)
+  const discovered = registry.getRequest(runKey(l)) ? undefined : await discoverRun(l, leadHandle)
+  return discovered ?? createRun(l, leadHandle)
+}
+
+async function ensureRun(l: Launch, posts: PostResult[], args: UpArgs): Promise<RunStep> {
+  const lead = postAddress(l.spec.lead, l.spec.name)
+  const leadResult = posts.find((p) => p.address === lead)
+  if (leadResult?.outcome !== 'launched' && leadResult?.outcome !== 'already_live') return { outcome: 'deferred', runId: null }
+  try {
+    return await runStep(l, args, l.deps.registry.getPost(lead)!.handle!)
+  } catch (err) {
+    if (!(err instanceof WinglineError) || err.kind === 'input' || err.kind === 'internal') throw err
+    const runId = l.deps.registry.getTeam(l.spec.name)!.runId
+    if (err.kind === 'orca') return { outcome: 'failed', runId, reason: err.message }
+    return { outcome: 'uncertain', runId, reason: err.message, retry: `wl up ${l.spec.specPath}` }
+  }
+}
+
+/** 只读：派给已不存在终端的任务。 */
+async function reportDeadAssignees(l: Launch, runId: string): Promise<NonNullable<UpResult['deadAssignees']>> {
+  const tasks = await l.deps.orca.taskList({ run: runId })
+  const live = new Set((await l.deps.orca.terminalList()).map((t) => t.handle))
+  return tasks
+    .filter((t) => t.status === 'dispatched' && t.assigneeHandle !== null && !live.has(t.assigneeHandle))
+    .map((t) => ({
+      taskId: t.id, title: t.title, owner: l.deps.registry.getTaskExt(t.id)?.claimedBy ?? null, command: `wl task recover ${t.id}`,
+    }))
+}
+
+export async function up(deps: CommandDeps, args: UpArgs): Promise<UpResult> {
   const spec = loadTeamSpec(args.specPath)
   const hash = specHash(spec)
   const briefings = new Map(spec.posts.map((p) => [p.id, renderBriefing(spec, p.id)]))
@@ -141,6 +247,8 @@ export async function up(deps: CommandDeps, args: { specPath: string }): Promise
     await registerTeam(l)
     const posts: PostResult[] = []
     for (const p of spec.posts) posts.push(await launchPost(l, p, briefings.get(p.id)!))
-    return { team: spec.name, posts }
+    const run = await ensureRun(l, posts, args)
+    const dead = run.runId ? await reportDeadAssignees(l, run.runId) : []
+    return { team: spec.name, posts, run, ...(dead.length > 0 ? { deadAssignees: dead } : {}) }
   })
 }

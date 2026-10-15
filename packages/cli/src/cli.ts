@@ -58,8 +58,12 @@ export function installWarningFilter(stderr: Writable): void {
   })
 }
 
-const exitCodeOfUp = (r: { posts: Array<{ outcome: string }> }) =>
-  r.posts.some((p) => p.outcome === 'failed') ? 2 : r.posts.some((p) => p.outcome === 'uncertain') ? 3 : 0
+const RUN_EXIT: Record<string, number> = { ambiguous: 1, failed: 2, lost: 2, uncertain: 3 }
+/** 岗位结果与 Run 步骤取最严重者：失败/丢失 2 > 不确定 3 > 候选不唯一 1。 */
+const exitCodeOfUp = (r: { posts: Array<{ outcome: string }>; run?: { outcome: string } }) => {
+  const codes = [...r.posts.map((p) => (p.outcome === 'failed' ? 2 : p.outcome === 'uncertain' ? 3 : 0)), RUN_EXIT[r.run?.outcome ?? ''] ?? 0]
+  return codes.includes(2) ? 2 : codes.includes(3) ? 3 : codes.includes(1) ? 1 : 0
+}
 
 export async function run(
   argv: string[],
@@ -94,7 +98,15 @@ export async function run(
     .configureOutput({ writeOut: (s) => io.stdout.write(s), writeErr: (s) => io.stderr.write(s) })
 
   program.command('up <team.yaml>').description('拉起团队的全部岗位').option('--json', '输出 JSON')
-    .action((specPath: string, o: { json?: boolean }) => execute(!!o.json, (d) => commands.up(d, { specPath }), renderUp, exitCodeOfUp))
+    .option('--adopt-run <id>', '找回指定的 Run').option('--new-run', '丢弃旧 Run，新建一个')
+    .action((specPath: string, o: { json?: boolean; adoptRun?: string; newRun?: boolean }) => {
+      if (o.adoptRun && o.newRun) {
+        io.stderr.write('错误：--adopt-run 与 --new-run 互斥\n')
+        code = 1
+        return
+      }
+      return execute(!!o.json, (d) => commands.up(d, { specPath, adoptRun: o.adoptRun, newRun: o.newRun }), renderUp, exitCodeOfUp)
+    })
   program.command('ps [team]').description('查看岗位状态').option('--json', '输出 JSON')
     .action((team: string | undefined, o: { json?: boolean }) => execute(!!o.json, (d) => commands.ps(d, { team }), renderPs))
   program.command('send <post@team> <message>').description('给岗位发消息').option('--json', '输出 JSON')

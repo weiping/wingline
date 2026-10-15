@@ -1,6 +1,10 @@
 import { WinglineError, type DownResult, type PsRow, type SendResultRow, type UpResult } from '@wingline/core'
 
 const UP_LABEL = { already_live: '已在岗', launched: '已拉起', failed: '失败', uncertain: '不确定' } as const
+const RUN_LABEL = {
+  created: '已新建', adopted: '已找回', kept: '协调者保持不变', reclaimed: '已重新认领', deferred: '本轮跳过（lead 未就绪）',
+  failed: '失败', uncertain: '不确定', ambiguous: '候选不唯一', lost: '原 Run 已丢失',
+} as const
 const DOWN_LABEL = { stopped: '已停止', closed: '已关闭', uncertain: '不确定', already_gone: '终端已不存在' } as const
 
 function table(head: string[], rows: string[][]): string {
@@ -22,7 +26,22 @@ export function renderUp(r: UpResult): string {
     const detail = [p.reason, p.retry && `重试：${p.retry}`].filter(Boolean).join('；')
     return `${p.address}  ${UP_LABEL[p.outcome]}${detail ? `  ${detail}` : ''}`
   })
-  return `团队 ${r.team}\n${lines.join('\n')}\n`
+  return `团队 ${r.team}\n${lines.join('\n')}\n${renderRun(r)}${renderDead(r)}`
+}
+
+function renderRun(r: UpResult): string {
+  if (!r.run) return ''
+  const run = r.run
+  const head = `Run  ${RUN_LABEL[run.outcome]}${run.runId ? `  ${run.runId}` : ''}`
+  const detail = [run.reason, run.retry && `重试：${run.retry}`].filter(Boolean).join('；')
+  const candidates = (run.candidates ?? []).map((c) => `\n  候选 ${c.id}（${c.createdAt}）`).join('')
+  return `${head}${detail ? `  ${detail}` : ''}${candidates}\n`
+}
+
+function renderDead(r: UpResult): string {
+  if (!r.deadAssignees?.length) return ''
+  const lines = r.deadAssignees.map((d) => `  ${d.taskId}  ${d.title}  归属 ${d.owner ?? '-'}  恢复：${d.command}`)
+  return `派给已消失终端的任务：\n${lines.join('\n')}\n`
 }
 
 export function renderSend(r: SendResultRow): string {
