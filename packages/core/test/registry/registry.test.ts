@@ -259,3 +259,13 @@ test('a phase-1 database (user_version 1, with rows) upgrades in place and keeps
   r.insertTaskExt({ taskId: 't1', team: 'duo', tags: [], kind: 'work' })
   expect(r.getTaskExt('t1')).not.toBeNull()
 })
+
+test('N6: reissueIntent with expectedOld is compare-and-swap: a stale expectation changes nothing and reports false; a matching one swaps and reports true', () => {
+  const r = Registry.open(tmpDb())
+  r.openIntent('k', 'id-1', { a: 1 })
+  expect(r.reissueIntent('k', 'id-2', { a: 2 }, 'not-the-current-id')).toBe(false)
+  expect(r.getRequest('k')).toMatchObject({ retryRequest: 'id-1', args: JSON.stringify({ a: 1 }) })
+  expect(r.reissueIntent('k', 'id-2', { a: 2 }, 'id-1')).toBe(true)
+  expect(r.getRequest('k')).toMatchObject({ state: 'pending', retryRequest: 'id-2', args: JSON.stringify({ a: 2 }) })
+  expect(r.reissueIntent('missing', 'x', {}, 'y')).toBe(false)
+})
