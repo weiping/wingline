@@ -53,7 +53,7 @@ export async function screenGuard(deps: CommandDeps, handle: string): Promise<Sc
   try {
     return classifyPreview((await deps.orca.terminalShow({ handle })).preview)
   } catch (err) {
-    return err instanceof WinglineError && err.code === 'terminal_not_found' ? 'offline' : 'unknown'
+    return err instanceof WinglineError && err.code === 'terminal_handle_stale' ? 'offline' : 'unknown'
   }
 }
 

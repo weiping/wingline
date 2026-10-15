@@ -3,6 +3,7 @@ import type { OrchestrationTaskStatus } from '../../orca/types.js'
 import type { DoneVerdictRow, RequestState, TaskKind, TaskLogRow, TeamRow } from '../../registry/registry.js'
 import type { CommandDeps } from '../deps.js'
 import { requireActor } from './identity.js'
+import { shellQuote } from './quote.js'
 
 export interface DoneClosure {
   kind: 'completed' | 'handed_to' | 'sent_for_review' | 'escalated'
@@ -143,11 +144,13 @@ export interface StaleItem {
 }
 export interface StaleInput {
   team: string
+  /** 该团队当前的 Run；用来把 oneshot 行归到对应团队。 */
+  runId?: string | null
   tasks: TaskRow[]
   alive: ReadonlySet<string>
   unfinished: DoneVerdictRow[]
   verdicts: ReadonlyMap<string, DoneVerdictRow[]>
-  open: Array<{ id: string; state: RequestState; updatedAt: string }>
+  open: Array<{ id: string; state: RequestState; updatedAt: string; args?: string | null }>
   gates: Array<{ gateId: string; taskId: string }>
 }
 export interface StaleThresholds {
@@ -192,9 +195,24 @@ function epochOfKey(key: string): number {
   return (kind === 'dispatch' || kind === 'done') && /^\d+$/.test(epoch ?? '') ? Number(epoch) : Number.POSITIVE_INFINITY
 }
 
+/** 被打断的 wl task create / escalate（oneshot:<id> 行）：用落盘的参数重建带 --retry-request 的重跑命令。 */
+function oneshotItem(x: StaleInput, r: StaleInput['open'][number]): StaleItem[] {
+  const rid = r.id.slice('oneshot:'.length)
+  const a = JSON.parse(r.args ?? '{}') as { taskTitle?: string; run?: string; tags?: string[]; post?: string | null; parent?: string; task?: string; question?: string }
+  if (a.taskTitle !== undefined && a.run === x.runId) {
+    const flags = [a.post ? `--post ${a.post}` : '', a.tags?.length ? `--tags ${a.tags.join(',')}` : '', a.parent ? `--parent ${a.parent}` : ''].filter(Boolean)
+    const command = [`wl task create ${x.team} --title ${shellQuote(a.taskTitle)}`, ...flags, `--retry-request ${rid}`].join(' ')
+    return [{ taskId: rid, title: a.taskTitle, reason: 'call_uncertain', owner: a.post ?? null, since: r.updatedAt, command }]
+  }
+  const task = x.tasks.find((t) => t.id === a.task)
+  if (!task || a.question === undefined) return []
+  return [item(task, 'call_uncertain', r.updatedAt, `wl task escalate ${task.id} --reason ${shellQuote(a.question)} --retry-request ${rid}`)]
+}
+
 function callUncertain(x: StaleInput, now: Date, th: StaleThresholds): StaleItem[] {
   return x.open.flatMap((r) => {
     if (minutesSince(r.updatedAt, now) <= th.uncertainMinutes) return []
+    if (r.id.startsWith('oneshot:')) return oneshotItem(x, r)
     const task = x.tasks.find((t) => t.id === taskIdOfKey(x, r.id))
     if (r.id.startsWith('dispatch:') && (task?.status === 'completed' || task?.status === 'failed')) return []
     if (task && epochOfKey(r.id) < task.epoch) return []
@@ -250,7 +268,7 @@ export async function gatherStaleInput(deps: CommandDeps, team: string): Promise
   const verdicts = new Map<string, DoneVerdictRow[]>()
   for (const t of tasks) if (t.status === 'completed' || t.status === 'failed') verdicts.set(t.id, deps.registry.listVerdictsOf(t.id))
   return {
-    team, tasks, alive, verdicts,
+    team, runId: mustTeamReady(deps, team).runId, tasks, alive, verdicts,
     unfinished: deps.registry.listUnfinishedVerdicts(team),
     open: deps.registry.listOpenRequests(''),
     gates: deps.registry.listGates(team),

@@ -289,11 +289,20 @@ export class Registry {
     this.db.prepare('DELETE FROM requests WHERE id = ?').run(id)
   }
 
-  listOpenRequests(prefix: string): Array<{ id: string; state: RequestState; updatedAt: string }> {
+  listOpenRequests(prefix: string): Array<{ id: string; state: RequestState; updatedAt: string; args: string | null }> {
     const rows = this.db
-      .prepare("SELECT id, state, updated_at FROM requests WHERE state IN ('pending','uncertain') AND substr(id, 1, ?) = ? ORDER BY id")
+      .prepare("SELECT id, state, updated_at, args FROM requests WHERE state IN ('pending','uncertain') AND substr(id, 1, ?) = ? ORDER BY id")
       .all(prefix.length, prefix) as Row[]
-    return rows.map((r) => ({ id: r.id as string, state: r.state as RequestState, updatedAt: r.updated_at as string }))
+    return rows.map((r) => ({ id: r.id as string, state: r.state as RequestState, updatedAt: r.updated_at as string, args: r.args as string | null }))
+  }
+
+  /** 原子地认领一条本地记录（直接记为 done，可带结果）：第一个调用者得到 true，其余得到 false。 */
+  claimRequest(id: string, receipt?: unknown): boolean {
+    const text = receipt === undefined ? null : JSON.stringify(receipt)
+    const r = this.db
+      .prepare("INSERT INTO requests(id, state, receipt, updated_at) VALUES (?, 'done', ?, ?) ON CONFLICT(id) DO NOTHING")
+      .run(id, text, now())
+    return Number(r.changes) > 0
   }
 
   beginRequest(id: string): void {

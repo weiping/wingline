@@ -47,6 +47,7 @@ async function runPostGate(c: Ctx, n: number): Promise<{ passed: boolean; file: 
   const { deps } = c
   if (c.post.gate === null) return { passed: true, file: null, body: null }
   const g = await runGate(c.post.gate, { cwd: await gateCwd(deps, c.actor.address), timeoutMs: c.spec.budgets.task.gateTimeoutSeconds * 1000 })
+  if (g.interrupted) throw fail('gate_interrupted', 'gate 被中断（Ctrl-C / SIGTERM），没有计为失败', '原样重跑 wl task done')
   const file = writeGateOutput(deps.home, c.team.name, c.id, c.ext.epoch, n, g.output)
   return { passed: g.passed, file, body: gateBody(g.output, file, deps.multilineSafe) }
 }
@@ -77,10 +78,8 @@ async function decideBypassed(c: Ctx): Promise<DoneResult | DoneVerdictRow> {
   }
   const lead = `${c.spec.lead}@${c.team.name}`
   const noticeKey = key(c, 'bypass-notice')
-  if (lead !== c.actor.address && !c.deps.registry.getRequest(noticeKey)) {
+  if (lead !== c.actor.address && c.deps.registry.claimRequest(noticeKey)) {
     await notifyPost(c.deps, lead, `[雁阵] ${c.actor.address} 的任务 ${c.id} 绕过 wl 直接上报，补跑 gate 失败，见 ${g.file}；要重开用 wl task escalate ${c.id} --reopen --reason <原因>`)
-    c.deps.registry.beginRequest(noticeKey)
-    c.deps.registry.finishRequest(noticeKey, 'done')
   }
   return { outcome: 'gate_failed_after_bypass', gateOutputPath: g.file! }
 }
@@ -178,12 +177,29 @@ async function createChild(c: Ctx, target: string, label: string, title: string)
   return r.id
 }
 
+const DELIVERED_WAIT_MS = 5000
+const DELIVERED_POLL_MS = 50
+
+/** 另一个调用正在通知并写交付记录：等它写好；等不到就按派发结果给出不带通知结论的交付状态。 */
+async function awaitDelivered(c: Ctx, target: string, d: Awaited<ReturnType<typeof dispatchTo>>): Promise<LinkOutcome> {
+  const deliveredKey = key(c, `delivered:${target}`)
+  for (let waited = 0; waited < DELIVERED_WAIT_MS; waited += DELIVERED_POLL_MS) {
+    const row = c.deps.registry.getRequest(deliveredKey)
+    if (row?.state === 'done') return JSON.parse(row.receipt!) as LinkOutcome
+    await new Promise((res) => setTimeout(res, DELIVERED_POLL_MS))
+  }
+  if (d.status === 'queued') return { delivery: 'queued' }
+  return { delivery: d.self ? 'self' : 'notified_unconfirmed' }
+}
+
 async function deliverChild(c: Ctx, childId: string, target: string, title: string): Promise<LinkOutcome> {
   if (isPostFrozen(c.deps, target)) return { delivery: 'skipped_frozen' }
   const located = await locatePost(c.deps.orca, target)
   if (!located) return { delivery: 'skipped_offline' }
   const to = { address: target, handle: located.handle }
   const d = await dispatchTo(c.deps, c.team.name, childId, to)
+  // 并发的另一次 done 已经在通知这个目标：不重复打字，等它的交付记录
+  if (!c.deps.registry.claimRequest(key(c, `notify:${target}`))) return awaitDelivered(c, target, d)
   const { delivery, reason } = await announce(c.deps, c.team.name, { id: childId, title }, to, d, c.actor)
   return reason ? { delivery, reason } : { delivery }
 }
@@ -196,8 +212,8 @@ async function linkOne(c: Ctx, plan: NonNullable<ReturnType<typeof linkPlan>>, t
   const childId = await createChild(c, target, plan.label, title)
   registry.insertTaskExt({ taskId: childId, team: c.team.name, tags: [], kind: plan.kind, claimedBy: target, readySince: c.deps.now().toISOString() })
   const entry: Linked = { target, taskId: childId, ...(await deliverChild(c, childId, target, `${plan.label}：${title}`)) }
-  registry.beginRequest(deliveredKey)
-  registry.finishRequest(deliveredKey, 'done', entry)
+  // 并发的另一次 done 先写了交付记录：以它为准
+  if (!registry.claimRequest(deliveredKey, entry)) return JSON.parse(registry.getRequest(deliveredKey)!.receipt!) as Linked
   return entry
 }
 

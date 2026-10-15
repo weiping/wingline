@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { WinglineError } from '../../errors.js'
 import type { CommandDeps } from '../deps.js'
+import { shellQuote } from './quote.js'
 import { announce, dispatchTo, taskSpec, type Delivery } from './dispatch.js'
 import { resolveActor, resolveHandle, type Actor } from './identity.js'
 import { oneShot } from './ledger.js'
@@ -18,11 +19,10 @@ export interface CreateArgs {
   retryRequest?: string
 }
 
-const quote = (s: string) => `'${s.replace(/'/g, "'\\''")}'`
 
 /** 重建同一条 wl task create 命令，错误提示里原样给出。 */
 function rerunCommand(a: CreateArgs, id: string): string {
-  const parts = ['wl task create', a.team, '--title', quote(a.title)]
+  const parts = ['wl task create', a.team, '--title', shellQuote(a.title)]
   if (a.post) parts.push('--post', a.post)
   if (a.tags?.length) parts.push('--tags', a.tags.join(','))
   if (a.parent) parts.push('--parent', a.parent)

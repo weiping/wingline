@@ -2,6 +2,7 @@ import { WinglineError } from '../../errors.js'
 import type { OrchestrationTaskStatus } from '../../orca/types.js'
 import type { CommandDeps } from '../deps.js'
 import { locatePost } from '../locate.js'
+import { shellQuote } from './quote.js'
 import { announce, bumpRound, dispatchTo, type Delivery } from './dispatch.js'
 import { isPostFrozen } from './frozen.js'
 import { resolveActor } from './identity.js'
@@ -12,7 +13,6 @@ import { preflightTask, taskPreflight } from './preflight.js'
 import { findTask, type TaskRow } from './query.js'
 
 const fail = (code: string, message: string, hint?: string) => new WinglineError('input', code, message, { hint })
-const quote = (s: string) => `'${s.replace(/'/g, "'\\''")}'`
 
 export async function escalateTask(
   deps: CommandDeps,
@@ -34,7 +34,7 @@ export async function escalateTask(
       const id = (r as { gate?: { id?: string } } | null)?.gate?.id
       return id ? { id, replayed: true } : null
     },
-    retryHint: (rid) => `wl task escalate ${a.id} --reason ${quote(a.reason)} --retry-request ${rid}`,
+    retryHint: (rid) => `wl task escalate ${a.id} --reason ${shellQuote(a.reason)} --retry-request ${rid}`,
     build: (t) => ({ task: a.id, question: a.reason, from: t.coordinatorHandle! }),
     call: (x) => deps.orca.gateCreate(x),
   })
@@ -98,8 +98,8 @@ async function openRecord(deps: CommandDeps, team: string, id: string): Promise<
     throw fail('assignee_alive', `任务 ${id} 的执行终端仍然存活`, '终端还在，不需要 recover；若它卡住了用 wl task escalate')
   }
   const record = { dispatchId: task.dispatchId!, epoch: task.epoch }
-  deps.registry.beginRequest(key)
-  deps.registry.finishRequest(key, 'done', record)
+  // 并发的另一次 recover 先认领了：用它记下的值
+  if (!deps.registry.claimRequest(key, record)) return JSON.parse(deps.registry.getRequest(key)!.receipt!) as Recorded
   return record
 }
 

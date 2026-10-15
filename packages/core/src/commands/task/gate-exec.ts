@@ -9,6 +9,8 @@ export interface GateExecResult {
   /** 完整输出（不截断）。 */
   output: string
   timedOut: boolean
+  /** 被 Ctrl-C / SIGTERM 中断（不计为 gate 失败）。 */
+  interrupted?: boolean
 }
 
 const TIMEOUT_MARK = '\n（gate 超时，已终止）'
@@ -18,7 +20,9 @@ const WEEK_MS = 7 * 24 * 60 * 60 * 1000
 function killTree(pid: number): void {
   try {
     if (process.platform === 'win32') {
-      spawn('taskkill', ['/T', '/F', '/PID', String(pid)], { shell: false, windowsHide: true, stdio: 'ignore' }).on('error', () => {})
+      // 用绝对路径，不经 PATH 查找
+      const exe = path.win32.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'taskkill.exe')
+      spawn(exe, ['/T', '/F', '/PID', String(pid)], { shell: false, windowsHide: true, stdio: 'ignore' }).on('error', () => {})
     } else {
       process.kill(-pid, 'SIGKILL')
     }
@@ -27,26 +31,39 @@ function killTree(pid: number): void {
   }
 }
 
+const SIGNALS = ['SIGINT', 'SIGTERM'] as const
+
 function spawnGate(command: string, opts: { cwd: string; timeoutMs: number }): Promise<GateExecResult> {
   return new Promise((resolve) => {
     // gate 是用户在 team.yaml 里写的完整 shell 命令行，必须经 shell 解释（2A spec 第 3 节约束 6，总纲 §2.4）；全项目只此一处。
     const child = spawn(command, { shell: true, cwd: opts.cwd, detached: process.platform !== 'win32', windowsHide: true })
     const chunks: Buffer[] = []
     let timedOut = false
+    let interrupted = false
+    // 运行期间 Ctrl-C / SIGTERM：把 gate 的整个进程组一起杀掉，不留孤儿
+    const onSignal = () => {
+      interrupted = true
+      killTree(child.pid!)
+    }
     const timer = setTimeout(() => {
       timedOut = true
       killTree(child.pid!)
     }, opts.timeoutMs)
+    const cleanup = () => {
+      clearTimeout(timer)
+      SIGNALS.forEach((s) => process.off(s, onSignal))
+    }
+    SIGNALS.forEach((s) => process.on(s, onSignal))
     child.stdout.on('data', (d: Buffer) => chunks.push(d))
     child.stderr.on('data', (d: Buffer) => chunks.push(d))
     child.on('error', (err) => {
-      clearTimeout(timer)
+      cleanup()
       resolve({ passed: false, output: `无法启动 gate：${err.message}`, timedOut: false })
     })
     child.on('close', (code) => {
-      clearTimeout(timer)
+      cleanup()
       const output = Buffer.concat(chunks).toString('utf8') + (timedOut ? TIMEOUT_MARK : '')
-      resolve({ passed: code === 0 && !timedOut, output, timedOut })
+      resolve({ passed: code === 0 && !timedOut && !interrupted, output, timedOut, ...(interrupted ? { interrupted } : {}) })
     })
   })
 }
