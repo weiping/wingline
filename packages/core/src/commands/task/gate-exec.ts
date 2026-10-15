@@ -72,6 +72,9 @@ export async function gateCwd(deps: CommandDeps, address: string): Promise<strin
 
 export const GATE_BODY_LIMIT = 4000
 
+export const gateOutputPath = (home: string, team: string, taskId: string, epoch: number, n: number): string =>
+  path.join(home, 'logs', team, `gate-${taskId}-${epoch}-${n}.txt`)
+
 /** 写 <home>/logs/<team>/gate-<task>-<epoch>-<n>.txt，写之前删除同目录 7 天前的 gate-*.txt；返回路径。 */
 export function writeGateOutput(home: string, team: string, taskId: string, epoch: number, n: number, output: string): string {
   const dir = path.join(home, 'logs', team)
@@ -80,7 +83,7 @@ export function writeGateOutput(home: string, team: string, taskId: string, epoc
     const file = path.join(dir, name)
     if (/^gate-.*\.txt$/.test(name) && Date.now() - fs.statSync(file).mtimeMs > WEEK_MS) fs.rmSync(file)
   }
-  const file = path.join(dir, `gate-${taskId}-${epoch}-${n}.txt`)
+  const file = gateOutputPath(home, team, taskId, epoch, n)
   fs.writeFileSync(file, output)
   return file
 }
