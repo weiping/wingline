@@ -235,3 +235,27 @@ test('reopening keeps data written to the new tables (migrations are not re-appl
   expect(b.getGate('g1')).not.toBeNull()
   expect(b.listTaskLog('t1')).toHaveLength(1)
 })
+
+test('listOpenRequests treats _ and % in the prefix literally (not as LIKE wildcards)', () => {
+  const r = Registry.open(tmpDb())
+  r.openIntent('dispatch:t_1:0', 'a', {}); r.openIntent('dispatch:tx1:0', 'b', {}); r.openIntent('dispatch:t%1:0', 'c', {})
+  expect(r.listOpenRequests('dispatch:t_1:').map((x) => x.id)).toEqual(['dispatch:t_1:0'])
+  expect(r.listOpenRequests('dispatch:t%').map((x) => x.id)).toEqual(['dispatch:t%1:0'])
+  expect(r.listOpenRequests('DISPATCH:').map((x) => x.id)).toEqual([])
+})
+
+test('a phase-1 database (user_version 1, with rows) upgrades in place and keeps its data', () => {
+  const file = tmpDb()
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  const raw = new DatabaseSync(file)
+  raw.exec(MIGRATIONS[0]!)
+  raw.exec('PRAGMA user_version = 1')
+  raw.prepare("INSERT INTO teams(name, spec_path, spec_hash, run_id, status, updated_at) VALUES ('duo','/s','h',NULL,'up','T')").run()
+  raw.prepare("INSERT INTO requests(id, state, receipt, updated_at) VALUES ('old','done','{}','T')").run()
+  raw.close()
+  const r = Registry.open(file)
+  expect(r.getTeam('duo')).toMatchObject({ name: 'duo', coordinatorHandle: null, status: 'up' })
+  expect(r.getRequest('old')).toMatchObject({ state: 'done', receipt: '{}', retryRequest: null, args: null })
+  r.insertTaskExt({ taskId: 't1', team: 'duo', tags: [], kind: 'work' })
+  expect(r.getTaskExt('t1')).not.toBeNull()
+})
