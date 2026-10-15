@@ -2,14 +2,11 @@ import { WinglineError } from '../../errors.js'
 import type { CommandDeps } from '../deps.js'
 import { resolveActor } from './identity.js'
 import { logTask } from './log.js'
-import { taskPreflight } from './preflight.js'
-import { findTask, findTaskAnywhere } from './query.js'
+import { preflightTask } from './preflight.js'
+import { findTask } from './query.js'
 
 export async function planTask(deps: CommandDeps, a: { id: string; text: string }): Promise<void> {
-  const known = deps.registry.getTaskExt(a.id)?.team
-  if (known) await taskPreflight(deps, known)
-  const { team } = await findTaskAnywhere(deps, a.id)
-  if (!known) await taskPreflight(deps, team.name)
+  const { team } = await preflightTask(deps, a.id)
   const actor = await resolveActor(deps)
   await deps.registry.withTeamLock(team.name, async () => {
     const task = await findTask(deps, team.name, a.id)

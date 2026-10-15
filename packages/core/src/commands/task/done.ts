@@ -9,7 +9,7 @@ import { gateBody, gateCwd, gateOutputPath, runGate, writeGateOutput } from './g
 import { requireActor, resolveHandle, type Actor } from './identity.js'
 import { ledgered } from './ledger.js'
 import { logTask } from './log.js'
-import { notifyPost } from './notify.js'
+import { notifyPost, type NotifyResult } from './notify.js'
 import { taskPreflight } from './preflight.js'
 import { findTask, type DoneClosure, type TaskRow } from './query.js'
 
@@ -19,7 +19,7 @@ export type LinkDelivery = Delivery | 'skipped_frozen' | 'skipped_offline'
 export interface DoneResult {
   outcome: DoneOutcome
   closure?: DoneClosure
-  linkedTasks?: Array<{ target: string; taskId: string; delivery: LinkDelivery }>
+  linkedTasks?: Array<{ target: string; taskId: string; delivery: LinkDelivery; reason?: NotifyResult['reason'] }>
   gateId?: string
   gateOutputPath?: string
   replayed?: boolean
@@ -36,6 +36,7 @@ interface Ctx {
 }
 
 type Linked = NonNullable<DoneResult['linkedTasks']>[number]
+type LinkOutcome = { delivery: LinkDelivery; reason?: NotifyResult['reason'] }
 
 const fail = (code: string, message: string, hint?: string) => new WinglineError('input', code, message, { hint })
 const key = (c: Ctx, tail: string) => `done:${c.id}:${c.ext.epoch}:${tail}`
@@ -177,13 +178,14 @@ async function createChild(c: Ctx, target: string, label: string, title: string)
   return r.id
 }
 
-async function deliverChild(c: Ctx, childId: string, target: string, title: string): Promise<LinkDelivery> {
-  if (isPostFrozen(c.deps, target)) return 'skipped_frozen'
+async function deliverChild(c: Ctx, childId: string, target: string, title: string): Promise<LinkOutcome> {
+  if (isPostFrozen(c.deps, target)) return { delivery: 'skipped_frozen' }
   const located = await locatePost(c.deps.orca, target)
-  if (!located) return 'skipped_offline'
+  if (!located) return { delivery: 'skipped_offline' }
   const to = { address: target, handle: located.handle }
   const d = await dispatchTo(c.deps, c.team.name, childId, to)
-  return (await announce(c.deps, c.team.name, { id: childId, title }, to, d, c.actor)).delivery
+  const { delivery, reason } = await announce(c.deps, c.team.name, { id: childId, title }, to, d, c.actor)
+  return reason ? { delivery, reason } : { delivery }
 }
 
 async function linkOne(c: Ctx, plan: NonNullable<ReturnType<typeof linkPlan>>, target: string, title: string): Promise<Linked> {
@@ -193,8 +195,7 @@ async function linkOne(c: Ctx, plan: NonNullable<ReturnType<typeof linkPlan>>, t
   if (stored?.state === 'done') return JSON.parse(stored.receipt!) as Linked
   const childId = await createChild(c, target, plan.label, title)
   registry.insertTaskExt({ taskId: childId, team: c.team.name, tags: [], kind: plan.kind, claimedBy: target, readySince: c.deps.now().toISOString() })
-  const delivery = await deliverChild(c, childId, target, `${plan.label}：${title}`)
-  const entry: Linked = { target, taskId: childId, delivery }
+  const entry: Linked = { target, taskId: childId, ...(await deliverChild(c, childId, target, `${plan.label}：${title}`)) }
   registry.beginRequest(deliveredKey)
   registry.finishRequest(deliveredKey, 'done', entry)
   return entry

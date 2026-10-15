@@ -73,10 +73,26 @@ export async function findTaskAnywhere(deps: CommandDeps, id: string): Promise<{
   throw notFound(id)
 }
 
+const TASK_STATUSES: readonly OrchestrationTaskStatus[] = ['ready', 'dispatched', 'blocked', 'completed', 'failed']
+
+/** 不指定团队时某个团队读失败只告警，不影响其他团队。 */
+async function fetchTasksTolerant(deps: CommandDeps, team: string, strict: boolean): Promise<TaskRow[]> {
+  try {
+    return await fetchTasks(deps, team)
+  } catch (err) {
+    if (strict || !(err instanceof WinglineError)) throw err
+    deps.warn(`团队 ${team} 的任务读取失败：${err.message}`)
+    return []
+  }
+}
+
 export async function listTasks(deps: CommandDeps, a: { team?: string; mine?: boolean; status?: string; tags?: string[]; as?: string }): Promise<TaskRow[]> {
   const me = a.mine ? (await requireActor(deps, a.as)).address : null
+  if (a.status && !TASK_STATUSES.includes(a.status as OrchestrationTaskStatus)) {
+    throw new WinglineError('input', 'status_invalid', `未知状态 ${a.status}`, { hint: `可用：${TASK_STATUSES.join(', ')}` })
+  }
   const names = a.team ? [a.team] : deps.registry.listTeams().filter((t) => t.runId).map((t) => t.name)
-  const all = (await Promise.all(names.map((n) => fetchTasks(deps, n)))).flat()
+  const all = (await Promise.all(names.map((n) => fetchTasksTolerant(deps, n, !!a.team)))).flat()
   return all.filter(
     (t) => (me === null || t.claimedBy === me) && (!a.status || t.status === a.status) && (a.tags ?? []).every((g) => t.tags.includes(g)),
   )
@@ -160,7 +176,7 @@ function commandOfKey(x: StaleInput, key: string, t: TaskRow): string | null {
   if (kind === 'dispatch') return `wl task start ${t.id} --as ${as(t.claimedBy)}`
   if (kind === 'done') return `wl task done ${t.id} --as ${as(t.claimedBy)}`
   if (kind === 'recover') return `wl task recover ${t.id}`
-  if (kind === 'resolve') return `wl task resolve ${x.gates.find((g) => g.taskId === t.id)?.gateId ?? key.split(':')[1]} --resolution <决定>`
+  if (kind === 'resolve') return `wl task resolve ${key.split(':')[1]} --resolution <决定>`
   return null
 }
 
@@ -170,11 +186,18 @@ function taskIdOfKey(x: StaleInput, key: string): string | undefined {
   return kind === 'dispatch' || kind === 'done' || kind === 'recover' ? second : undefined
 }
 
+/** dispatch:<t>:<e> 与 done:<t>:<e>:… 键里的 epoch；其他键不带 epoch。 */
+function epochOfKey(key: string): number {
+  const [kind, , epoch] = key.split(':')
+  return (kind === 'dispatch' || kind === 'done') && /^\d+$/.test(epoch ?? '') ? Number(epoch) : Number.POSITIVE_INFINITY
+}
+
 function callUncertain(x: StaleInput, now: Date, th: StaleThresholds): StaleItem[] {
   return x.open.flatMap((r) => {
     if (minutesSince(r.updatedAt, now) <= th.uncertainMinutes) return []
     const task = x.tasks.find((t) => t.id === taskIdOfKey(x, r.id))
     if (r.id.startsWith('dispatch:') && (task?.status === 'completed' || task?.status === 'failed')) return []
+    if (task && epochOfKey(r.id) < task.epoch) return []
     const command = task ? commandOfKey(x, r.id, task) : null
     return task && command ? [item(task, 'call_uncertain', r.updatedAt, command)] : []
   })
@@ -203,7 +226,7 @@ function bypassed(x: StaleInput): StaleItem[] {
 
 function blockedWaiting(x: StaleInput): StaleItem[] {
   return x.tasks.flatMap((t) => {
-    const gate = t.status === 'blocked' ? x.gates.find((g) => g.taskId === t.id) : undefined
+    const gate = t.status === 'blocked' ? x.gates.filter((g) => g.taskId === t.id).at(-1) : undefined
     return gate ? [item(t, 'blocked_waiting', null, `wl task resolve ${gate.gateId} --resolution <决定>`, { gateId: gate.gateId })] : []
   })
 }

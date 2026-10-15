@@ -3,8 +3,8 @@ import type { CommandDeps } from '../deps.js'
 import { requireActor, resolveActor, type Actor } from './identity.js'
 import { logTask } from './log.js'
 import { neutralize, notifyPost, type NotifyResult } from './notify.js'
-import { taskPreflight } from './preflight.js'
-import { findTask, findTaskAnywhere, type TaskRow } from './query.js'
+import { preflightTask, taskPreflight } from './preflight.js'
+import { findTask, type TaskRow } from './query.js'
 import { isPostFrozen } from './frozen.js'
 
 const teamOfAddress = (address: string) => address.slice(address.indexOf('@') + 1)
@@ -52,8 +52,7 @@ export async function releaseTask(deps: CommandDeps, a: { id: string; as?: strin
 }
 
 export async function reassignTask(deps: CommandDeps, a: { id: string; to: string; as?: string }): Promise<{ notify: NotifyResult }> {
-  const { team: row, task } = await findTaskAnywhere(deps, a.id)
-  const { spec } = await taskPreflight(deps, row.name)
+  const { team: row, task, spec } = await preflightTask(deps, a.id)
   if (!spec.posts.some((p) => `${p.id}@${row.name}` === a.to)) throw fail('post_unknown', `${a.to} 不是团队 ${row.name} 的岗位`)
   if (isPostFrozen(deps, a.to)) throw fail('post_frozen', `岗位 ${a.to} 已冻结`)
   const actor = await resolveActor(deps, a.as)

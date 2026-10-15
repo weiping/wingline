@@ -102,6 +102,6 @@ export function writeGateOutput(home: string, team: string, taskId: string, epoc
 /** --body：空输出 → null；multilineSafe 或无换行 → 末尾 GATE_BODY_LIMIT 字符；否则一行"gate 输出见 <路径>"。 */
 export function gateBody(output: string, file: string, multilineSafe: boolean): string | null {
   if (output === '') return null
-  if (multilineSafe || !output.includes('\n')) return output.slice(-GATE_BODY_LIMIT)
+  if (multilineSafe || !/[\r\n]/.test(output)) return output.slice(-GATE_BODY_LIMIT)
   return `gate 输出见 ${file}`
 }

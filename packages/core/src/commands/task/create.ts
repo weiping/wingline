@@ -63,23 +63,31 @@ function recordNewTask(deps: CommandDeps, a: CreateArgs, taskId: string, actor: 
   logTask(deps, { team: a.team, taskId, actor, action: 'create' })
 }
 
-/** 派发给 --post；结果不确定时把提示改写成同一条 create 命令加 --retry-request。 */
+/** 任务已经建出之后的失败：错误里带上任务 id 和重跑命令（重跑复用这个任务，不会再建一个）。 */
+function afterCreateError(deps: CommandDeps, a: CreateArgs, taskId: string, id: string, err: unknown): unknown {
+  if (!(err instanceof WinglineError)) return err
+  const from = err.kind === 'uncertain' ? `（本次协调者 --from ${deps.registry.getTeam(a.team)!.coordinatorHandle}）` : ''
+  return new WinglineError(err.kind, err.code, `${err.message}（任务 ${taskId} 已创建）`, {
+    hint: `任务 ${taskId} 已创建但派发没有完成；重跑同一条命令会复用它：${rerunCommand(a, id)}${from}`, cause: err,
+  })
+}
+
+/** 派发给 --post。 */
 async function dispatchCreated(deps: CommandDeps, a: CreateArgs, taskId: string, id: string, actor: Actor | null) {
-  const target = { address: a.post!, handle: await resolveHandle(deps, { address: a.post!, explicit: true }) }
   try {
+    const target = { address: a.post!, handle: await resolveHandle(deps, { address: a.post!, explicit: true }) }
     const d = await dispatchTo(deps, a.team, taskId, target)
     return await announce(deps, a.team, { id: taskId, title: a.title }, target, d, actor)
   } catch (err) {
-    if (!(err instanceof WinglineError) || err.kind !== 'uncertain') throw err
-    const from = deps.registry.getTeam(a.team)!.coordinatorHandle
-    throw new WinglineError('uncertain', err.code, err.message, {
-      hint: `${rerunCommand(a, id)}（本次协调者 --from ${from}）`, cause: err,
-    })
+    throw afterCreateError(deps, a, taskId, id, err)
   }
 }
 
 export async function createTask(deps: CommandDeps, a: CreateArgs): Promise<{ id: string; delivery?: Delivery; reason?: NotifyResult['reason']; busyWith?: string }> {
-  await taskPreflight(deps, a.team)
+  const { spec } = await taskPreflight(deps, a.team)
+  if (a.post && !spec.posts.some((p) => `${p.id}@${a.team}` === a.post)) {
+    throw new WinglineError('input', 'post_unknown', `${a.post} 不是团队 ${a.team} 的岗位`)
+  }
   if (a.post) await resolveHandle(deps, { address: a.post, explicit: true })
   const actor = await resolveActor(deps, a.as)
   const id = a.retryRequest ?? randomUUID()

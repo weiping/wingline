@@ -8,8 +8,8 @@ import { resolveActor } from './identity.js'
 import { ledgered, oneShot } from './ledger.js'
 import { logTask } from './log.js'
 import { neutralize, notifyPost } from './notify.js'
-import { taskPreflight } from './preflight.js'
-import { findTask, findTaskAnywhere, type TaskRow } from './query.js'
+import { preflightTask, taskPreflight } from './preflight.js'
+import { findTask, type TaskRow } from './query.js'
 
 const fail = (code: string, message: string, hint?: string) => new WinglineError('input', code, message, { hint })
 const quote = (s: string) => `'${s.replace(/'/g, "'\\''")}'`
@@ -18,8 +18,7 @@ export async function escalateTask(
   deps: CommandDeps,
   a: { id: string; reason: string; reopen?: boolean; as?: string; retryRequest?: string },
 ): Promise<{ gateId: string; status: OrchestrationTaskStatus; tookBackDispatch: boolean }> {
-  const { team, task } = await findTaskAnywhere(deps, a.id)
-  const { spec } = await taskPreflight(deps, team.name)
+  const { team, task, spec } = await preflightTask(deps, a.id)
   const actor = await resolveActor(deps, a.as)
   const lead = `${spec.lead}@${team.name}`
   if (actor && actor.address !== task.claimedBy && actor.address !== lead) {
@@ -123,8 +122,7 @@ async function reopenDispatch(deps: CommandDeps, team: string, id: string, rec: 
 type RecoverResult = { status: 'dispatched' | 'queued' | 'ready'; delivery?: Delivery; epoch: number; reason?: string; owner?: string | null }
 
 export async function recoverTask(deps: CommandDeps, a: { id: string; as?: string }): Promise<RecoverResult> {
-  const { team } = await findTaskAnywhere(deps, a.id)
-  await taskPreflight(deps, team.name)
+  const { team } = await preflightTask(deps, a.id)
   const rec = await openRecord(deps, team.name, a.id)
   await reopenDispatch(deps, team.name, a.id, rec)
   const actor = await resolveActor(deps, a.as)

@@ -44,7 +44,8 @@ const FULL_WIDTH: Record<string, string> = { '`': '｀', $: '＄', ';': '；', '
 export function neutralize(text: string, limit: number): string {
   const flat = text.replace(/[\r\n\u2028\u2029]/g, ' ').replace(/[\p{Cc}\p{Cf}]/gu, '')
   const safe = flat.replace(/[`$;|&<>\\]/g, (c) => FULL_WIDTH[c]!)
-  return safe.length > limit ? `${safe.slice(0, limit)}…` : safe
+  const chars = Array.from(safe)
+  return chars.length > limit ? `${chars.slice(0, limit).join('')}…` : safe
 }
 
 /** terminal show：终端不存在 → 'offline'；调用失败 → 'unknown'；否则 classifyPreview。 */

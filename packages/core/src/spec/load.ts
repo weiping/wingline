@@ -17,6 +17,7 @@ export interface PostSpec {
   gate: string | null
   reviewedBy: string[]
   handsTo: string[]
+  consults?: string[]
 }
 
 export interface TaskBudgets {
@@ -194,6 +195,7 @@ export function loadTeamSpec(specPath: string): TeamSpec {
       gate: team.gates[p.id] ?? null,
       reviewedBy: team.links[p.id]?.reviewed_by ?? [],
       handsTo: team.links[p.id]?.hands_to ?? [],
+      consults: team.links[p.id]?.consults ?? [],
     })),
     budgets: {
       task: {

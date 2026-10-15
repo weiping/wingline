@@ -42,6 +42,7 @@ export function specHash(spec: TeamSpec, readFile: (p: string) => Buffer = (p) =
       gate: p.gate,
       reviewedBy: p.reviewedBy,
       handsTo: p.handsTo,
+      consults: p.consults ?? [],
     })),
     budgets: spec.budgets,
   }
