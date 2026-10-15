@@ -1,14 +1,10 @@
-import fs from 'node:fs'
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { expect, test } from 'vitest'
 import { WinglineError } from '../../../src/errors.js'
 import { classifyPreview, neutralize, notifyPost, screenGuard } from '../../../src/commands/task/notify.js'
+import { fixture } from '../../fixture.js'
 import { FakeOrca, seedRunningTeam } from '../fake-client.js'
 
-const repoRoot = path.resolve(fileURLToPath(import.meta.url), '../../../../../..')
-
-const r6 = JSON.parse(fs.readFileSync(path.join(repoRoot, 'test/fixtures/receipts/orchestration-r6.json'), 'utf8'))
+const r6 = fixture('orchestration-r6')
 test('R6 real screens: the (Y/n) wrapper prompt is at_prompt, the idle claude screen is clear', () => {
   expect(classifyPreview(r6['terminal-show-at-yn-prompt'].terminal.preview)).toBe('at_prompt')
   expect(classifyPreview(r6['terminal-show-idle-claude'].terminal.preview)).toBe('clear')
