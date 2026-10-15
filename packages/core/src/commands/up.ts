@@ -64,6 +64,23 @@ function lifetimeGen(l: Launch, post: string, located: boolean): number {
   return g
 }
 
+/** 非 path: 的 worktree 选择器（如缺省的 current）按 wl up 时的调用目录解析一次，记成 path:，之后 gate 不再重新解析。 */
+async function pinWorktrees(l: Launch): Promise<void> {
+  const { orca, registry } = l.deps
+  const resolved = new Map<string, string>()
+  for (const p of l.spec.posts) {
+    if (p.worktree.startsWith('path:')) continue
+    try {
+      if (!resolved.has(p.worktree)) resolved.set(p.worktree, (await orca.worktreeShow({ worktree: p.worktree })).path)
+    } catch (err) {
+      if (!(err instanceof WinglineError) || err.kind === 'input' || err.kind === 'internal') throw err
+      continue
+    }
+    const address = postAddress(p.id, l.spec.name)
+    registry.upsertPost({ ...registry.getPost(address)!, worktree: `path:${resolved.get(p.worktree)}` })
+  }
+}
+
 async function registerTeam(l: Launch): Promise<void> {
   const { registry } = l.deps
   const existing = registry.getTeam(l.spec.name)
@@ -262,6 +279,7 @@ export async function up(deps: CommandDeps, args: UpArgs): Promise<UpResult> {
     await preflight(deps)
     const l: Launch = { deps, spec, hash }
     await registerTeam(l)
+    await pinWorktrees(l)
     const posts: PostResult[] = []
     for (const p of spec.posts) posts.push(await launchPost(l, p, briefings.get(p.id)!))
     const run = await ensureRun(l, posts, args)

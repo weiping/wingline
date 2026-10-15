@@ -157,9 +157,12 @@ export interface OneShotCall<A extends { from: string }, R> {
   /** 本地无记录、request-show 为 completed 时从原回执取结果；取不出 → null。 */
   fromReceipt: (receipt: unknown) => R | null
   retryHint: (id: string) => string
+  /** 重试时不参与参数比较的字段（除 from 外）：随调用方或平台变化、不代表用户意图的部分。 */
+  ignore?: string[]
 }
 
-const withoutFrom = (a: object) => JSON.stringify({ ...a, from: undefined })
+const withoutFrom = (a: object, ignore: string[] = []) =>
+  JSON.stringify({ ...a, from: undefined, ...Object.fromEntries(ignore.map((k) => [k, undefined])) })
 
 async function adoptReceipt<A extends { from: string }, R>(deps: CommandDeps, c: OneShotCall<A, R>, key: string, id: string): Promise<R | null> {
   const shown = await deps.orca.requestShow({ request: id }).catch(() => null)
@@ -185,7 +188,7 @@ export async function oneShot<A extends { from: string }, R>(deps: CommandDeps, 
   const local = deps.registry.getRequest(key)
   if (local) {
     const fresh = await c.build(teamOf(deps, c.team))
-    if (withoutFrom(fresh) !== withoutFrom(JSON.parse(local.args!) as object)) {
+    if (withoutFrom(fresh, c.ignore) !== withoutFrom(JSON.parse(local.args!) as object, c.ignore)) {
       throw new WinglineError('input', 'retry_request_args_changed', `--retry-request ${id} 的参数与上次不同`, {
         hint: '用原参数重跑，或去掉 --retry-request 作为新操作',
       })

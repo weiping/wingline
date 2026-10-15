@@ -170,6 +170,7 @@ function callUncertain(x: StaleInput, now: Date, th: StaleThresholds): StaleItem
   return x.open.flatMap((r) => {
     if (minutesSince(r.updatedAt, now) <= th.uncertainMinutes) return []
     const task = x.tasks.find((t) => t.id === taskIdOfKey(x, r.id))
+    if (r.id.startsWith('dispatch:') && (task?.status === 'completed' || task?.status === 'failed')) return []
     const command = task ? commandOfKey(x, r.id, task) : null
     return task && command ? [item(task, 'call_uncertain', r.updatedAt, command)] : []
   })

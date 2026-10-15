@@ -9,7 +9,7 @@ import { ledgered, oneShot } from './ledger.js'
 import { logTask } from './log.js'
 import { neutralize, notifyPost } from './notify.js'
 import { taskPreflight } from './preflight.js'
-import { findTask, findTaskAnywhere } from './query.js'
+import { findTask, findTaskAnywhere, type TaskRow } from './query.js'
 
 const fail = (code: string, message: string, hint?: string) => new WinglineError('input', code, message, { hint })
 const quote = (s: string) => `'${s.replace(/'/g, "'\\''")}'`
@@ -78,11 +78,21 @@ export async function resolveGate(
 type Recorded = { dispatchId: string; epoch: number }
 
 /** 本地记录 recover:<task>:open：存下这次 recover 针对的 dispatch_id 与 epoch，中断后据此续跑。 */
+/** 记录只在这次 recover 还在进行时才算数：任务仍派在原 dispatch 上，或这一轮的 gate-create 已经走过。 */
+function recordStillApplies(deps: CommandDeps, id: string, task: TaskRow, rec: Recorded): boolean {
+  if (task.status === 'dispatched') return task.dispatchId === rec.dispatchId
+  return deps.registry.getRequest(`recover:${id}:${rec.dispatchId}:gate`) !== null
+}
+
 async function openRecord(deps: CommandDeps, team: string, id: string): Promise<Recorded> {
   const key = `recover:${id}:open`
   const stored = deps.registry.getRequest(key)
-  if (stored?.state === 'done') return JSON.parse(stored.receipt!) as Recorded
   const task = await findTask(deps, team, id)
+  if (stored?.state === 'done') {
+    const rec = JSON.parse(stored.receipt!) as Recorded
+    if (recordStillApplies(deps, id, task, rec)) return rec
+    deps.registry.dropRequest(key)
+  }
   if (task.status !== 'dispatched') throw fail('assignee_alive', `任务 ${id} 不在派发中`, '任务不在派发中，不需要 recover')
   if ((await deps.orca.terminalList()).some((t) => t.handle === task.assigneeHandle)) {
     throw fail('assignee_alive', `任务 ${id} 的执行终端仍然存活`, '终端还在，不需要 recover；若它卡住了用 wl task escalate')

@@ -40,14 +40,18 @@ async function createOnly(deps: CommandDeps, a: CreateArgs, id: string, actor: A
       return taskId ? { id: taskId, replayed: true } : null
     },
     retryHint: (rid) => rerunCommand(a, rid),
+    ignore: ['spec'],
     build: (t) => ({
       spec: taskSpec(deps, `${actor?.address ?? 'human'}: ${a.title}`),
       taskTitle: a.title,
       run: t.runId!,
       from: t.coordinatorHandle!,
       ...(a.parent ? { parent: a.parent } : {}),
+      tags: a.tags ?? [],
+      post: a.post ?? null,
     }),
-    call: (x) => deps.orca.taskCreate(x),
+    // tags / post 只参与重试时的参数比较，不发给 Orca
+    call: ({ tags: _tags, post: _post, ...x }) => deps.orca.taskCreate(x),
   })
 }
 
