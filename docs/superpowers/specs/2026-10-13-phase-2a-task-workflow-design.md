@@ -1,22 +1,25 @@
 # 雁阵 Wingline 阶段 2A：任务工作流设计
 
-- 日期：2026-10-13
+- 日期：2026-10-13（第五次修订 2026-10-15）
 - 状态：设计中（未实现）
-- 范围：阶段 2（团队工作流）拆分出的子项目 A —— 任务状态机、`team.yaml` 的 `links`/`gates`/`budgets`/`posts[].self_claim|tags|plan_first`、`wl task` 命令族、编排写调用的幂等账本。
+- 范围：阶段 2（团队工作流）拆分出的子项目 A —— 任务状态机、`team.yaml` 的 `links`/`gates`/`budgets`/`posts[].self_claim|tags|plan_first`、`wl task` 命令族、编排写调用的幂等账本、派发通知与"打字前画面检查"、任务本地变迁记录。
 - 不含：调度员进程、巡查与熔断、基于 token 的预算（这些是阶段 2B，另开独立 spec 和 plan）。
-- 承接：`docs/superpowers/specs/2026-10-10-wingline-design.md`（下称总纲）第 4、5.1 节划定的边界；依赖阶段 0+1 已实现的 `wl up/ps/send/down`、`Registry`、`loadTeamSpec`。
+- 承接：`docs/superpowers/specs/2026-10-10-wingline-design.md`（下称总纲）第 4、5.1 节划定的边界；依赖阶段 0+1 已实现的 `wl up/ps/send/down`、`Registry`、`loadTeamSpec`、`locatePost`。
 
-> **2026-10-13 改版：** 第一版设计（雁阵自建 `tasks`/`events` 两张表、一套独立状态机）在写完后用 `spikes/task-dispatch-probe.ts` 实测核对，发现 `orca orchestration` 已经原生提供 `task-create/task-update/dispatch/gate-create` 这一整套任务与决策机制（`orca-ide orchestration --help`，Orca 1.4.222）。本版改为：**任务状态机直接借用 Orca 原生状态，雁阵只加很薄的扩展表**。探针结论见 `spikes/REPORT.md`"阶段 2 探针"一节。
->
-> **2026-10-14 二次修订：** 用 Opus 复审后补了一轮探针（`spikes/REPORT.md`"补充探针二"），修正了第 2、5、6、7、9、10、13 节（`dispatch --inject`、`--retry-request` 自生成 UUID、`wl up` 无条件 `run-use`、`--as` 的 handle 解析、`wl task done` 的调用顺序与 `done_*_request_id` 列）。
->
-> **2026-10-14 第三次修订（本版）：** Opus 第二次复审指出二次修订的几处"修复"不完整或自相矛盾，其中幂等重试和协调者归属两处实际上没有成形的设计。又补了四个探针（`spikes/REPORT.md`"补充探针三"，下称 R3），其中两条结论推翻了二次修订的设计：`gate-create` 会结束正在进行的 dispatch、`gate-resolve` 会把任务放回 `ready`（R3-B），所以二次修订把 `escalated` 改成"先 gate 后 worker_done"是错的。本版改动：第 2 节按 R3 重写；第 3 节新增约束 8，**明确作为总纲 §2.2 的有范围修订**（不再声称"不推翻任何一条"）；第 4 节新增"评审任务不再触发连接"和 `hands_to` 环检测；第 5 节重写协调者归属（单一规则，2B 引用同一张表）并定下 Run 复用；第 6 节换掉 `done_*_request_id` 三列，改为扩展 `requests` 表 + `task_done` 表 + `epoch`；第 7 节去掉 `WINGLINE_POST`（改用 `ORCA_TERMINAL_HANDLE` 反查标题），`--as` 规则贯穿所有命令；第 8 节状态机加入 `blocked` 与"终端关闭自动回 `ready`"；新增第 9 节"编排写调用的幂等账本"（原第 9 节起顺延）；第 10 节各命令按账本重写，`done` 改为"先上报、再做后续"并定义重跑；第 11 节补 `uncertain` 的落地方式；第 12 节要求假 `OrcaClient` 模拟实测的 Orca 语义并列出必须钉住重跑安全的测试；第 13 节补"不建模评审结论"；第 14 节风险表重写。总纲 §2.2 同步加了一句指向第 3 节约束 8 的说明。
->
-> **2026-10-14 第四次修订：** Opus 第三次复审的 4 个必修问题，另补一个探针（`spikes/REPORT.md`"补充探针四"，下称 R4）。①第 9.1 节 P1 不再对任意 `kind:'orca'` 错误删账本行：已经可能发出过的行只在 R3/R4 证明"产生在账本检查之后"的三个错误码上删行或换 id，其余（含 `runtime_unavailable`）保留 id、报退出码 3（R4：失败的调用不进 Orca 账本，所以保留重放永远不会造成重复）。②第 9.3 节 `dispatchTo` 改为"本轮派发的账本行已完成就是已完成，不按任务此刻的状态再推一遍"，`epoch` 只在任务确实回到 `ready` 时才加一；第 10 节 `done` 的连接步骤给每个目标落一条"已交付"记录，重跑不再因为某个评审方已经做完而卡在 `task_not_open`。③第 9.1 节 P2 改为以 id 本身为键落盘参数（仍然是"每次新命令新 id"），人工带 `--retry-request` 重试时原样重放首次的参数（含当时的 `--from`），协调者中途换了也不会 `request_mismatch`；找不到本地记录时 `request_mismatch` 单独报错、不建议换新 id。④（只影响计划）`UpResult.run` 设为可选、计划列出受影响的已提交测试。第 2 节补事实 10，第 11、12、14 节相应修改。
+> **修订历史（摘要）：**
+> - 2026-10-13 改版：任务状态机直接借用 Orca 原生 `orchestration` 任务状态，雁阵只加薄扩展表（`spikes/task-dispatch-probe.ts`）。
+> - 2026-10-14 第二、三、四次修订：按三轮 Opus 复审与补充探针二/三/四修正幂等重试、协调者归属、`wl task done` 的调用顺序与重跑路径。
+> - **2026-10-15 第五次修订（本版）：** 第四次复审（`docs/superpowers/reviews/2026-10-15-phase-2-review.md`，下称复审四）与补充探针五、六（`spikes/REPORT.md`，下称 R5、R6）。要点：
+>   1. **账本的失败处理改由 Orca 自己的 `request-show` 定案**（第 9 节）。R5 证实四个传输层错误码可能已落地、被拒的 `worker_done` 会进 Orca 账本，第四次修订的"新行/旧行 + 错误码白名单"推断规则不再成立，整段删除。
+>   2. **派发一律不带 `--inject`**（第 7.3 节）。R6 实测 `--inject` 注入的是 Orca 的完整 worker 前言，要求 agent 自己 `orca orchestration send --type worker_done`，会绕过 `wl task done` 的 gate 与连接。改由雁阵发一行自己的通知。
+>   3. **一个岗位终端同时最多一个进行中的派发**（R6：Orca 强制，错误码是泛化的 `runtime_error`）。删除 `budgets.team.max_in_progress_per_post`，派发前本地检查，目标忙时任务进入"排队"。
+>   4. **往岗位终端打字之前先做画面检查**（第 7.4 节，2B 复用同一个函数）。
+>   5. 复审四的 2A 项：gate 的执行目录与超时、本地 setter 改为插入或更新、Run 丢失的恢复、`wl task` 校验规格哈希、派给死终端的任务的发现与 `wl task recover`、`ORCA_TERMINAL_HANDLE` 的平台范围、契约测试。
+>   6. 吸收项：`wl task list --stale`、`wl task release`/`reassign`、任务变迁记录 `task_log` 与 `show --history`、结束方式、escalate 附证据并通知牵头岗、记录进入 ready 与派发的时间（供 2B 用）、账本行的保留约定。
 
 ## 1. 目标与定位
 
-总纲把阶段 2（团队工作流）定义为一揽子交付：调度员、`wl task` 系列、连接、质量闸门、先计划后动手、就绪队列与自领、预算、巡查与熔断。这个范围太大，不适合一份计划书。本文档只覆盖其中**不需要调度员常驻就能工作**的部分：
+总纲把阶段 2（团队工作流）定义为一揽子交付：调度员、`wl task` 系列、连接、质量闸门、先计划后动手、就绪队列与自领、预算、巡查与熔断。本文档只覆盖其中**不需要调度员常驻就能工作**的部分：
 
 - 岗位（已经是带 shell 的 Orca 终端，见阶段 1）**自己**创建、认领、开始、完成任务 —— 不需要调度员替它们跑。
 - 质量闸门、计划先行、预算、评审/交接的连接，都做成 `wl task` 命令执行时的同步逻辑。
@@ -24,31 +27,39 @@
 
 ### 1.1 成功标准
 
-一个 `duo` 这样的两岗位团队，在不启动任何后台进程的情况下：human 用 `wl task create` 建一个任务指给 builder；builder 自己 `wl task plan` → `wl task start` → 干活 → `wl task done`，gate 通过后自动给 checker 建一个关联的评审任务并派过去；checker 走完同样的流程；全程状态可以用 `wl task list/show` 查到（直接读 Orca 的任务数据，不是雁阵自己的镜像）。任何一条 `wl task` 命令因超时/崩溃中断后，原样重跑同一条命令都不会产生重复的任务、派发、上报或决策请求（第 9 节）。
+一个 `duo` 这样的两岗位团队，在不启动任何后台进程的情况下：human 用 `wl task create` 建一个任务指给 builder；builder 收到雁阵的一行通知，`wl task plan` → `wl task start` → 干活 → `wl task done`，gate 通过后自动给 checker 建一个关联的评审任务并派过去（checker 正忙则排队）；checker 走完同样的流程；全程状态可以用 `wl task list/show` 查到（直接读 Orca 的任务数据，不是雁阵自己的镜像）。
+
+重跑安全：P1 类命令（`start`、`done`、`resolve`、`recover`、`wl up` 的建 Run）因超时/崩溃中断后，**原样重跑同一条命令**不会产生重复的任务、派发、上报或决策请求；P2 类命令（`create`、`escalate`）带上错误提示里给出的 `--retry-request <id>` 重跑同样不重复（第 9 节）。卡住的情形（上报后中途退出、派给已关闭终端、绕过 `wl task done` 直接上报）都能被 `wl task list --stale` 列出来并给出处理命令。
 
 ## 2. 关键事实：Orca 原生编排层（实测结论）
 
-以下均在真实 Orca（1.4.222，Linux）上验证过，出处见 `spikes/REPORT.md`"阶段 2 探针""补充探针""补充探针二""补充探针三（R3）"：
+以下均在真实 Orca 上验证过（Linux 1.4.222；R6 为 macOS 1.4.224），出处见 `spikes/REPORT.md`"阶段 2 探针"与补充探针二至六：
 
-1. **协调者专属调用（`task-create`/`dispatch`/`gate-create`/`gate-resolve`/`check`）只做值匹配：`--from` 等于 `run.coordinator_handle` 即放行，不校验调用方是否跑在那个终端里，连那个终端是否还活着都不看**（R3-C2：协调者终端关闭后用它的 handle `task-create` 仍成功）。不匹配 → `consumer_fenced`。Orca 整个重启后旧 handle 字符串是否仍被接受**未验证**。
+1. **协调者专属调用（`task-create`/`dispatch`/`gate-create`/`gate-resolve`/`check`/`reply`）只做值匹配：`--from` 等于 `run.coordinator_handle` 即放行，不校验调用方是否跑在那个终端里，连那个终端是否还活着都不看**（R3-C2、R6-4）。不匹配 → `consumer_fenced`。Orca 整个重启后旧 handle 字符串是否仍被接受**未验证**。
 2. **`send --type worker_done` 由被派发的岗位自己上报**，不受协调者限制，直接把任务改成 `completed`/`failed` 并进协调者收件箱；`--subject` 必填；`--from` 必须精确等于该 dispatch 的 assignee handle，否则 `worker_identity_changed`（R3-A8）。从**另一个** Orca 终端里用 `--from <assignee handle>` 代发也被接受（R3-D2，assignee 是占位进程；assignee 是真实 agent pane 时**未验证**）。
-3. **任务状态是 `ready`/`dispatched`/`blocked`/`completed`/`failed` 五种**（R3-B6）。已 `dispatched` 的任务不能再次 `dispatch`。**对 `dispatched` 的任务 `gate-create` 会立即结束该 dispatch：任务变 `blocked`，之后的 `worker_done` 一律 `inactive_dispatch`**（R3-B1）；对 `ready`/`failed` 的任务 `gate-create` 同样变 `blocked`。**`gate-resolve`（不论决议文本）把 `blocked` 放回 `ready`，之后可以重新 `dispatch`**（R3-B2）——所以 `failed` 只在没挂 gate 时是终态，"`worker_done(failed)` → `gate-create` → `gate-resolve`"是一条完整的重开路径。**assignee 终端被关闭，Orca 自动把该 dispatched 任务放回 `ready`**（R3-C3）；Orca 整个重启后是否同样**未验证**。
+3. **任务状态是 `ready`/`dispatched`/`blocked`/`completed`/`failed` 五种**（R3-B6）。已 `dispatched` 的任务不能再次 `dispatch`。对 `dispatched`/`ready`/`failed` 的任务 `gate-create` 都会让它变 `blocked`，正在进行的 dispatch 被结束、之后的 `worker_done` 一律 `inactive_dispatch`（R3-B1）。**`gate-resolve`（不论决议文本）把 `blocked` 放回 `ready`**（R3-B2）。**assignee 终端被关闭，Orca 自动把该 dispatched 任务放回 `ready`**（R3-C3）；之后再派给已关闭的 handle（不带 `--inject`）会 `ok:true`，任务停在派给死终端的 `dispatched`（R5-4）。Orca 整个重启后是否自动回退**未验证**。对 `completed` 任务 `gate-create` 的行为**未验证**。
 4. `gate-create`/`gate-resolve`/`gate-list` 不接受 `--run`（从 `--task` 反查）。
-5. **Orca 在自己管理的终端里设置 `ORCA_TERMINAL_HANDLE`，值等于该终端自己的 handle**（R3-D1 实测）。
-6. **`dispatch` 要带 `--inject` 才会把任务写进目标 agent 的输入框；目标不是 Orca 识别的 agent 时被拒（`inject_rejected`），被拒后任务仍是 `ready`，没有半成品状态**（补充探针二 #2、R3-C1）。目标 agent 正忙时 `--inject` 的行为**未验证**。
-7. **编排写调用的 `--retry-request` 接受调用方自生成的 UUID，重放是"先查账本"**：同 id + 同参数 → `replayed:true`，**不论任务此后已经前进到什么状态**（对已 `dispatched` 的任务重放 `dispatch`、对已 `completed`/`failed` 的任务重放 `worker_done` 都是回放，不报状态错误）；回放返回的是**第一次调用时的回执快照**（任务早已 `dispatched` 时重放 `task-create`，回执里仍是 `ready`）；同 id + 不同参数 → `request_mismatch`。**协调者换手后，用原 `--from` 重放落地过的调用仍是回放，新 id 配旧 `--from` 则 `consumer_fenced`——即"持久化的 id + 原参数重放时被 fence"，证明原调用从未落地**（R3-A1–A4）。
+5. **Orca 在自己管理的终端里设置 `ORCA_TERMINAL_HANDLE`，值等于该终端自己的 handle**（Linux R3-D1、macOS R6-5 实测；Windows **未验证**）。
+6. **`dispatch --inject` 注入的是 Orca 的完整 worker 前言**：要求 agent 完成后自己执行 `orca orchestration send --type worker_done`、定期 heartbeat、有问题 `orchestration ask`，最后才是任务 spec（R6-6）。目标不是 Orca 识别的 agent 时被拒（`inject_rejected`，不进账本）。**雁阵因此不使用 `--inject`**（第 7.3 节）。
+7. **编排写调用的 `--retry-request` 接受调用方自生成的 UUID，重放是"先查账本"**：同 id + 同参数 → `replayed:true`，不论任务此后已经前进到什么状态；回放返回第一次调用时的回执快照；同 id + 不同参数 → `request_mismatch`。协调者换手后，用原 `--from` 重放落地过的调用仍是回放；未落地的调用用原 `--from` 重放被 `consumer_fenced`（R3-A1–A4）。账本不按"从哪个终端调用"分区（R5-3）。
 8. **`run-use` 回执与 `run-create` 同形**（`run.coordinator_handle`，R3-A5）；`run-use` 对不存在的 Run 报 `run_not_found`（R3-A7）；`run-show --id` 只读返回当前 `coordinator_handle`。
-9. **已终态的任务在 `task-list` 里没有 `assignee_handle`/`dispatch_id`**，只有 `result`（JSON 字符串，含 `outcome`/`reportedBy`）；`completed_at` 是 ISO 8601（如 `2026-10-14T02:57:02.357Z`）（R3-B4、B5）。
-10. **以 `ok:false` 结束的编排调用不进 Orca 的账本**：同 id 同参数重放是重新执行，不是回放那次失败（R4-1）。已落地的调用在 `--to`/`--from` 指向的终端被关闭之后重放仍是回放（R4-3、R4-4）。**错误码与账本检查的先后：** `consumer_fenced`、`task_not_startable`（"只有 ready 的任务能派发"的真实错误码，R4-2）、`inactive_dispatch` 三个已证实产生在账本检查之后——同一个 id 若曾落地，Orca 会先回放而不是返回它们；`runtime_unavailable` 产生在请求到达运行时之前（CLI 连不上运行时，阶段 1 实测发现 10），对"之前那次是否落地"不提供任何信息；`inject_rejected`、`worker_identity_changed` 及其他错误码的先后**未证实**。
+9. **已终态的任务在 `task-list` 里没有 `assignee_handle`/`dispatch_id`**，只有 `result`（JSON 字符串，含 `provenance`/`outcome`/`reportedBy`）；`completed_at` 是 ISO 8601（R3-B4、B5）。
+10. **调用是否落地，以 `orchestration request-show --request <id>` 为准**（R5-5）：`completed`（附原回执，可能是成功回执，也可能是被记下的拒绝）/ `pending`（原调用还在跑，或 Orca 在记下结果前重启了）/ `absent`（从未到达、在记录前就失败了，或回执已被清理——Orca 原话"absent 不能证明什么都没发生"）。
+    - 四个传输层错误码 `runtime_unavailable`、`remote_runtime_unavailable`、`runtime_timeout`（CLI 默认 socket 超时 60 s，`check --wait`/`terminal wait` 例外，R6-3）、`invalid_runtime_response` 都可能已经落地，Orca 自己把它们标为 `outcome_unknown`（R5-1）。
+    - 被拒的 `worker_done`（`inactive_dispatch`、`worker_identity_changed`、`unknown_dispatch`）**会**进账本，同 id 重放永远拿回同一个拒绝（R5-2）；`inject_rejected` 不进账本（R5-4）；以 `consumer_fenced` 结束的调用不进账本（R4-1）。
+11. **一个终端同一时刻只能有一个进行中的派发**：已有 `dispatched` 任务的终端再收派发 → `ok:false`，错误码为泛化的 `runtime_error`（"already has an active dispatch"），任务保持 `ready`（R6-1）。
+12. 岗位 `orchestration ask` 留下的问题以 `type: question` 进协调者收件箱，`from_handle` 是 `dispatch:<dispatch_id>`，`payload` 带 `taskId`/`dispatchId`/`question`/`options`；`reply` 只认当前协调者（R6-4，2B 使用）。
 
 ## 3. 全局约束补充
 
-6. **gate 命令经由 shell 执行，这是继 Windows `.cmd` 包装之后第二个、且唯一的例外。** 原因：gate 命令是用户在 `team.yaml` 里写的任意 shell 字符串（可能含 `&&`、管道、环境变量展开）。范围严格限定在 `wl task done` 执行 gate 这一处；其余所有子进程调用仍然 `shell: false`。
+6. **gate 命令经由 shell 执行，这是继 Windows `.cmd` 包装之后第二个、且唯一的例外。** 原因：gate 命令是用户在 `team.yaml` 里写的任意 shell 字符串（可能含 `&&`、管道、环境变量展开）。范围严格限定在 `wl task done` 执行 gate 这一处；其余所有子进程调用仍然 `shell: false`。总纲 §2.4 同步写明这第二个例外。
 7. **"协调者身份"的调用全部走 `orca … --json`**，只是把总纲约束 1 用到了 `orchestration` 命令族上。`CallLog` 会记录完整 argv（含 `--from <coordinator_handle>`），和阶段 1 已接受的日志暴露面一致。
 8. **对总纲 §2.2 的有范围修订（不是补充）。** 总纲 §2.2 写的是"Orca 的 `--retry-request` 只接受 Orca 自己分配的 UUID"——这对 `terminal` 命令族成立（阶段 1 实测），**对 `orchestration` 命令族不成立**（第 2 节事实 7）。因此：
    - `terminal` 命令族：完全沿用总纲 §2.2 的现有做法，不变。
-   - `orchestration` 命令族：沿用 §2.2 的核心要求"调用前先在注册表记下进行中、调用后记结果"，**用的是同一张 `requests` 表**，只是这一行同时存下调用方生成的 `--retry-request` id 和完整调用参数，重试时原样重放（第 6、9 节）。对确实没有稳定本地实体可以挂靠的一次性人工操作（只有 `wl task create`、`wl task escalate` 两处），每条新命令生成新 id，以这个 id 本身为键落盘（`oneshot:<id>`），超时类失败把 id 打印出来，人工带 `--retry-request <id>` 重试时原样重放首次的参数（第 9 节 P2）。
-   - 总纲 §2.2 正文已加一句指向本条的说明；阶段 1 代码里 `deps.ts` 那句"Orca 的 --retry-request 只认它自己分配的 UUID"注释也要相应限定为 `terminal` 命令族（计划里列为改动项）。
+   - `orchestration` 命令族：沿用 §2.2 的核心要求"调用前先在注册表记下进行中、调用后记结果"，**用的是同一张 `requests` 表**，只是这一行同时存下调用方生成的 `--retry-request` id 和完整调用参数，失败时用 `request-show` 定案（第 9 节）。
+   - 阶段 1 代码里 `deps.ts` 那句"Orca 的 --retry-request 只认它自己分配的 UUID"注释相应限定为 `terminal` 命令族（计划里列为改动项）。
+9. **雁阵不用 `--inject`，也不让岗位直接用 `orca orchestration send` 上报。** 通知与任务 spec 都明确写"完成后运行 `wl task done <id>`"；直接上报（绕过 gate 与连接）作为一种需要人看见的异常，由 `wl task list --stale` 与 2B 调度员发现（第 10 节）。
+10. **往岗位终端打字之前必须先做画面检查**（第 7.4 节）。适用于本阶段的派发通知、escalate 通知，以及 2B 的全部提示与转述。
 
 ## 4. `team.yaml` 扩展
 
@@ -69,19 +80,20 @@ links:                      # 可选；键是岗位 id
 gates:                      # 可选；键是岗位 id，值是单条 shell 命令字符串
   builder: 'pnpm test'
 budgets:                    # 可选
-  team:
-    max_in_progress_per_post: 3   # 默认 3；单岗位同时 dispatched 的任务数上限
   task:
     max_gate_failures: 3          # 默认 3；单任务本地 gate 失败计数上限，达到后终止并发起人工决策
+    gate_timeout_seconds: 600     # 默认 600；单次 gate 运行上限，超时计为一次失败
+    max_minutes: 240              # 可选，无默认；单次派发的期望时长，只记录，2B 据此判断逾期
 ```
 
 校验规则：
 
-- 同一岗位的 `links` 中 `reviewed_by` 与 `hands_to` 不可同时出现（`links_conflict`）；二者各自是同团队岗位 id 的列表，引用不存在的 id → `links_unknown_post`；`gates` 的键不是岗位 id → `gates_unknown_post`。
-- **连接触发规则（避免互评无限循环）：** `reviewed_by` 建出的子任务标记为 `kind = review`，`hands_to` 建出的子任务为 `kind = work`（人工/岗位直接 `create` 的任务也是 `work`）。**只有 `kind = work` 的任务在 `done` 时触发其岗位的 `links`**——评审任务做完就是做完，不会再让被评审方回头评审评审者。这样 `builder.reviewed_by:[checker]` + `checker.reviewed_by:[builder]` 的互评配置是合法且有限的。
-- **`hands_to` 环检测：** `hands_to` 产生的是 `work` 任务，会继续触发下一岗位的连接，所以 `hands_to` 图（岗位 → 岗位）里有环就会无限转交。`crossCheck` 对 `hands_to` 边做一次有向图环检测，有环 → `links_cycle`（报错信息列出环上的岗位）。`reviewed_by` 边不参与环检测（评审任务不再触发连接，构不成环）。
-- `tags` 是小写字母、数字、连字符组成的字符串数组；`gates` 的值是非空字符串；`budgets` 两个字段均为正整数，缺省取上面的默认值。
-- `consults` 允许引用任意同团队岗位 id（同样做 `links_unknown_post` 校验），阶段 2A 不使用其值。
+- 同一岗位的 `links` 中 `reviewed_by` 与 `hands_to` 不可同时出现（`links_conflict`）；二者各自是同团队岗位 id 的列表，引用不存在的 id → `links_unknown_post`；**指向自己 → `links_self`**；`gates` 的键不是岗位 id → `gates_unknown_post`。
+- **连接触发规则（避免互评无限循环）：** `reviewed_by` 建出的子任务标记为 `kind = review`，`hands_to` 建出的子任务为 `kind = work`（人工/岗位直接 `create` 的任务也是 `work`）。**只有 `kind = work` 的任务在 `done` 时触发其岗位的 `links`**——评审任务做完就是做完。
+- **`hands_to` 环检测：** `crossCheck` 对 `hands_to` 边做有向图环检测，有环 → `links_cycle`（报错信息列出环上的岗位）。`reviewed_by` 边不参与环检测。
+- `tags` 是小写字母、数字、连字符组成的字符串数组；`gates` 的值是非空字符串；`budgets.task` 各字段均为正整数，缺省取上面的默认值。
+- 出现已删除的字段 `budgets.team.max_in_progress_per_post` → `field_removed`，提示"Orca 限定每个岗位终端同时只有一个进行中的派发，此字段已取消"。
+- `consults` 允许引用任意同团队岗位 id（同样做 `links_unknown_post`/`links_self` 校验），阶段 2A 不使用其值。
 - 这些字段参与 `specHash`，沿用阶段 1 的哈希规则。
 
 ## 5. Run 与协调者身份
@@ -90,25 +102,31 @@ budgets:                    # 可选
 
 `wl up` 在 posts 循环之后新增一步，前提是团队的 `lead` 岗位这一轮已经在岗（`outcome` 为 `launched` 或 `already_live`）；否则跳过，下次 `wl up` 再试：
 
-- `teams.run_id` 为空：`orca orchestration run-create --objective "wingline:<team>" --from <lead 的 handle>`，经第 9 节账本（键 `<team>:run-create`，P1）调用，把 `run.id` 写入 `teams.run_id`、`run.coordinator_handle` 写入 `teams.coordinator_handle`。账本保证：调用超时后重跑 `wl up` 会回放同一个 Run，不会建出第二个（CLI 无法删除 Run，这一点尤其重要）。
-- `teams.run_id` 已存在：按 5.2 节的规则决定是否 `run-use`。
+- `teams.run_id` 为空：
+  1. 账本里没有 `<team>:run-create` 这一行时，先 `orchestration run-list` 按 objective 等于 `wingline:<team>` 查找已有的 Run（注册表丢失或换了 `WINGLINE_HOME` 的情形）：恰好一个 → 采用它（写入 `teams.run_id`，再按 5.2 的表 `run-use` 到 lead）；多于一个 → `run_ambiguous`（退出码 1），列出各 Run 的 id 与创建时间，提示 `wl up <team.yaml> --adopt-run <id>`；没有 → 下一步。
+  2. `orca orchestration run-create --objective "wingline:<team>" --from <lead 的 handle>`，经第 9 节账本（键 `<team>:run-create`，P1）调用，把 `run.id` 写入 `teams.run_id`、`run.coordinator_handle` 写入 `teams.coordinator_handle`。账本保证：调用超时后重跑 `wl up` 不会建出第二个 Run（CLI 无法删除 Run，这一点尤其重要）。
+- `teams.run_id` 已存在：按 5.2 节的规则决定是否 `run-use`。`run-use` 报 `run_not_found`（Run 被人在 Orca 界面里删掉了）→ `run_lost`（退出码 2），提示"原 Run 已不存在，旧任务无法恢复；确认后用 `wl up <team.yaml> --new-run` 新建"。
+- `--new-run`：清空 `teams.run_id`、`teams.coordinator_handle`，删除账本行 `<team>:run-create`，然后按"`teams.run_id` 为空"处理但**跳过 run-list 查找**；输出里写明旧任务从此不在 `wl task list` 里。`--adopt-run <id>`：`run-use --id <id>` 成功后写入 `teams.run_id`。
 
-**Run 复用（二次修订留下的开放项，本版定下）：** `run_id` 一旦建立终生不变，**包括 `wl down` 后换规格重新 `wl up`**。理由：任务属于 Run，新建 Run 会让旧任务从 `wl task list` 里消失；Orca CLI 没有删除 Run 的命令，每次换规格都新建只会不断堆积无法清理的 Run；规格变化（换模型、改 gate）不改变"这个团队的任务历史"。
+**Run 复用：** `run_id` 一旦建立终生不变，**包括 `wl down` 后换规格重新 `wl up`**（任务属于 Run；CLI 删不掉 Run；规格变化不改变"这个团队的任务历史"）。只有 `--new-run`/`--adopt-run` 两个显式动作能换 Run。
+
+**派给死终端的任务报告：** `wl up` 在建 Run 之后做一次只读核对（一次 `task-list --run` + 已有的 `terminal list`）：列出 `dispatched` 且 `assignee_handle` 不在存活终端里的任务，按 `task_ext.claimed_by` 汇总打印，每条附一条可直接复制的 `wl task recover <id>`。不自动处理。
 
 ### 5.2 协调者归属：唯一规则
 
-协调者身份（`run.coordinator_handle`）只在下表三处改变，2A 和 2B 都以这张表为准，不各自另立规则：
+协调者身份（`run.coordinator_handle`）只在下表几处改变，2A 和 2B 都以这张表为准，不各自另立规则：
 
 | 谁 | 什么时候 | 动作 |
 | --- | --- | --- |
-| `wl up` | `teams.run_id` 为空 | `run-create --from <lead handle>`（5.1） |
+| `wl up` | `teams.run_id` 为空 | `run-create --from <lead handle>`（5.1），或采用 run-list 找到的唯一 Run 后按下一行处理 |
 | `wl up` | `teams.run_id` 已存在，且**当前 `teams.coordinator_handle` 不在 `terminal list` 的存活终端里** | `run-use --id <run_id> --from <lead handle>`，写回 `teams.coordinator_handle` |
 | 调度员（2B） | 每次启动；以及循环里任何一次编排调用报 `consumer_fenced` | `run-use --id <run_id> --from <调度员自己的 handle>`，写回 `teams.coordinator_handle` |
 
-- `wl up` **绝不把协调者身份从一个存活的终端上拿走**：调度员在跑时，协调者是调度员的终端，它是活的，`wl up` 不动它——这正是二次修订里"`wl up` 每次无条件 `run-use`"与 2B"调度员启动时 `run-use`"互相打架的根因，本规则把它消掉了。`wl up` 判断"是否存活"只多一次只读的 `terminal list`。
-- `wl up` 的 `run-use` 不是正确性所必需的：第 2 节事实 1 实测协调者终端关闭后旧 handle 仍被接受，所以 lead 终端被关闭重建、调度员终端被关闭之后，2A 的调用照样可用。这一步是对"Orca 整个重启后旧 handle 字符串是否仍被接受"这个未验证情形的廉价保险，同时让协调者尽量落在一个活终端上。
-- `run-use` 是值覆盖，重复执行没有副作用，所以**不带 `--retry-request`**（第 9 节）。
-- **`wl task` 命令从不 `run-use`**（不抢身份）。它们一律用 `teams.coordinator_handle` 当 `--from`；如果收到 `consumer_fenced`（协调者被别人换过而注册表还没跟上，比如有人手动跑了 `orca orchestration run-use`），就 `run-show --id <run_id>` 读出当前协调者、写回 `teams.coordinator_handle`，然后按第 9 节的规则重试一次。
+- `wl up` **绝不把协调者身份从一个存活的终端上拿走**（调度员在跑时它的终端是活的）。
+- `wl up` 的 `run-use` 不是正确性所必需的（事实 1：值匹配不看终端死活），是对"Orca 整个重启后旧 handle 字符串是否仍被接受"这个未验证情形的廉价保险。
+- `run-use` 是值覆盖，重复执行没有副作用，所以**不带 `--retry-request`**。
+- **写回 `teams.coordinator_handle` 一律只更新这一列**（`UPDATE teams SET coordinator_handle = ? WHERE name = ?`），不用整行 upsert，避免把并发 `wl down` 写下的 `status` 覆盖回去。
+- **`wl task` 命令从不 `run-use`**。它们一律用 `teams.coordinator_handle` 当 `--from`；收到 `consumer_fenced` 时 `run-show --id <run_id>` 读出当前协调者、写回，然后按第 9 节重试一次。
 
 ## 6. 注册表扩展
 
@@ -116,18 +134,20 @@ budgets:                    # 可选
 -- teams 新增一列（阶段 1 已有 run_id，本阶段首次写入）
 teams(..., coordinator_handle TEXT)
 
--- requests（阶段 1 已有）新增两列：编排命令族的账本行用它们存调用方生成的 id 与完整参数（第 3 节约束 8）
+-- requests（阶段 1 已有）新增两列：编排命令族的账本行存调用方生成的 id 与完整参数（第 3 节约束 8）
 requests(..., retry_request TEXT, args TEXT)
 
 task_ext(
   task_id TEXT PRIMARY KEY,       -- Orca 任务 id（"task_xxxxx"）
   team TEXT NOT NULL REFERENCES teams(name),
-  tags TEXT NOT NULL,             -- JSON 字符串数组
-  kind TEXT NOT NULL,             -- work | review（第 4 节连接触发规则）
+  tags TEXT NOT NULL DEFAULT '[]',-- JSON 字符串数组
+  kind TEXT NOT NULL DEFAULT 'work', -- work | review（第 4 节连接触发规则）
   plan TEXT,                      -- wl task plan 写入
-  claimed_by TEXT,                -- 任务的"主人"岗位地址：claim、create --post、连接派发时写入；resolve --reassign 可改
+  claimed_by TEXT,                -- 任务的"主人"岗位地址：claim、create --post、连接派发、reassign 写入；release 清空
   epoch INTEGER NOT NULL DEFAULT 0,  -- 第几轮派发；任务被重新派发时 +1（第 9.3 节）
   gate_failures INTEGER NOT NULL DEFAULT 0,
+  ready_since TEXT,               -- 最近一次观察到/造成任务进入 ready 的时间（create、resolve、release、epoch+1 时写；2B 用来判断"有主人却没人动"）
+  dispatched_at TEXT,             -- 本轮派发成功的时间（2B 用来判断逾期）
   created_at TEXT NOT NULL
 )
 
@@ -135,10 +155,10 @@ task_done(
   task_id TEXT NOT NULL,
   epoch INTEGER NOT NULL,
   post TEXT NOT NULL,             -- 上报者地址
-  verdict TEXT NOT NULL,          -- passed | escalate：只记"终局"判定；预算内的 gate 失败不落这里
-  gate_failures INTEGER NOT NULL, -- 判定时的失败次数（escalate 的提问文本用它）
-  dispatch_id TEXT NOT NULL,      -- 判定时 task-list 里的 dispatch_id（任务终态后 task-list 不再给，见第 2 节事实 9）
-  report_from TEXT NOT NULL,      -- 上报用的 --from（判定时解析出的上报者 handle）
+  verdict TEXT NOT NULL,          -- passed | escalate | bypassed（bypassed：岗位绕过 wl 直接上报后补跑的判定，第 10 节）
+  gate_failures INTEGER NOT NULL, -- 判定时的失败次数
+  dispatch_id TEXT NOT NULL,      -- 判定时 task-list 里的 dispatch_id（bypassed 时为空字符串）
+  report_from TEXT NOT NULL,      -- 上报用的 --from（bypassed 时为空字符串）
   body TEXT,                      -- 上报用的 --body（判定时就定下，重跑原样复用）
   result TEXT,                    -- 全部后续步骤完成后写入的 DoneResult JSON
   finished_at TEXT,
@@ -151,39 +171,66 @@ gates(
   team TEXT NOT NULL REFERENCES teams(name),
   task_id TEXT NOT NULL
 )
+
+task_log(                         -- 只追加的本地变迁记录（吸收项 B-5）；Orca 不记、事后补不回来的才记
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  team TEXT NOT NULL,
+  task_id TEXT NOT NULL,
+  epoch INTEGER NOT NULL,
+  at TEXT NOT NULL,               -- ISO 8601
+  actor TEXT NOT NULL,            -- 调用方地址或 human
+  actor_source TEXT NOT NULL,     -- explicit（--as）| implicit（ORCA_TERMINAL_HANDLE 反查）| human
+  action TEXT NOT NULL,           -- create | claim | release | reassign | plan | start | queued | notify | gate_failed | done | escalate | resolve | recover | epoch_bump | bypass_detected
+  detail TEXT                     -- 短 JSON：目标地址、delivery、失败次数、gate 输出路径等
+)
 ```
 
-- **本地插入一律幂等**（`INSERT … ON CONFLICT DO NOTHING`，和 `upsertTeam` 的 `ON CONFLICT` 是同一种做法）：`task_ext`、`task_done`、`gates` 三张表。原因：账本回放会把同一个 Orca 结果（同一个子任务 id、同一个 gate id）再交给本地写一次，必须是无操作而不是主键冲突。`task_done` 插入后总是再读回一次，以先落盘的那一行为准（两个进程同时跑同一条 `done` 时也收敛到同一个判定）。
-- 不设 `events` 表：Orca 的任务记录加上 `CallLog`、`requests` 账本就是审计轨迹。
-- 二次修订里的 `task_ext.done_link_request_id`/`done_dispatch_request_id`/`done_report_request_id` 三列删除：它们只能表示"一个目标、一次判定"，表达不了多个评审目标，也绑不住 gate 判定（复审 M1）。
+- **本地写一律"插入或更新"**：`task_ext` 的所有 setter（`setClaimedBy`、`setPlan`、`incrementGateFailures`、`bumpEpoch`、`setReadySince`、`setDispatchedAt`）在行不存在时按默认值插入（`INSERT … ON CONFLICT(task_id) DO UPDATE`），因为在 Orca 界面里直接建的任务没有 `task_ext` 行（复审四 A-I6）。`team` 取命令解析出的团队。
+- **`bumpEpoch` 是比较后更新**：`UPDATE task_ext SET epoch = epoch + 1 … WHERE task_id = ? AND epoch = ?`，影响 0 行说明别的进程已经加过，重新读取即可，不会连加两次。
+- **插入幂等**：`task_done`、`gates` 用 `INSERT … ON CONFLICT DO NOTHING` 后再读回（账本回放会把同一个 Orca 结果再交给本地写一次）。
+- **账本行的保留约定（吸收项 B-9）：** `requests` 里的编排账本行是语义状态（例如 `dispatch:<t>:<e>` 的 `done` 决定"本轮是否已派"，`…:delivered:<目标>` 决定重跑行为），不是日志。只有"任务已终态、且对应 `task_done` 已收尾"的行才允许以后清理；本阶段不清理。`CallLog` 与 gate 输出文件按遥测处理，按天删除（7 天）。`task_log` 本阶段不清理。
 
-## 7. 身份解析
+## 7. 身份、通知与画面检查
 
 ### 7.1 调用方是谁（逻辑地址）
 
 `resolveActor` 的顺序：
 
 1. 显式 `--as <addr>` → 地址就是它，标记为**显式**。
-2. 否则读 `ORCA_TERMINAL_HANDLE`（第 2 节事实 5）：`terminal list --include-visual-layouts`，找到这个 handle 的终端，取它的标签页标题（阶段 1 `terminalList` 已有的标题解析）；标题是注册表里已登记的岗位地址 → 就是调用方地址，标记为**隐式**，且调用方自己的 handle 就是这个环境变量。
-3. 都没有 → `actor_required`（只对需要身份的命令 `claim`/`start`/`done`/`list --mine`；`create` 解析不到时记为 `human`；`list`/`show`/`plan`/`escalate`/`resolve` 不需要身份）。
+2. 否则读 `ORCA_TERMINAL_HANDLE`（第 2 节事实 5）：`terminal list --include-visual-layouts`，找到这个 handle 的终端，取它的标签页标题；标题是注册表里已登记的岗位地址 → 就是调用方地址，标记为**隐式**，调用方自己的 handle 就是这个环境变量。
+3. 都没有 → `actor_required`（只对需要身份的命令 `claim`/`start`/`done`/`release`/`list --mine`）；`create`/`reassign`/`escalate`/`resolve`/`recover` 解析不到时记为 `human`；`list`/`show`/`plan` 不需要身份。`actor_required` 的提示写明"在岗位终端里运行，或加 `--as <岗位地址>`；Windows 上未验证 Orca 是否设置 `ORCA_TERMINAL_HANDLE`"。
 
-**二次修订里的 `WINGLINE_POST` 环境变量注入删除。** 原因：它要求 `wl up` 在启动命令前拼 `WINGLINE_POST=<addr> <launch>`，而 Orca 终端里解释这条命令的是终端自己的 shell（Windows 上可能是 PowerShell 也可能是 cmd，`set X=Y&& …` 在 PowerShell 里不是合法语法），雁阵无从得知，`multilineSafe` 描述的是 `wl` 自己怎么调 `orca.cmd`，不是那个 shell（复审 W5）。用 `ORCA_TERMINAL_HANDLE` 反查标题不需要改启动命令、三个平台一样、永远是最新的；代价是一次 `terminal list`，可接受。`wl up` 的启动命令因此保持阶段 1 的原样不变。
+`wl up` 的启动命令保持阶段 1 的原样不变（不注入任何环境变量）。
 
 ### 7.2 某个地址的真实 handle
 
-`resolveHandle(actor)`：
+`resolveHandle(actor)`：**隐式** → `ORCA_TERMINAL_HANDLE`；**显式 `--as <addr>`** → 一律 `locatePost(addr)`，找不到 → `post_offline`。这条规则对所有需要 handle 的地方一视同仁（派发目标、`done` 上报用的 `--from`）。
 
-- **隐式**（调用方就在自己的终端里）：就是 `ORCA_TERMINAL_HANDLE`。
-- **显式 `--as <addr>`**：**一律 `locatePost(addr)`**，绝不用调用方进程的 `ORCA_TERMINAL_HANDLE`——那是调用方的终端，不一定是 `addr` 的。找不到 → `post_offline`。
+### 7.3 派发与通知
 
-这条规则对**所有**需要 handle 的地方一视同仁：`start` 的派发目标、`done` 上报用的 `--from`。第 10 节命令表里不再出现"`--from $ORCA_TERMINAL_HANDLE`"这种写法，统一写成"上报者 handle（按 7.2）"。实测从另一个终端用 `--from <assignee handle>` 代发 `worker_done` 被接受（第 2 节事实 2），所以 lead 在自己终端里跑 `wl task done t1 --as builder@duo` 是可行的（assignee 为真实 agent 时未验证，见第 14 节）。
+所有派发一律**不带 `--inject`**（第 3 节约束 9）。派发成功后，按目标是谁决定怎么让对方知道：
 
-### 7.3 "派给自己"与"派给别人"
+- **派给自己**（目标 handle 等于 `ORCA_TERMINAL_HANDLE`）：命令输出本身就告诉了它任务内容，`delivery = 'self'`。
+- **派给别人**：经第 7.4 节画面检查后，用阶段 1 `wl send` 的同一条底层路径（`terminal send --text … --enter --wait-submit 10`）发一行通知：
 
-派发时判断目标 handle 是否等于 `ORCA_TERMINAL_HANDLE`：
+  ```
+  [雁阵] 你有新任务 <task_id>：<标题>。查看：wl task show <task_id>；完成后运行：wl task done <task_id>（不要直接用 orca orchestration send 上报）
+  ```
 
-- **相等（派给自己）**：调用方此刻就在这个终端里执行 `wl`，命令输出本身就告诉了它任务内容，不注入。不注入的理由只是"不需要"；"往一个正在执行命令的 agent 自己的终端注入会被拒"这一点**从未验证**，不作为理由。
-- **不等（派给别人，含 `--as` 指向另一个岗位、`create --post`、连接派发）**：先 `terminal wait --for tui-idle`（短等待，`INJECT_IDLE_WAIT_MS = 15000`，复用阶段 1 的 `terminalWait`，进程级超时余量同 `WAIT_PROCESS_SLACK_MS`）：满足 → `dispatch --inject`；不满足（目标正忙或还没就位）→ **不带 `--inject` 派发**，任务照样归它，结果里标记"未通知"，并提示调用方用 `wl send <addr> "你有新任务 <id>，见 wl task show <id>"` 补一句（`wl send` 对忙碌 agent 是排队输入，阶段 1 已验证）。不在 `wl task` 里死等对方空闲——评审方正忙是常态。
+  - 画面检查通过且回执有 `turn_started` → `delivery = 'notified'`；只有 `input_accepted` → `'notified_unconfirmed'`（不重发）；画面检查不通过或拿不到画面 → 不打字，`'not_notified'`，结果里带原因（`at_prompt`/`screen_unknown`），命令输出提示调用方在对方空闲后用 `wl send` 补一句。
+  - 通知失败从不让派发失败：派发已经落地，通知只是提醒。
+- Orca 任务的 `--spec` 末尾固定追加同一句"完成后运行 `wl task done <id>`（不要直接用 orca orchestration send 上报）"，这样即使通知没送到，岗位从任何地方看到这个任务都知道该怎么收尾。
+- **派发前的"岗位忙"检查**（第 2 节事实 11）：派发前用本轮已经要做的那次 `task-list` 看目标 handle 是否已是某个 `dispatched` 任务的 assignee。是 → 不调用 `dispatch`。`start` 报 `post_busy`（退出码 1，提示"岗位手上已有进行中的任务 <id>，先 `wl task done` 或 `wl task release`"）；`create --post` 与连接派发记 `delivery = 'queued'`（任务已归属目标、仍是 `ready`），并经画面检查发一行"[雁阵] 你有排队任务 <id>：<标题>，手上的任务完成后运行 wl task start <id>"。万一检查与派发之间对方刚好接了别的任务，Orca 回 `runtime_error`（"already has an active dispatch"）——按第 9 节由 `request-show` 定案（`absent`，删行），本命令同样转为 `post_busy`/`queued`。
+
+### 7.4 往岗位终端打字之前的画面检查
+
+`screenGuard(handle) → 'clear' | 'at_prompt' | 'unknown'`，2A 与 2B 共用同一个函数：
+
+1. `terminal show --terminal <handle>`，取 `preview` 的最后 8 行。终端不存在 → 调用方按 `post_offline` 处理；`preview` 为空或调用失败 → `unknown`。
+2. 任何一行命中下列任一模式 → `at_prompt`（大小写不敏感）：`\(y/n\)`、`\[y/n\]`、`\(yes/no\)`；以 `❯`/`>`/`›` 加数字加 `.`/`)` 开头的编号选项行；`Do you want to`、`Would you like to`、`Allow `、`Approve`、`Press Enter`、`Esc to cancel`、`trust (this|the) (folder|files|directory)`、`Continue\?`、`\?\s*$`（以问号结尾的行）。
+3. 否则 → `clear`。
+
+只有 `clear` 才打字。这是宁可漏发也不误答的启发式：漏判（画面是提示但没命中模式）会把文字打进提示，所以模式表偏宽；误判只是少发一条通知。R6 的实例（启动命令被 shell 别名展开、停在 `(Y/n)`）命中第一条。模式表放在一个常量里，附带单元测试覆盖 R6 记录的两种画面（`test/fixtures/receipts/orchestration-r6.json` 的 `terminal-show-at-yn-prompt` 应为 `at_prompt`，`terminal-show-idle-claude` 应为 `clear`）。
 
 ## 8. 任务状态机
 
@@ -195,12 +242,14 @@ gates(
    ▼
 ready ──────────────────────────────────────────────┐
    │ wl task claim（本地写 claimed_by，不调 Orca）     │ create --post X / 连接派发
-   ▼                                                  │（claimed_by=X，直接派发）
+   │ wl task release（清空）/ reassign（改主人）        │（claimed_by=X；X 忙则排队，仍是 ready）
+   ▼                                                  │
 ready + claimed_by=X                                  │
-   │ wl task start（plan_first、WIP 检查 → 派发）      │
+   │ wl task start（plan_first、岗位忙检查 → 派发）    │
    └──────────────────────┬───────────────────────────┘
                           ▼
-                     dispatched ───────────── assignee 终端被关闭（Orca 自动）──→ ready（claimed_by 不变，主人 start 即重派）
+                     dispatched ───────────── assignee 终端被关闭（Orca 自动）──→ ready（claimed_by 不变）
+                          │                    assignee 已死但任务仍 dispatched ──→ wl task recover
                           │ wl task done：先跑 gate
           ┌───────────────┼──────────────────────────┐
           ▼               ▼                          ▼
@@ -211,119 +260,141 @@ ready + claimed_by=X                                  │
           ▼                                       │ wl task resolve（或在 Orca 界面里 resolve）
       completed                                   ▼
                                                 ready（claimed_by=原主人或 --reassign 的目标）
-     wl task escalate（任意时刻）：dispatched/ready → blocked（正在进行的 dispatch 被结束）
+     wl task escalate（任意未终态时刻）：dispatched/ready → blocked（正在进行的 dispatch 被结束）
 ```
 
-- `epoch`：每当一个任务**在上一轮派发已经结束之后再次被派发**（`resolve` 之后、assignee 终端关闭自动回 `ready` 之后），`epoch + 1`。`done` 的判定和后续步骤按 `(task_id, epoch)` 归档，所以同一个任务的第二轮不会复用第一轮的判定或幂等 id。若上一轮的判定是 `escalate`，新一轮开始时 `gate_failures` 清零（人已经决定让它重来）。
+- 每个岗位终端同时最多一个 `dispatched` 任务（事实 11）；`claimed_by` 可以有多个 `ready` 任务排队。
+- `epoch`：每当一个任务**在上一轮派发已经结束之后再次被派发**（`resolve` 之后、终端关闭自动回 `ready` 之后、`recover` 之后），`epoch + 1`。`done` 的判定和后续步骤按 `(task_id, epoch)` 归档。若上一轮的判定是 `escalate`，新一轮开始时 `gate_failures` 清零。
 - 没有"放弃"状态：不想继续的任务就不 `resolve`，让它停在 `blocked`。
 
 ## 9. 编排写调用的幂等账本
 
-### 9.1 两种模式
+### 9.1 P1：有稳定本地键
 
-**P1 持久化（有稳定本地键）** —— 用于一切"中途崩溃/超时后必须能安全重试"的调用：
+用于一切"中途崩溃/超时后必须能安全重试"的调用。
 
 1. 调用前查 `requests` 里这个键：
-   - 没有 → 生成 `crypto.randomUUID()`，连同**完整调用参数**（含 `--from`、`--to`、`--body` 等）以 `pending` 写入（`ON CONFLICT DO NOTHING` 后再读回）。这一行是**新行**：这个 id 此前从未发出过。
+   - 没有 → 生成 `crypto.randomUUID()`，连同**完整调用参数**以 `pending` 写入（`ON CONFLICT DO NOTHING` 后再读回）。
    - 已 `done` → **不调用 Orca**，直接返回存下的结果。
-   - `pending`/`uncertain` → 用存下的 id 和参数原样调用（Orca 要么回放，要么第一次真正执行）。这一行是**旧行**：之前某个进程可能已经把它发出去并且落地了（`pending` 也算——进程可能在调用返回前崩溃）。
+   - `pending`/`uncertain` → 用存下的 id 和参数原样调用（Orca 要么回放，要么第一次真正执行）。**派发行例外：** 存下的 `--to` 已不在存活终端里时，先走第 3 步的 `request-show` 定案，`absent` 时按当前目标 handle 重建参数、换新 id（复审四 A-I1；否则不带 `--inject` 的重放会把任务派给死终端，事实 3）。
 2. 调用结果：
-   - 成功 → 记 `done`，存映射后的结果（如子任务 id、gate id，不存整份回执）。
-   - `consumer_fenced` → 由第 2 节事实 7、10，原调用从未落地（旧行也一样：落地过的话 Orca 会先回放）：`run-show` 刷新 `teams.coordinator_handle`，**换新 id**、按当前状态重建参数，更新这一行，再调用一次（只重试一次；换出来的 id 算新行）。
-   - 其他 `ok:false`（`runner.json` 把它们都变成 `kind:'orca'`），按这一行是新是旧分两种：
-     - **新行**（这个 id 只发过这一次，而这一次被 Orca 明确拒绝）→ 没有落地（事实 6、10）：**删掉这一行**，错误照常上抛（退出码 2），下次重跑从头生成新 id、按当时的状态重建参数。
-     - **旧行**，且错误码是 `task_not_startable` 或 `inactive_dispatch`（事实 10：已证实产生在账本检查之后）→ 这个回答本身证明之前任何一次都没有落地：同样删行、退出码 2。
-     - **旧行**，其他任何错误码（`runtime_unavailable`、`inject_rejected`、`worker_identity_changed`、未见过的错误码）→ **不删行**：这次的错误只说明"这一次"没成，不说明之前那次没落地（典型：上一次超时、其实已经落地，这一次碰上 Orca 正在重启返回 `runtime_unavailable`；若删行，下一次重跑会换新 id 再建一次——对 `run-create` 就是一个删不掉的重复 Run）。记 `uncertain`，id 与参数保留，按"结果不确定"上抛（退出码 3），提示里带上 Orca 的错误码与信息，以及"原样重跑同一条命令即可：上一次已落地则 Orca 回放结果，否则会在条件满足后第一次执行"。
-   - 结果不确定（`orca_timeout` 等 `uncertain` 类）→ 记 `uncertain`，id 与参数保留，上抛退出码 3，提示"原样重跑同一条命令即可，已记录幂等 id，不会重复执行"。
-   - 其余（`internal` 类，如回执无法解析）→ 原样上抛，行保持 `pending`（下次按旧行处理）。
-3. 回放回执是旧快照（第 2 节事实 7），凡是要依据当前状态做决定的地方另查 `task-list`，不信回执里的状态字段。
+   - 成功 → 记 `done`，存映射后的结果（子任务 id、gate id、`dispatchId` 等，不存整份回执）。
+   - `consumer_fenced` → 原调用从未落地（事实 7、10）：`run-show` 刷新 `teams.coordinator_handle`，**换新 id**、按当前状态重建参数，更新这一行，再调用一次（只重试一次）。
+   - **其余一切失败**（Orca 明确报错、四个传输层错误码、`orca_timeout` 等不确定类、回执无法解析）→ 第 3 步。
+3. **用 `request-show --request <id>` 定案**（事实 10）：
+   - `completed` 且回执是成功回执 → 按成功处理（记 `done`，结果取自回执）。这一分支覆盖"上次超时、其实已经落地"的全部情形，不再依赖错误码猜测。
+   - `completed` 且回执是被记下的拒绝（如被拒的 `worker_done`）→ 这个 id 已经用掉、只会永远拿回同一个拒绝：**删除这一行**，原错误上抛（退出码 2）。下次重跑换新 id、按当时状态重建参数。
+   - `absent` → 视为没有落地：**删除这一行**；原错误若是 Orca 明确报错 → 退出码 2；若是传输/不确定类 → 退出码 3，提示"原样重跑同一条命令即可"。下次重跑换新 id。
+   - `pending` → 原调用还没结束：记 `uncertain`，id 与参数保留，退出码 3，提示"稍后原样重跑同一条命令"。
+   - `request-show` 本身失败（运行时不可达等）→ 记 `uncertain`，保留，退出码 3。
+4. 回放回执是旧快照（事实 7），凡是要依据当前状态做决定的地方另查 `task-list`，不信回执里的状态字段。
 
-**为什么"旧行 + 未证实的错误码"选保守而不是按错误码猜：** 能分清"产生在账本检查之前还是之后"的只有事实 10 列出的几个码；`inject_rejected`、`worker_identity_changed` 是否在账本之后没有证据，`runtime_unavailable` 已知在之前。保守的代价是有界的：事实 10 证实失败的调用不进 Orca 账本，所以保留下来的 id 重放时**只会**两种结果——回放真正落地过的那一次，或者重新执行一次（不会被"记住的失败"永远卡住，也不会建出重复对象）。最坏情况是一个永久性错误让同一条命令每次都报退出码 3：`dispatch` 的 `inject_rejected` 在目标 agent 就位后就会成功；`done` 上报的 `worker_identity_changed`（这一轮派发已经不属于这个终端）用第 14 节的手动流程（`escalate` → `resolve` → 主人 `start`，新的 `epoch` 用新的键）脱身。
+`absent` 有一个已知盲区：Orca 会清理旧回执，"很久以前落地、回执已被清理"也报 `absent`。账本行只在命令执行期间与随后的人工重跑中被重放，间隔通常是分钟级；清理周期未知，列入第 14 节风险。
 
-**P2 以 id 为键（没有稳定本地实体）** —— 只有两处：`wl task create` 的 `task-create`（两次独立调用本来就应该建出两个任务，雁阵不能猜"这是不是上一次的重试"）、`wl task escalate` 的 `gate-create`（同理）。每条命令使用命令行给的 `--retry-request <id>`，没给就生成新 UUID；账本键就是 `oneshot:<id>`，之后完全按 P1 处理（同样的 id 与完整参数落盘、同样的错误分支）。所以"每条新命令一个新对象"不变（新命令新 id 新行），而人工重试时：
+### 9.2 P2：以 id 为键（没有稳定本地实体）
 
-- 本地有 `oneshot:<id>` 这一行 → **原样重放首次落盘的参数，含首次的 `--from`**。不在重试时按 `teams.coordinator_handle` 重新推导 `--from`：协调者在两次尝试之间被换过（调度员启动后 `run-use`、`wl up` 按第 5.2 节收回）时，重新推导出的新 `--from` 配旧 id 会被 Orca 判 `request_mismatch`（事实 7）；而原参数重放时，原调用落地过就回放，没落地就被 `consumer_fenced`（证明没落地）→ 换新 id 用当前协调者重发，两种都正确。命令行这次给出的其余参数（标题、tags、`--parent`、理由文本）若与落盘的不同（不比较 `--from`）→ 输入错误 `retry_request_args_changed`（退出码 1），提示"这个 id 上一次用于另一组参数；要新建就去掉 `--retry-request`"——否则用户改了标题却拿回旧任务而不自知。
-- 本地没有这一行（换了机器或 `WINGLINE_HOME`、注册表被删）→ 按当前状态推导参数，当作**旧行**（这个 id 可能在别处发出过）调用。此时 `request_mismatch` 单独处理：由事实 7、10，它证明这个 id **已经落地过**（失败不进账本），只是首次的参数（通常是 `--from`）与这次不同。报 `retry_request_mismatch`（退出码 3，不是 2），提示"这个 `--retry-request` 上一次已经成功执行过，但用的参数（很可能是当时的协调者 `--from`）和这次不一样，不能安全地用同一个 id 重放；先用 `wl task list` 确认要的东西是不是已经建出来了，确认没有再去掉 `--retry-request` 重跑一次"，**不**建议直接换新 id。
-- 超时类失败（以及上面"旧行 + 未证实错误码"）的错误提示带上这次用的 id **和这次用的 `--from`**：`wl task create <同样的参数> --retry-request <id>（本次协调者 --from <handle>）`——即使落到上一条的情形，人也能对照 `orca orchestration run-show` 看出是协调者换过了。
+只有两处：`wl task create` 的 `task-create`、`wl task escalate` 的 `gate-create`（两次独立调用本来就应该建出两个对象）。每条命令使用命令行给的 `--retry-request <id>`，没给就生成新 UUID；账本键是 `oneshot:<id>`，之后完全按 P1 处理。人工重试时：
 
-这和 `wl send` 的现有用户体验一致（提示里给出可直接复制的重试命令）。
+- 本地有 `oneshot:<id>` 这一行 → 原样重放首次落盘的参数，**含首次的 `--from`**（协调者在两次尝试之间被换过时，原参数重放会回放已落地的调用，或被 `consumer_fenced` 证明没落地 → 换新 id 用当前协调者重发）。命令行这次给出的其余参数（标题、tags、`--parent`、理由文本）若与落盘的不同（不比较 `--from`）→ `retry_request_args_changed`（退出码 1），提示"这个 id 上一次用于另一组参数；要新建就去掉 `--retry-request`"。
+- 本地没有这一行（换了机器、注册表丢失）→ **先 `request-show --request <id>`**：`completed` 且成功 → 直接采用回执（写本地行为 `done`，补写 `task_ext` 等本地记录）；`completed` 且是拒绝、或 `absent` → 按当前状态推导参数正常调用；`pending` → 退出码 3。这样不再需要第四次修订里的 `retry_request_mismatch` 分支。
+- 超时类失败的错误提示带上这次用的 id：`wl task create <同样的参数> --retry-request <id>`。
 
-### 9.2 各调用用哪种
+### 9.3 各调用用哪种
 
 | Orca 调用 | 发起者 | 账本键 | 模式 |
 | --- | --- | --- | --- |
 | `run-create` | `wl up` | `<team>:run-create` | P1 |
-| `run-use` | `wl up`、调度员 | — | 不带 id（值覆盖，重复执行无副作用） |
-| `task-create` | `wl task create` | `oneshot:<id>` | P2（`--retry-request` 可传） |
-| `dispatch` | `create --post`、`start`、连接派发 | `dispatch:<task>:<epoch>` | P1 |
+| `run-use`/`run-list`/`run-show` | `wl up`、调度员、`wl task` | — | 不带 id（值覆盖或只读） |
+| `task-create` | `wl task create` | `oneshot:<id>` | P2 |
+| `dispatch` | `create --post`、`start`、连接派发、`recover` | `dispatch:<task>:<epoch>` | P1 |
 | `send worker_done` | `wl task done` | `done:<task>:<epoch>:report` | P1 |
-| `task-create`（子任务） | `wl task done` | `done:<task>:<epoch>:link:<目标地址>` | P1，每个目标一行（复审 M1b） |
+| `task-create`（子任务） | `wl task done` | `done:<task>:<epoch>:link:<目标地址>` | P1，每个目标一行 |
 | `gate-create` | `wl task done`（escalate） | `done:<task>:<epoch>:gate` | P1 |
-| `gate-create` | `wl task escalate` | `oneshot:<id>` | P2（`--retry-request` 可传） |
+| `gate-create` | `wl task escalate` | `oneshot:<id>` | P2 |
+| `gate-create` / `gate-resolve` | `wl task recover` | `recover:<task>:<epoch>:gate` / `…:resolve` | P1 |
 | `gate-resolve` | `wl task resolve` | `resolve:<gate_id>` | P1 |
-| `check`/`check --ack` | 调度员（2B） | — | 不带 id（只读/确认批次，见 2B） |
+| `request-show` | 账本定案 | — | 只读 |
+| `check`/`check --ack`/`reply` | 调度员（2B） | — | 见 2B |
 
-### 9.3 派发与 `epoch`
+### 9.4 派发与 `epoch`
 
-所有派发走同一个内部步骤 `dispatchTo(task, 目标地址, 目标 handle)`：
+所有派发走同一个内部步骤 `dispatchTo(task, 目标地址)`。账本行 `dispatch:<task>:<epoch>` 存的结果是 `{ dispatchId, dispatchedAt }`；通知结果（`delivery`）不存在这一行里，见下。**本轮派发是否已经完成，以这一行为准，不按任务此刻的状态再推一遍。**
 
-账本行 `dispatch:<task>:<epoch>` 存的结果是 `{ dispatchId, delivery }`（`delivery` 即 `injected`/`not_notified`/`self`，在调用成功时按第 3 步的决定和 Orca 回执的 `injected` 算出）。**本轮派发是否已经完成，以这一行为准，不按任务此刻的状态再推一遍**——任务派出去之后往前走（评审方已经做完、被 escalate 成 `blocked`）是正常的，不能因此把"已经派过"误判成"派不出去"。
-
-1. 读 `task_ext.epoch` 得到键，`task-list` 取任务此刻的状态。
+1. 读 `task_ext.epoch` 得到键；`task-list --run` 取任务此刻的状态与全部 `dispatched` 任务的 assignee（同一次调用，供"岗位忙"检查用）。
 2. 按这个键的状态分支：
-   - 已 `done`，任务此刻是 `ready` → 本轮派发已经结束（`resolve` 或终端关闭自动回退）：`epoch + 1`（上一轮判定是 `escalate` 时同时 `gate_failures = 0`），换新键，到第 3 步。
-   - 已 `done`，任务此刻是其他任何状态（`dispatched`——不论派给谁、`blocked`、`completed`、`failed`）→ **本轮派发已经完成**：直接返回账本里存的结果，不调用 Orca、不报错（重跑 `start`、重跑 `done` 的连接步骤都是无操作）。
+   - 已 `done`，任务此刻是 `ready` → 本轮派发已经结束（`resolve`、终端关闭自动回退、`recover`）：`bumpEpoch`（上一轮判定是 `escalate` 时同时 `gate_failures = 0`），写 `task_log`（`epoch_bump`），换新键，到第 3 步。
+   - 已 `done`，任务此刻是其他状态 → 本轮派发已经完成：直接返回存下的结果，不调用 Orca。
    - 没有行：任务此刻不是 `ready` → `task_not_open`；是 `ready` → 第 3 步。
-   - `pending`/`uncertain`（上一次没确认）→ 不论任务此刻状态如何，第 3 步原样重放。
-3. 按 7.3 决定是否 `--inject`（这个决定在账本行第一次写入前做出、随参数一起落盘，重试不会改变它），经 P1 调用 `dispatch`。
-4. 若这次 `dispatch` 是回放（`mutation.replayed`），再查一次 `task-list`：
-   - 任务 `dispatched` 给了目标 → 成功。
-   - 任务是 `ready` → 回放的那次派发落地过、但已经结束了（目标终端被关闭后重放仍是回放，R4-3）：`epoch + 1` 后回到第 3 步重派一次（只此一次）。
-   - 其他状态（`blocked`/`completed`/`failed`，或已派给别人）→ 那次派发确实落地过，任务此后已经往前走了：返回回放的结果，**不加 `epoch`**（任务没有回到 `ready`，不存在"新一轮"）。
+   - `pending`/`uncertain` → 第 4 步（按第 9.1 节重放，含"`--to` 已死"的例外）。
+3. 解析目标 handle（`locatePost`，找不到 → 调用方按 `skipped_offline`/`post_offline` 处理）；岗位忙检查（第 7.3 节）命中 → 返回 `queued`，不写账本行。
+4. 经 P1 调用 `dispatch --task <id> --to <handle> --from <coordinator>`（**不带 `--inject`**）。成功后写 `task_ext.dispatched_at`、`task_log`（`start` 或 `queued` 之外的派发记 `start`）。
+5. 若这次 `dispatch` 是回放（`mutation.replayed`，或由 `request-show` 定案为已落地），再查一次 `task-list`：任务 `dispatched` 给了目标 → 成功；任务是 `ready` → 回放的那次派发落地过、但已经结束了：`bumpEpoch` 后回到第 3 步重派一次（只此一次）；其他状态 → 返回回放的结果，不加 `epoch`。
+6. 通知（第 7.3 节）在 `dispatchTo` 返回之后由调用方执行；连接派发的通知结果存进 `…:delivered:<目标>` 记录（第 10 节），`start`/`create --post` 的通知结果只出现在命令输出与 `task_log` 里。
 
-`start` 自己在调用 `dispatchTo` 之前拦掉"任务已 `dispatched` 给另一个 handle"的情形（第 10 节），所以第 2 步"派给谁都算已完成"不会让 `start` 把别人的派发误报成自己的。
+`start` 自己在调用 `dispatchTo` 之前拦掉"任务已 `dispatched` 给另一个 handle"的情形（第 10 节）。
 
 ## 10. 命令
 
-**锁：** 只有纯本地读改写的 `claim`、`plan` 在 `registry.withTeamLock(team, fn)` 内执行。`withTeamLock` 是**立即失败**的（另一个进程持锁时直接 `team_busy`、退出码 1，提示稍后重试），不排队等待。其余命令不持锁：Orca 自己的状态机（已 `dispatched` 的任务不能再派发）加上第 9 节账本（同一个键的两次并发调用用的是同一个 id，Orca 回放）保证并发安全——两个进程同时 `wl task done` 同一个任务，会收敛到同一个判定、同一组调用。`wl up` 本身持团队锁跑完整个过程，期间对同一团队的 `claim`/`plan` 会 `team_busy`。
+**通用前置：** 所有 `wl task` 命令（`list`/`show` 除外）先做一次 `orca status --json`（`runtime.reachable` 为假 → Orca 明确报错，提示 `orca open`，不写任何账本行）；然后 `loadTeamSpec(teams.spec_path)` 并比对 `specHash` 与 `teams.spec_hash`，不一致 → `team_spec_changed`（退出码 1，提示"`team.yaml` 在团队运行期间被改过；`wl down` 后重新 `wl up`"），文件不存在 → `spec_not_found`。
+
+**锁：** 只有纯本地读改写的 `claim`、`plan`、`release`、`reassign` 在 `registry.withTeamLock(team, fn)` 内执行（立即失败，另一个进程持锁时 `team_busy`、退出码 1）。其余命令不持锁：Orca 自己的状态机加上第 9 节账本保证并发安全——两个进程同时 `wl task done` 同一个任务会收敛到同一个判定、同一组调用；但两个进程都会各自跑一次 gate，失败时计数可能多加一次（可接受，`task_log` 里看得到两条 `gate_failed`）。
 
 **`wl task create <team> --title <t> [--post <addr>] [--tags a,b] [--parent <id>] [--as <addr>] [--retry-request <id>]`**
 
-前置：`teams.coordinator_handle` 已建立，否则 `run_not_ready`（提示先跑 `wl up`）。任何岗位或人工都可调用。`task-create --spec "<调用方地址或 human>: <title>" --task-title <title> --run <run_id> --from <coordinator_handle> [--parent <id>]`（P2；spec 前缀调用方地址，是因为 Orca 的 `created_by_terminal_handle` 恒等于协调者，看不出是谁建的）。本地插入 `task_ext`（`kind = work`，`tags`；给了 `--post` 时 `claimed_by = <post>`）。给了 `--post`：`dispatchTo(新任务, post)`（第 9.3 节；人工直接指派视为已同意跳过 `plan_first`，也不受 WIP 预算约束，见第 14 节）。
+前置：`teams.coordinator_handle` 已建立，否则 `run_not_ready`。`task-create --spec "<调用方地址或 human>: <title>\n\n完成后运行 wl task done <id>（不要直接用 orca orchestration send 上报）" --task-title <title> --run <run_id> --from <coordinator_handle> [--parent <id>]`（P2；spec 里的"完成后运行"一句在任务 id 未知前用占位写法"`wl task done <本任务 id>`"）。本地插入 `task_ext`（`kind = work`，`tags`，`ready_since = now`；给了 `--post` 时 `claimed_by = <post>`），`task_log`（`create`）。给了 `--post`：`dispatchTo(新任务, post)`（人工直接指派视为已同意跳过 `plan_first`），按第 7.3 节通知；目标忙 → `queued`。
 
-`--post` 的派发超时（复审 W4）：此时任务已建好、`task_ext` 已写，错误提示给出"`wl task create <同样的参数> --retry-request <本次 id>`"——重跑时 `oneshot:<id>` 这一行已 `done`，直接拿回同一个任务 id、不再调用 `task-create`（本地记录丢了的话按第 9.1 节 P2 用同一个 id 调用，Orca 回放），`task_ext` 插入是无操作，`dispatch:<task>:0` 这一行要么回放要么第一次执行，不会建出第二个任务，也不会撞上"只有 ready 的任务能派发"。
+`--post` 的派发超时：任务已建好、`task_ext` 已写，错误提示给出"`wl task create <同样的参数> --retry-request <本次 id>`"——重跑时 `oneshot:<id>` 已 `done`，直接拿回同一个任务，`dispatch:<task>:0` 要么回放要么第一次执行。
 
-**`wl task list [team] [--mine] [--status s] [--tags a,b] [--as <addr>] [--json]`**
+**`wl task list [team] [--mine] [--status s] [--tags a,b] [--stale] [--as <addr>] [--json]`**
 
-`task-list --run <run_id>`，与 `task_ext` 按 id 合并（`tags`/`kind`/`plan`/`claimed_by`/`gate_failures`），再过滤。`--status` 接受五种状态。`--mine` 按 `claimed_by = <调用方地址>` 过滤（地址按 7.1 解析，`--as` 给出即用它）——不再按 assignee handle 过滤：终态任务没有 assignee（第 2 节事实 9），终端重建后 handle 也会变，`claimed_by` 是唯一跨这些情况都稳定的"这是谁的任务"。`--tags` 是纯交集过滤（无 tags 的任务在带 `--tags` 时不列出）。
+`task-list --run <run_id>`，与 `task_ext` 按 id 合并，再过滤。`--mine` 按 `claimed_by = <调用方地址>` 过滤。`--tags` 是纯交集过滤。
 
-**`wl task show <id> [--team <team>] [--json]`**
+`--stale`（吸收项 B-1、B-2、B-7）列出需要人或主人处理的任务，每条带原因和一条可直接复制的处理命令：
 
-`task-list` 定位该任务，与 `task_ext` 合并；`result` 是 Orca 的 JSON 字符串，解析出 `outcome`/`reportedBy` 展示。
+| 原因 | 判定 | 处理命令 |
+| --- | --- | --- |
+| `done_unfinished` | `task_done` 有行但 `finished_at` 为空 | 原样重跑 `wl task done <id> --as <post>` |
+| `call_uncertain` | 该任务相关的账本行为 `pending`/`uncertain` 且超过 1 分钟 | 重跑写在行里的那条命令（`wl task start`/`done`/`resolve`/`recover`） |
+| `dead_assignee` | `dispatched` 且 `assignee_handle` 不在存活终端里 | `wl task recover <id>` |
+| `owner_idle` | `ready`、有 `claimed_by`、`ready_since` 超过 30 分钟 | `wl task start <id> --as <owner>`，或 `release`/`reassign` |
+| `bypassed` | `completed`/`failed`、`kind = work`、`result.provenance = worker_report`，且本地没有该 `(task, 当前 epoch)` 的 `task_done` 行 | `wl task done <id> --as <owner>`（补跑 gate 与连接，见下） |
+| `blocked_waiting` | `blocked` 且本地 `gates` 有对应行 | `wl task resolve <gate_id> --resolution …` |
+
+**`wl task show <id> [--team <team>] [--history] [--json]`**
+
+`task-list` 定位该任务，与 `task_ext` 合并；`result` 解析出 `outcome`/`reportedBy`。最近一次 `task_done.result` 里的"结束方式"（见 `done`）一并展示，例如"已转交给 <addr>""已送审给 <a>、<b>"。`--history` 列出 `task_log` 中该任务的全部记录（时间、谁、显式/隐式、动作、细节）。
 
 **`wl task claim <id> [--as <addr>]`**
 
-前置：任务 `ready` 且 `claimed_by` 为空；调用方可解析；该岗位 `self_claim = true`（否则 `self_claim_disabled`）；任务 `tags` 为空或与岗位 `tags` 有交集（否则 `tags_mismatch`）。`withTeamLock` 内写 `claimed_by`，不调用 Orca。
+前置：任务 `ready` 且 `claimed_by` 为空；调用方可解析；该岗位 `self_claim = true`（否则 `self_claim_disabled`）；任务 `tags` 为空或与岗位 `tags` 有交集（否则 `tags_mismatch`）。`withTeamLock` 内写 `claimed_by`、`task_log`，不调用 Orca。
+
+**`wl task release <id> [--as <addr>]`**（吸收项 B-3）
+
+前置：`claimed_by = <调用方地址>`（否则 `not_claimed_by_you`）；任务 `ready` 或 `blocked`（`dispatched` → `task_dispatched`，提示"先 `wl task escalate <id>` 收回派发，或完成后 `wl task done`"）。清空 `claimed_by`，写 `ready_since = now`、`task_log`。不调用 Orca。
+
+**`wl task reassign <id> --to <addr> [--as <addr>]`**（吸收项 B-3）
+
+任何人可调用（调用方解析不到记为 `human`）。目标必须是本团队岗位（`post_unknown`）。任务 `ready`/`blocked` → 改 `claimed_by`、写 `ready_since`（仅 `ready`）、`task_log`，经画面检查给新主人发一行"[雁阵] 任务 <id> 转给了你：<标题>，运行 wl task start <id>"；`dispatched` → `task_dispatched`，提示同上；终态 → `task_terminal`。不调用 Orca 的写命令。
 
 **`wl task start <id> [--as <addr>]`**
 
-前置：`claimed_by = <调用方地址>`（否则 `not_claimed_by_you`）；`plan_first = true` 且无 plan → `plan_required`；任务已是 `blocked`/`completed`/`failed`，或已 `dispatched` 给**另一个** handle → `task_not_open`（后者提示"已派给 <handle>：先 `wl task show <id>`"；`dispatchTo` 第 2 步把"本轮已派发"一律当完成，所以这道检查必须在 `start` 里做）。预算：本团队 `claimed_by = <调用方>` 且 `dispatched` 的任务数 ≥ `max_in_progress_per_post` → `wip_budget_exceeded`（任务已经派给自己的终端时不计入、也不检查：`start` 直接返回成功，重跑 `start` 是无操作）。通过：`dispatchTo(任务, 调用方地址, resolveHandle(调用方))`。
-
-因此 lead 在自己终端里跑 `wl task start t1 --as builder@duo`：handle 按 7.2 是 builder 的，派发到 builder 的终端；目标不是调用方自己的终端，按 7.3 等空闲后 `--inject`，builder 会被通知（复审 M3）。
+前置：`claimed_by = <调用方地址>`（否则 `not_claimed_by_you`）；`plan_first = true` 且无 plan → `plan_required`；任务已是 `blocked`/`completed`/`failed`，或已 `dispatched` 给**另一个** handle → `task_not_open`。任务已派给调用方自己的终端 → 直接返回成功（重跑 `start` 是无操作）。通过：`dispatchTo(任务, 调用方地址)`；岗位忙 → `post_busy`。`--as` 指向别的岗位时按第 7.3 节通知该岗位。
 
 **`wl task plan <id> "<text>"`**
 
-纯本地：`withTeamLock` 内写 `task_ext.plan`；任务 `completed`/`failed` → `task_terminal`。不校验身份（谁都可以替任务写计划），所以不接 `--as`。
+纯本地：`withTeamLock` 内写 `task_ext.plan`、`task_log`；任务 `completed`/`failed` → `task_terminal`。不校验身份。
 
 **`wl task done <id> [--as <addr>]`**
 
 返回 `DoneResult`：
 
 ```ts
-{ outcome: 'done' | 'gate_failed' | 'escalated'
+{ outcome: 'done' | 'gate_failed' | 'escalated' | 'gate_failed_after_bypass'
+  closure?: { kind: 'completed' | 'handed_to' | 'sent_for_review' | 'escalated'; targets?: string[] }  // 结束方式（吸收项 B-6）
   linkedTasks?: Array<{ target: string; taskId: string
-    delivery: 'injected' | 'not_notified' | 'self' | 'skipped_frozen' | 'skipped_offline' }>
-  gateId?: string        // escalated 时
+    delivery: 'notified' | 'notified_unconfirmed' | 'not_notified' | 'self' | 'queued' | 'skipped_frozen' | 'skipped_offline' }>
+  gateId?: string
+  gateOutputPath?: string
   replayed?: boolean }   // 这一轮早已全部完成，本次只是报告存下的结果
 ```
 
@@ -331,75 +402,92 @@ ready + claimed_by=X                                  │
 
 1. 解析调用方地址（7.1）；`task_ext.claimed_by` 必须等于它（否则 `not_your_task`）。
 2. 查 `task_done(task_id, epoch)`：
-   - 有且 `finished_at` 非空 → 直接返回存下的 `result`，`replayed: true`，退出码与第一次相同（复审 M1d：已经成功的命令再跑一遍报成功，不报错）。
-   - 有但未完成 → 跳到第 4 步，**不重跑 gate**（复审 M1c：判定、失败次数、`--body`、上报 `--from` 都以第一次落盘的为准，重试参数不会变）。
+   - 有且 `finished_at` 非空 → 直接返回存下的 `result`，`replayed: true`，退出码与第一次相同。
+   - 有但未完成 → 跳到第 4 步，**不重跑 gate**。
    - 没有 → 第 3 步。
-3. 判定：`task-list` 里任务必须是 `dispatched`（否则 `task_not_dispatched`；若它是 `ready`，提示"上一轮派发已结束（终端被关闭或已 resolve），先 `wl task start <id>`"），assignee 必须等于上报者 handle（7.2，否则 `not_dispatched_to_you`）。执行 gate（没有配置视为通过）：
-   - 通过 → 写 `task_done`：`verdict = passed`、`dispatch_id`、`report_from`、`body`。
-   - 失败且 `gate_failures + 1 < max_gate_failures` → `gate_failures += 1`，返回 `gate_failed`，**不调用 Orca、不写 `task_done`**——下次 `done` 会重新跑 gate，这正是"修好了再试"的语义。
-   - 失败且 `gate_failures + 1 >= max_gate_failures` → **同一个事务里** `gate_failures = n` 并写 `task_done`：`verdict = escalate`、`gate_failures = n`。
+3. 判定。`task-list` 里任务：
+   - `dispatched`：assignee 必须等于上报者 handle（7.2，否则 `not_dispatched_to_you`）。执行 gate（没有配置视为通过）。
+   - `completed`/`failed` 且 `result.provenance = worker_report`、本地没有本轮 `task_done`（**岗位绕过 `wl` 直接上报**）：写 `task_log`（`bypass_detected`），照常执行 gate，判定记为 `bypassed`；gate 通过 → 第 4 步只做连接（不上报，任务已终态）；gate 失败 → 不建 gate、不重开，返回 `gate_failed_after_bypass`（退出码 1），输出 gate 结果，经画面检查通知牵头岗"<post> 的任务 <id> 绕过 wl 直接上报，补跑 gate 失败，见 <路径>；要重开用 wl task escalate <id> --reopen"。
+   - `ready`：`task_not_dispatched`，提示"上一轮派发已结束（终端被关闭或已 resolve），先 `wl task start <id>`"。
+   - 其他：`task_not_dispatched`。
+   gate 结果：
+   - 通过 → 写 `task_done`：`verdict = passed`（或 `bypassed`）、`dispatch_id`、`report_from`、`body`。
+   - 失败且 `gate_failures + 1 < max_gate_failures` → `gate_failures += 1`，`task_log`（`gate_failed`），返回 `gate_failed`，**不调用 Orca、不写 `task_done`**。
+   - 失败且 `gate_failures + 1 >= max_gate_failures` → **同一个事务里** `gate_failures = n` 并写 `task_done`：`verdict = escalate`。
    然后读回 `task_done`（并发时以先落盘者为准）。
 4. 按判定执行后续步骤，**每一步都是第 9 节 P1**，已完成的步骤直接取存下的结果：
-   - `passed`：①上报 `send --type worker_done --outcome succeeded --task-id <id> --dispatch-id <task_done.dispatch_id> --subject "gate passed" [--body <task_done.body>] --run <run_id> --from <task_done.report_from>`（键 `…:report`）；②若该任务 `kind = work` 且岗位有 `reviewed_by`/`hands_to`，对**每个目标各自**：`task-create --spec "<评审|交接>（<目标>）：<原 id>" --task-title "<评审：|交接：><原标题>" --parent <id> --run <run_id> --from <coordinator_handle>`（键 `…:link:<目标>`）→ 本地插入子任务 `task_ext`（`kind` 按连接类型，`claimed_by = <目标>`）→ 目标被冻结（2B）则不派发、记 `skipped_frozen`；目标终端找不到（`locatePost` 为空）则不派发、记 `skipped_offline`（上报已经落地，不能因为评审方暂时不在就让 `done` 失败；子任务的 `claimed_by` 已是目标，它上线后 `wl task start` 即可）；否则 `dispatchTo(子任务, 目标)`，记 `injected`/`not_notified`/`self`。**每个目标的这一项（子任务 id + `delivery`，含两种 `skipped_*`）一确定就落一条本地记录**（`requests` 表，键 `done:<task>:<epoch>:delivered:<目标>`，和阶段 1 记 `wait` 这类非写调用步骤是同一种用法）；重跑时这个目标有记录就直接用记录里的结果，**不再看子任务此刻的状态、不再查冻结或在线、不再调 `dispatchTo`**。原因（第三次复审必修 #2）：两个评审目标 a、b，b 的子任务 `task-create` 超时；用户重跑之前 a 已经把它的评审任务做完了（`completed`）——若重跑时对 a 再走一遍派发，就会按子任务"既不是 `ready` 又不是派给 a 的"判成 `task_not_open`，`finishVerdict` 永远写不进去，之后每次重跑都卡在同一处。即使在"`dispatchTo` 已成功、`delivered` 记录还没写"的窗口里崩溃，重跑时 `dispatchTo` 第 2 步也按"本轮已派发"直接返回存下的结果，不看子任务此刻状态。
-   - `escalate`：①上报 `worker_done --outcome failed`（`--subject "gate failed"`，其余同上，键 `…:report`）——任务转 `failed`；②`gate-create --task <id> --question "连续 <n> 次 gate 失败。resolve 后任务回到 ready：原岗位 wl task start 即重试；改派用 wl task resolve <gate> --reassign <地址>；不想继续就不要 resolve" --from <coordinator_handle>`（键 `…:gate`）——任务转 `blocked`；本地 `gates` 插入一行。**顺序只能是先上报后建 gate**：反过来，gate 会先把 dispatch 结束掉，上报必然 `inactive_dispatch`（第 2 节事实 3；二次修订的顺序是错的）。
-5. 写 `task_done.result`/`finished_at`，返回。
+   - `passed`：①上报 `send --type worker_done --outcome succeeded --task-id <id> --dispatch-id <task_done.dispatch_id> --subject "gate passed" [--body <task_done.body>] --run <run_id> --from <task_done.report_from>`（键 `…:report`）；②若该任务 `kind = work` 且岗位有 `reviewed_by`/`hands_to`，对**每个目标各自**：`task-create --spec "<评审|交接>（<目标>）：<原 id>\n\n完成后运行 wl task done …" --task-title "<评审：|交接：><原标题>" --parent <id> --run <run_id> --from <coordinator_handle>`（键 `…:link:<目标>`）→ 本地插入子任务 `task_ext`（`kind` 按连接类型，`claimed_by = <目标>`，`ready_since = now`）→ 目标被冻结（2B）则不派发、记 `skipped_frozen`；目标终端找不到则记 `skipped_offline`；否则 `dispatchTo(子任务, 目标)`，岗位忙记 `queued`，成功则按第 7.3 节通知并记通知结果。**每个目标的这一项（子任务 id + `delivery`）一确定就落一条本地记录**（`requests` 表，键 `done:<task>:<epoch>:delivered:<目标>`）；重跑时这个目标有记录就直接用记录里的结果，不再看子任务此刻的状态、不再查冻结或在线、不再调 `dispatchTo`。
+   - `bypassed`（gate 通过）：只做上一条的②。
+   - `escalate`：①上报 `worker_done --outcome failed`（`--subject "gate failed"`，键 `…:report`）——任务转 `failed`；②`gate-create --task <id> --question "连续 <n> 次 gate 失败（输出见 <gate 输出文件路径>）。resolve 后任务回到 ready：原岗位 wl task start 即重试；改派用 wl task resolve <gate> --reassign <地址>；不想继续就不要 resolve" --from <coordinator_handle>`（键 `…:gate`）——任务转 `blocked`；本地 `gates` 插入一行；③经画面检查尽力通知牵头岗一次"[雁阵] <post> 的任务 <id> 连续 <n> 次 gate 失败，已转人工决策：wl task resolve <gate_id> …"（失败只记 `deps.warn`，吸收项 B-4）。**顺序只能是先上报后建 gate**（gate 会先把 dispatch 结束掉，事实 3）。
+5. 写 `task_done.result`（含 `closure`：`passed` 且无连接 → `completed`；有 `hands_to` → `handed_to` + 目标；有 `reviewed_by` → `sent_for_review` + 目标；`escalate` → `escalated`）与 `finished_at`，`task_log`（`done` 或 `escalate`），返回。
 
-**为什么一律"先上报、再做后续"：** 二次修订把连接子任务排在上报之前，理由是"上报后任务变终态，`done` 的前置检查会让重跑失败"。现在重跑由 `task_done` 记录驱动（第 2 步），不再依赖任务还是 `dispatched`，这个理由不成立了；而先上报有两个好处：一是上报是唯一绑定"那个 dispatch、那个终端"的调用，越早落地越不容易因为终端被关而永远失败（`inactive_dispatch`）；二是若上报失败，还没有任何子任务被建出来，任务停在 `dispatched`，下一轮（`epoch + 1`）重来也不会多出孤立的评审任务。
+**为什么一律"先上报、再做后续"：** 上报是唯一绑定"那个 dispatch、那个终端"的调用，越早落地越不容易因为终端被关而永远失败；若上报失败，还没有任何子任务被建出来。上报落地后中途退出留下的"已上报、未收尾"由 `task_done.finished_at` 为空标识，`wl task list --stale` 会列出（`done_unfinished`），2B 调度员会代为重跑（2B spec）。
 
-CLI 退出码：`done`（含连接、含 `replayed`）→ 0；`gate_failed`/`escalated` → 1；`uncertain` → 3。
+**gate 的执行：**
 
-**`--body` 的 Windows 换行处理：** gate 输出几乎总带换行，而 Windows 上所有 Orca 调用经 `.cmd` 包装，`escapeCmdArg` 拒绝含换行的参数（总纲 7.7）。`deps.multilineSafe` 为真直接截断到 4000 字符嵌入；为假且含换行时，完整输出写入 `~/.wingline/logs/<team>/gate-<task_id>-<epoch>.txt`，`--body` 只放一行"gate 输出见 <路径>"。这些文件和 `CallLog` 一样保留 7 天：写新文件时顺手删除同目录下 7 天前的 `gate-*.txt`。`body` 在判定时（第 3 步）就定下并落盘，重跑不会因为换了文件名而让参数变化。
+- **目录：** 岗位 worktree 的根目录。`posts[].worktree` 是 `path:<绝对路径>` 时直接用；是其他选择器时用 `orca worktree show --worktree <sel> --json` 读出路径；读不出 → `gate_cwd_unknown`（退出码 1），**不退回调用进程的当前目录**（lead 用 `--as` 代跑时，当前目录是 lead 的 worktree）。
+- **超时：** `budgets.task.gate_timeout_seconds`（默认 600）。超时杀掉整个进程树（POSIX 用进程组，Windows 用 `taskkill /T /F /PID`），计为一次失败，输出末尾追加"（gate 超时，已终止）"。
+- **输出：** 完整输出写入 `~/.wingline/logs/<team>/gate-<task_id>-<epoch>-<n>.txt`（7 天后清理）。`--body` 取输出**末尾** 4000 字符；`deps.multilineSafe` 为假且含换行时，`--body` 只放一行"gate 输出见 <路径>"。`body` 在判定时就定下并落盘，重跑不变。CLI 退出码：`done` → 0；`gate_failed`/`escalated`/`gate_failed_after_bypass` → 1；`uncertain` → 3。
 
-**`wl task escalate <id> --reason <text> [--retry-request <id>]`**
+**`wl task escalate <id> --reason <text> [--reopen] [--retry-request <id>]`**
 
-人工或任务主人可调用（不校验身份）。`gate-create --task <id> --question <reason> --from <coordinator_handle>`（P2），本地 `gates` 插入一行。**效果是把任务收回来等人决定**：任务若是 `dispatched`，正在进行的 dispatch 被 Orca 结束，岗位之后的 `wl task done` 会失败（第 2 节事实 3）。用途：提前叫人；以及终端/Orca 重启后任务卡在一个已失效的 assignee 上时的手动解法（第 14 节）。输出里写明这一点。
+人工或任务主人可调用。任务 `completed`/`failed` → 需要 `--reopen`（否则 `reopen_required`，提示"已终态的任务 escalate 后 resolve 会回到 ready，会在新的一轮重新走 gate 与连接"；对 `completed` 任务 `gate-create` 的行为未验证，见第 14 节）。`gate-create --task <id> --question <reason> --from <coordinator_handle>`（P2），本地 `gates` 插入一行、`task_log`（`escalate`），经画面检查尽力通知牵头岗。任务若是 `dispatched`，正在进行的 dispatch 被 Orca 结束，岗位之后的 `wl task done` 会失败——输出里写明这一点。
 
 **`wl task resolve <gate_id> --resolution <text> [--reassign <addr>]`**
 
-`gate-resolve --id <gate_id> --resolution <text> --from <coordinator_handle>`（P1，键 `resolve:<gate_id>`，裸重跑安全，不需要 `--retry-request`）。Orca 把任务放回 `ready`（第 2 节事实 3）。`--reassign <addr>` 时本地把 `claimed_by` 改成 `addr`（不调 Orca）；否则 `claimed_by` 不变，原主人 `wl task start` 即重试。不自动派发——派发由主人 `start`（或 lead `start --as <主人>`）完成。直接在 Orca 界面里 resolve 也一样有效（`epoch`/`gate_failures` 在下次派发时按 9.3 处理），只是没有 `--reassign`。
+`gate-resolve --id <gate_id> --resolution <text> --from <coordinator_handle>`（P1，键 `resolve:<gate_id>`）。Orca 把任务放回 `ready`。`--reassign <addr>` 时本地把 `claimed_by` 改成 `addr`；目标岗位被冻结（2B）→ `post_frozen`，在调用 Orca 之前拒绝。写 `ready_since`、`task_log`。不自动派发。直接在 Orca 界面里 resolve 也一样有效（`epoch`/`gate_failures` 在下次派发时按 9.4 处理）。
+
+**`wl task recover <id> [--as <addr>]`**（吸收项 B-2）
+
+用于 `dispatched` 且 assignee 终端已不在存活列表里的任务（Orca 整个重启后、或派发落在一个随后被重建的终端上）。前置：任务 `dispatched` 且 assignee 不存活（否则 `assignee_alive`，退出码 1）。步骤（每步 P1，键带当前 `epoch`）：`gate-create --task <id> --question "雁阵 recover：原派发对象已不存在"`（键 `recover:<task>:<epoch>:gate`）→ `gate-resolve --id <gate> --resolution "recover"`（键 `…:resolve`）→ 任务回到 `ready` → `dispatchTo(任务, claimed_by)`（`epoch + 1`，主人忙则 `queued`）。三步都有自己的键，中途中断后原样重跑继续。写 `task_log`（`recover`）。
 
 ## 11. 错误处理
 
 沿用总纲 7.8 的四类退出码。
 
-- 新增输入错误（退出码 1）：`run_not_ready`、`task_not_found`、`self_claim_disabled`、`tags_mismatch`、`task_not_open`、`not_claimed_by_you`、`not_your_task`、`plan_required`、`wip_budget_exceeded`、`task_not_dispatched`、`not_dispatched_to_you`、`task_terminal`、`actor_required`、`gate_unknown`、`links_conflict`、`links_unknown_post`、`links_cycle`、`gates_unknown_post`、`retry_request_args_changed`（第 9.1 节 P2）；以及 `done` 的 `gate_failed`/`escalated` 结果。
-- Orca 明确报错（退出码 2）：原样附上 Orca 的错误码，如 `inject_rejected`（提示目标岗位的 agent 还没就位）、`worker_identity_changed`/`inactive_dispatch`（提示"这一轮派发已经不属于这个终端了：先 `wl task show <id>`；若任务已回到 `ready`，`wl task start <id>`"）。按第 9.1 节，只有**新行**被明确拒绝、或旧行收到已证实产生在账本检查之后的 `task_not_startable`/`inactive_dispatch` 时，那一步的账本行才被删除、重跑从头开始；旧行收到其他错误码（含 `runtime_unavailable`）一律按"结果不确定"处理（下一条）。
-- **`consumer_fenced`** 不直接报给用户：按第 5.2 节刷新协调者后重试一次；重试仍被 fence（极少见：有人在两次调用之间又换了协调者）才报 Orca 错误，提示重跑同一条命令。
-- **结果不确定（退出码 3）**：任何一次编排调用超时/失联；以及可能已经发出过的账本行收到未证实先后的 Orca 错误（第 9.1 节，提示里附 Orca 原错误码）。P1 的提示是"原样重跑同一条命令"（id 已落盘，不需要用户传）；P2 的提示带上这次用的 id 和这次用的协调者 `--from`：`… --retry-request <id>（本次协调者 --from <handle>）`。P2 人工重试且本地没有记录时的 `request_mismatch` 报 `retry_request_mismatch`（也是退出码 3：那个 id 已经落地过，提示先 `wl task list` 确认，不建议换新 id）。`wl up` 的 Run 建立步骤不确定时，`wl up` 的结果里该步记为 `uncertain`、退出码 3，提示原样重跑 `wl up`。
+- 输入错误（退出码 1）：`run_not_ready`、`run_ambiguous`、`task_not_found`、`self_claim_disabled`、`tags_mismatch`、`task_not_open`、`not_claimed_by_you`、`not_your_task`、`plan_required`、`post_busy`、`task_dispatched`、`task_not_dispatched`、`not_dispatched_to_you`、`task_terminal`、`reopen_required`、`assignee_alive`、`actor_required`、`post_unknown`、`gate_unknown`、`gate_cwd_unknown`、`links_conflict`、`links_unknown_post`、`links_self`、`links_cycle`、`gates_unknown_post`、`field_removed`、`team_spec_changed`、`spec_not_found`、`retry_request_args_changed`；以及 `done` 的 `gate_failed`/`escalated`/`gate_failed_after_bypass` 结果。
+- Orca 明确报错（退出码 2）：经第 9.1 节第 3 步由 `request-show` 定案为"未落地"或"被记下的拒绝"后，原样附上 Orca 错误码，如 `inactive_dispatch`/`worker_identity_changed`（提示"这一轮派发已经不属于这个终端：先 `wl task show <id>`；若任务已回到 `ready`，`wl task start <id>`；若派给了已不存在的终端，`wl task recover <id>`"）、`run_lost`。
+- **`consumer_fenced`** 不直接报给用户：按第 5.2 节刷新协调者后重试一次；重试仍被 fence 才报 Orca 错误。
+- **结果不确定（退出码 3）**：`request-show` 为 `pending` 或本身失败，或原错误为传输/不确定类而 `request-show` 为 `absent`。P1 的提示是"原样重跑同一条命令"；P2 的提示带上这次用的 id。`wl up` 的 Run 建立步骤不确定时记为 `uncertain`、退出码 3。
 
 ## 12. 测试
 
 | 层 | 范围 | 方法 |
 | --- | --- | --- |
-| 单元 | `spec/` 新字段校验（含 `links_cycle`）、注册表新表与 `ON CONFLICT` 行为、账本（P1 各结果分支，含新行/旧行之分；P2 原参数重放、改参数被拒、`request_mismatch` 单独报错、提示带 `--from`）、`commands/task/` 各命令分支 | vitest，注入假 `OrcaClient`；gate 用 `node -e` |
-| 契约 | `orchestration run-create/run-use/run-show/task-create/task-list/dispatch/send(worker_done)/gate-create/gate-resolve` 的回执解析 | 按 `spikes/out/{task-dispatch-probe,replay-probe,gate-block-probe,orphan-probe,ledger-failure-probe}/` 的真实回执（脱敏）做 fixture |
-| 集成 | `wl up` 建 Run → create/claim/start/done（含互评、两个评审目标）→ escalate/resolve 重开 | 假 `OrcaClient` |
+| 单元 | `spec/` 新字段校验（`links_self`、`links_cycle`、`field_removed`）；注册表新表、插入或更新、`bumpEpoch` 比较后更新；账本第 9.1 节第 3 步的五个分支与派发行"`--to` 已死"例外；P2 本地有行/无行两种重试；`screenGuard` 模式表；`commands/task/` 各命令分支（含 `release`/`reassign`/`recover`/`list --stale` 六类原因/`done` 的 bypassed 分支） | vitest，注入假 `OrcaClient`；gate 用 `node -e` |
+| 契约 | `orchestration run-create/run-use/run-show/run-list/task-create/task-list/dispatch/send(worker_done)/gate-create/gate-resolve/request-show` 与 `terminal show` 的回执解析 | `test/fixtures/receipts/` 下的真实回执：`orchestration-r6.json`（R6，已入库）；另从 R3–R5 的探针输出补齐 `task-list`（含终态任务的 `result`）、`gate-create`/`gate-resolve`、`request-show` 三种状态、`run-list`，脱敏后入库（`spikes/out/` 被 git 忽略） |
+| 集成 | `wl up` 建 Run → create/claim/start/done（含互评、两个评审目标、目标忙排队）→ escalate/resolve 重开 → recover → bypassed 补跑 | 假 `OrcaClient` |
 
-**假 `OrcaClient` 必须模拟第 2 节实测到的 Orca 语义，否则重跑安全无从测试**（复审 M1f）：调用方 id 账本（同 id 同参数回放、回放返回旧快照、同 id 不同参数 `request_mismatch`，**账本检查在协调者校验与一切状态校验之前**，**失败的调用不进账本**）、协调者值匹配（`consumer_fenced`）、`worker_done` 的 assignee 校验、`gate-create` 结束 dispatch / `gate-resolve` 回 `ready`、关闭 assignee 终端自动回 `ready`、终态任务不带 assignee、可注入三种故障："到不了运行时"（在账本检查之前，模拟 `runtime_unavailable`）、"调用前失败"（账本检查之后、执行之前）和"已落地但返回超时"。重跑安全至少由这些可执行的测试钉住：上报已落地但超时 → 重跑不重复上报、补完连接；两个评审目标各建一个子任务；第一次子任务已建、派发超时 → 重跑不多建；escalate 中途中断后重跑不重跑 gate、提问文本不变；全部完成后重跑报成功；协调者在两次尝试之间被换走 → 重跑成功；**上一次超时（已落地）、重跑时碰上 `runtime_unavailable` → 账本行保留、退出码 3，再重跑回放出同一个对象**（第三次复审必修 #1）；**两个评审目标，一个目标的子任务派发超时、重跑前另一个目标已经把评审做完 → 重跑成功收尾，已完成的那个目标不被重新派发、它的子任务 `epoch` 不变**（必修 #2）；**`wl task create`/`escalate` 超时后协调者被换走，带 `--retry-request` 重试 → 原参数重放、不 `request_mismatch`、只有一个对象**（必修 #3）。
+**假 `OrcaClient` 必须模拟第 2 节实测到的 Orca 语义：** 调用方 id 账本（同 id 同参数回放、回放返回旧快照、同 id 不同参数 `request_mismatch`，账本检查在协调者校验与一切状态校验之前）；**`request-show` 返回 `completed`/`pending`/`absent`**；**被拒的 `worker_done` 记进账本，`consumer_fenced` 与 `inject_rejected` 不记**；协调者值匹配；`worker_done` 的 assignee 校验；`gate-create` 结束 dispatch / `gate-resolve` 回 `ready`；关闭 assignee 终端自动回 `ready`、之后派给死 handle 仍 `ok:true`；**一个终端一个进行中的派发（第二个回 `runtime_error`）**；终态任务不带 assignee；可注入故障："到不了运行时"（账本检查之前）、"调用前失败"（账本检查之后、执行之前）、**"已落地但返回传输错误"（四个传输码任选，执行之后）**、"已落地但返回超时"。
+
+重跑安全至少由这些可执行的测试钉住：首次 `run-create` 已落地但返回 `runtime_timeout` → 重跑 `wl up` 不建第二个 Run；连接子任务 `task-create` 已落地但返回 `runtime_timeout` → 重跑不重复建；子任务 `dispatch` 已落地但返回 `runtime_timeout` → 重跑收尾成功、不报 `task_not_open`；上报已落地但返回 `runtime_timeout` → 重跑不重复上报、补完连接；上报被 `worker_identity_changed` 拒绝（记进账本）→ 行被删、退出码 2，问题修好后重跑换新 id 成功；派发行 `uncertain` 而目标终端被重建 → 重跑按新 handle 派发、不派给死终端；两个评审目标，一个目标的子任务派发超时、重跑前另一个目标已完成评审 → 重跑成功收尾；`create`/`escalate` 超时后协调者被换走，带 `--retry-request` 重试 → 只有一个对象；换了 `WINGLINE_HOME` 后带 `--retry-request` 重试 → `request-show` 取回已落地的对象；评审目标忙 → `queued`，目标完成手上任务后 `start` 成功。
 
 不新增真机集成测试项目；发版前用 `spikes/` 下的探针脚本在真机复核第 2 节的事实。
 
 ## 13. 不做的事（阶段 2A）
 
-- 不做调度员、后台轮询、自动提醒（阶段 2B）。
+- 不做调度员、后台轮询、自动提醒（阶段 2B）；"已上报未收尾""绕过直接上报"在 2A 只做发现与手动处理。
 - 不做巡查信号；`escalated` 只是达到 `max_gate_failures` 后的被动结果。
-- 不统计 token，预算只按条数计。
+- 不统计 token；`max_minutes` 只记录，不在 2A 判定。
 - `consults` 只做记录。
 - 不改变 `wl ps` 的输出。
 - `resolve` 之后不自动派发；没有"放弃"状态（不 resolve 即停在 `blocked`）。
-- 评审结论（通过/打回）不在本阶段建模：评审任务 `done` 就是评审做完了。
+- 评审结论（通过/打回）不在本阶段建模：评审任务 `done` 就是评审做完了。接收方拒收、依赖阻塞自动解除、转手次数上限推迟到阶段 4。
+- 不清理账本行与 `task_log`（第 6 节保留约定）。
 
 ## 14. 风险
 
 | 风险 | 影响 | 对策 |
 | --- | --- | --- |
-| **每次 Orca 整个重启都会让所有终端 handle 失效**（"待验证项" C），即**所有**在办任务的 assignee 都指向死终端——不是罕见边角，是每次重启都会发生 | 岗位重启后无法对手头任务 `done`（`not_dispatched_to_you`/`worker_identity_changed`） | 终端被关闭的情形 Orca 会自动把任务放回 `ready`（第 2 节事实 3，实测），主人 `wl task start <id>` 即重派到新终端（`epoch + 1`）。Orca 整个重启后是否同样自动回退**未验证**；若没有回退，手动解法是 `wl task escalate <id> --reason "重启后重派"` → `wl task resolve <gate>` → 主人 `wl task start <id>`——`gate-create` 结束 dispatch、`gate-resolve` 回 `ready` 都已实测（含 assignee 终端已关闭的情形）。这是三条命令的手动流程，本阶段不自动化；2B 的"无进展"巡查会把这类任务暴露出来 |
-| Orca 整个重启后，旧的 `coordinator_handle` 字符串是否仍被值匹配接受未验证（共用机器上不能重启 Orca） | 若不接受，2A 的协调者专属调用全部失败 | 重启后旧协调者终端必然不在存活列表里，下一次 `wl up` 按 5.2 节会 `run-use` 到 lead 的新 handle；调度员启动时也会 `run-use`。即"重启后跑一次 `wl up`"就能恢复，和阶段 1 重启后的操作习惯一致 |
-| `wl task done --as <post>` 从另一个终端代发 `worker_done` 只在 assignee 是占位进程时验证过；`send --help` 说有稳定 pane 身份时只认被派发的 pane | assignee 是真实 agent 时代发可能被拒（`worker_identity_changed`） | 首次上报就被拒属明确错误，账本行删除，不留半成品（第 9.1 节新行）；若是上一次超时后的重跑才被拒，`worker_identity_changed` 的先后未证实，按旧行保留 id、退出码 3，脱身方法是第一行的 `escalate` → `resolve` → `start`（新 `epoch` 用新键）；岗位自己在终端里 `wl task done` 是主路径，不受影响。实现阶段第一次用真实 agent 跑 `--as` 时核对，结论写回 REPORT |
-| 目标 agent 正忙时 `dispatch --inject` 的行为未验证 | — | 设计不依赖它：先短等 `tui-idle`，不空闲就不注入、标记 `not_notified` 并提示补发 `wl send`（7.3） |
-| `withTeamLock` 立即失败而不排队 | `wl up` 跑着时对同一团队的 `claim`/`plan` 直接 `team_busy` | 有意为之（阶段 1 既有语义），错误提示"稍后重试"；只有纯本地读改写的两个命令持锁，持锁时间是毫秒级 |
+| **岗位不经 `wl task done`，直接用 Orca CLI 上报**（Orca 的 skill、agent 的习惯，或旧版本残留的 `--inject` 前言） | gate 不跑、连接不触发 | 2A 不再注入 Orca 前言；任务 spec 与通知都写明用 `wl task done`；`list --stale` 列出 `bypassed`，`wl task done` 可补跑 gate 与连接；2B 调度员看到"没有 `task_done` 的 `worker_done`"会通知人（2B spec） |
+| **画面检查是启发式**：漏判会把通知打进对方的确认或选择提示 | 替对方回答提示 | 模式表偏宽、只有 `clear` 才打字、拿不到画面就不打；通知只是提醒，漏发的代价很小；模式表有单元测试，R6 的真实画面入库为样本 |
+| **每次 Orca 整个重启都会让所有终端 handle 失效** | 岗位重启后无法对手头任务 `done` | 终端被关闭时 Orca 自动回退（事实 3）；重启后是否回退未验证，`wl up` 会列出 `dead_assignee` 任务并给出 `wl task recover <id>` |
+| Orca 整个重启后旧 `coordinator_handle` 是否仍被接受未验证 | 2A 协调者调用失败 | 重启后下一次 `wl up` 按 5.2 节 `run-use` 到 lead 的新 handle |
+| Orca 清理旧回执，`request-show` 对"很久以前落地"的调用也报 `absent` | 隔很久之后重跑一个曾经超时的命令，可能重复执行 | 账本行通常在分钟级内被重放；清理周期未知，若实测较短再加"行龄超过 N 小时的不确定行不自动重放、只提示人工核对" |
+| `wl task done --as <post>` 从另一个终端代发 `worker_done` 只在 assignee 是占位进程时验证过 | 真实 agent 时可能 `worker_identity_changed` | 被拒会记进 Orca 账本（R5-2），`request-show` 定案后删行、退出码 2；岗位自己在终端里 `wl task done` 是主路径；脱身方法 `wl task recover` 或 `escalate` → `resolve` → `start` |
+| `ORCA_TERMINAL_HANDLE` 在 Windows 上未验证 | Windows 上隐式身份不可用 | 提示里写明用 `--as`；实现阶段第一次在 Windows 跑时核对，结论写回 REPORT |
+| 对 `completed` 任务 `gate-create` 的行为未验证 | `escalate --reopen` 可能失败 | 失败按 Orca 明确报错处理；实现前顺带补测 |
 | gate 命令经 shell 执行（`team.yaml` 来自不可信来源时等于任意命令执行） | 本地代码执行 | 和 `launch` 一样，`team.yaml` 视为可信配置 |
-| `coordinator_handle` 等同于该 Run 的"万能钥匙" | 注册表文件被其他用户读取时可伪造协调者调用 | 与 `state.db` 的文件权限同一信任边界，不新增风险模型 |
-| `hands_to` 合并进"原任务 `completed` + 新任务"后，原任务显示为 `completed` | 看板如果把 `completed` 理解为"真正做完"会有歧义 | `wl task show` 对有 `hands_to` 子任务的任务标注"已转交给 <addr>"；阶段 3 控制台注意 |
-| WIP 预算只在 `start` 检查，`create --post` 与连接派发绕过它 | 一个岗位可能被人工或连接派发喂到超出预算 | 有意：这些路径都算"有人/有 gate 明确同意"；留给以后统一的限流设计 |
-| 账本行长期累积（`requests` 表只增不删，除第 9.1 节允许删行的明确失败外；`oneshot:<id>` 与 `…:delivered:<目标>` 两类行也在这里） | 注册表变大 | 每行很小（id + 一次调用的参数）；与阶段 1 的 `requests` 同样不清理，真成问题时再加按天清理 |
+| `coordinator_handle` 等同于该 Run 的"万能钥匙" | 注册表文件被其他用户读取时可伪造协调者调用 | 与 `state.db` 的文件权限同一信任边界 |
+| `hands_to` 之后原任务显示为 `completed` | 看板可能误解为"真正做完" | `done` 记录结束方式，`show`/`list` 展示"已转交给 <addr>" |
+| 账本行、`task_log` 长期累积 | 注册表变大 | 每行很小；按第 6 节保留约定，以后只清理已收尾任务的行 |

@@ -30,9 +30,9 @@ Orca 擅长把多个 coding agent 放进各自的 worktree 并行运行，并用
 以下约束适用于所有阶段，后续阶段的 spec 不得违反：
 
 1. **只经由 Orca CLI 操作。** 雁阵不持有 agent 进程，不读写 Orca 的内部文件或数据库，不使用 Orca 的内部 RPC。所有动作都是 `orca … --json` 子进程调用。
-2. **一切改变状态的调用都可恢复、不重复。** 调用前先在注册表记下“进行中”，调用后记结果。Orca 的 `--retry-request` 只接受 Orca 自己分配的 UUID（回执里的 `mutation.requestId`），不能自编，且 `terminal create` 没有该参数；所以：创建终端靠“按标题查找”幂等，发送类调用把 Orca 报告的请求 ID 存入注册表，需要确认时带着它对同一条命令重试（Orca 回放回执，不重复执行）。**这条关于 `--retry-request` 的限制只对 `terminal` 命令族成立；`orchestration` 命令族接受调用方自生成的 UUID（`spikes/REPORT.md`"补充探针二""补充探针三"实测），阶段 2A 据此对本条做了有范围的修订：编排写调用同样"先记进行中再调用"、用同一张 `requests` 表，但这一行同时存下调用方生成的 id 和完整参数，重试时原样重放，见阶段 2A spec 第 3 节约束 8 与第 9 节。**
+2. **一切改变状态的调用都可恢复、不重复。** 调用前先在注册表记下“进行中”，调用后记结果。Orca 的 `--retry-request` 只接受 Orca 自己分配的 UUID（回执里的 `mutation.requestId`），不能自编，且 `terminal create` 没有该参数；所以：创建终端靠“按标题查找”幂等，发送类调用把 Orca 报告的请求 ID 存入注册表，需要确认时带着它对同一条命令重试（Orca 回放回执，不重复执行）。**这条关于 `--retry-request` 的限制只对 `terminal` 命令族成立；`orchestration` 命令族接受调用方自生成的 UUID（`spikes/REPORT.md`"补充探针二""补充探针三"实测），阶段 2A 据此对本条做了有范围的修订：编排写调用同样"先记进行中再调用"、用同一张 `requests` 表，但这一行同时存下调用方生成的 id 和完整参数，失败时先用 `orchestration request-show` 查明这次调用是否已生效，再决定重放、作废或报不确定，见阶段 2A spec 第 3 节约束 8 与第 9 节。**
 3. **不确定就不动手。** 沿用 Orca 编排的安全底线：没有明确的退出证据，不 close、不重试、不重建同一岗位。超时和查不到状态只算检查点。
-4. **三平台同等支持。** macOS、Linux、Windows 都在 CI 矩阵里。子进程一律以参数数组启动，不经过 shell；唯一例外是 Windows 上启动 `.cmd` 包装（见 7.3），其转义函数单独测试。
+4. **三平台同等支持。** macOS、Linux、Windows 都在 CI 矩阵里。子进程一律以参数数组启动，不经过 shell；例外只有两处：Windows 上启动 `.cmd` 包装（见 7.3），其转义函数单独测试；阶段 2A 的 `wl task done` 执行 `team.yaml` 里的 gate 命令（用户写的 shell 字符串，见阶段 2A spec 第 3 节约束 6），范围仅限这一处。
 5. **不走插件后门。** 不利用 Orca 插件 worker 缺少系统级沙箱这一点去执行子进程。
 
 ## 3. 总体架构
