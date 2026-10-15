@@ -220,7 +220,9 @@ test('a definite recorded rejection is not replayed: exactly one workerDone call
 })
 test('landed + transport code, and the same-id replay also fails with a transport code → uncertain, row kept, exactly two calls', async () => {
   const o = new FakeOrca(); const { deps, registry } = seedRunningTeam(o)
-  o.faults.push({ method: 'taskCreate', when: 'after', error: rt() }, { method: 'taskCreate', when: 'transport', error: ru() })
+  o.faults.push({ method: 'taskCreate', when: 'after', error: rt() })
+  // faults are picked by `when`, not queue order: arm the transport fault only once the replay (2nd call) starts
+  o.onMutate = () => { if (o.callsOf('taskCreate').length === 2) o.faults.push({ method: 'taskCreate', when: 'transport', error: ru() }) }
   await expect(createCall(deps, o)).rejects.toMatchObject({ kind: 'uncertain' })
   expect(o.callsOf('taskCreate')).toHaveLength(2)
   expect(registry.getRequest('k')!.state).toBe('uncertain')
