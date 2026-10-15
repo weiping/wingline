@@ -190,3 +190,23 @@ test('replaying a rejected workerDone with different args is request_mismatch, n
   await expect(o.workerDone({ ...base, subject: 'a' })).rejects.toMatchObject({ code: 'worker_identity_changed' })
   await expect(o.workerDone({ ...base, subject: 'b' })).rejects.toMatchObject({ code: 'request_mismatch' })
 })
+
+test('8. (real Orca) an unknown dispatch id → unknown_dispatch, recorded: request-show is completed with a "Rejected worker_done" receipt carrying lifecycle.rejected', async () => {
+  const o = mk(); const t = await newTask(o)
+  await o.dispatch({ task: t, to: 'term-b', from: 'coord-1' })
+  const wd = { taskId: t, dispatchId: 'ctx-nonexistent', outcome: 'succeeded' as const, subject: 's', run: 'run-1', from: 'term-b', retryRequest: 'w1' }
+  await expect(o.workerDone(wd)).rejects.toMatchObject({ code: 'unknown_dispatch' })
+  const shown = await o.requestShow({ request: 'w1' })
+  expect(shown.state).toBe('completed')
+  expect(shown.receipt).toMatchObject({ message: { subject: expect.stringMatching(/^Rejected worker_done/) }, lifecycle: { action: 'rejected', code: 'unknown_dispatch' } })
+  expect((await status(o, t)).status).toBe('dispatched')
+})
+test('9. (real Orca) a duplicate worker_done on an already-completed dispatch is accepted and changes nothing', async () => {
+  const o = mk(); const t = await newTask(o)
+  const { dispatchId } = await o.dispatch({ task: t, to: 'term-b', from: 'coord-1' })
+  const wd = { taskId: t, dispatchId, outcome: 'succeeded' as const, subject: 's', run: 'run-1', from: 'term-b' }
+  await o.workerDone(wd)
+  const before = (await status(o, t)).result
+  await expect(o.workerDone({ ...wd, outcome: 'failed' })).resolves.toEqual({ replayed: false })
+  expect(await status(o, t)).toMatchObject({ status: 'completed', result: before })
+})

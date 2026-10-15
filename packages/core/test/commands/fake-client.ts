@@ -22,6 +22,12 @@ interface Executed { value: object; raw: unknown }
 
 const orcaError = (code: string, message: string) => new WinglineError('orca', code, message)
 
+/** 真机上被拒的 worker_done 的 request-show 回执：completed，receipt 是一条 "Rejected worker_done" 消息 + lifecycle.rejected（orchestration-2a.json）。 */
+const rejectionReceipt = (err: WinglineError) => ({
+  message: { type: 'worker_done', subject: 'Rejected worker_done', body: `Orca rejected this worker_done: ${err.message}` },
+  lifecycle: { action: 'rejected', code: err.code, reason: err.message },
+})
+
 export interface SentMessage { handle: string; text: string; retryRequest?: string }
 
 /** 可编排的假 OrcaClient：记录调用序列，终端列表随 create/close 变化。 */
@@ -52,6 +58,7 @@ export class FakeOrca implements OrcaClient {
   orch: Array<{ m: string; a: Args }> = []
   onMutate?: () => void
   private ids = { run: 0, task: 0, dispatch: 0, gate: 0 }
+  private knownDispatches = new Set<string>()
 
   callsOf(m: string): Args[] {
     return this.orch.filter((x) => x.m === m).map((x) => x.a)
@@ -103,7 +110,7 @@ export class FakeOrca implements OrcaClient {
       res = exec()
     } catch (err) {
       if (o.recordRejections && retryRequest && err instanceof WinglineError) {
-        this.ledger.set(retryRequest, { input, outcome: { ok: false, error: err }, raw: { rejected: err.code } })
+        this.ledger.set(retryRequest, { input, outcome: { ok: false, error: err }, raw: rejectionReceipt(err) })
       }
       throw err
     }
@@ -182,6 +189,7 @@ export class FakeOrca implements OrcaClient {
       t.status = 'dispatched'
       t.assigneeHandle = a.to
       t.dispatchId = `ctx-${++this.ids.dispatch}`
+      this.knownDispatches.add(t.dispatchId)
       return { value: { dispatchId: t.dispatchId }, raw: {} }
     })
   }
@@ -189,6 +197,9 @@ export class FakeOrca implements OrcaClient {
   async workerDone(a: { taskId: string; dispatchId: string; outcome: 'succeeded' | 'failed'; subject: string; body?: string; run: string; from: string; retryRequest?: string }) {
     return this.mutate<object>('workerDone', a, { recordRejections: true }, () => {
       const t = this.task(a.taskId)
+      if (!this.knownDispatches.has(a.dispatchId)) throw orcaError('unknown_dispatch', `worker_done references unknown dispatch ${a.dispatchId}.`)
+      // 真机：对已完成派发的重复 worker_done 被接受（不报错、不改状态）
+      if ((t.status === 'completed' || t.status === 'failed') && t.dispatchId === a.dispatchId) return { value: {}, raw: {} }
       if (t.status !== 'dispatched' || t.dispatchId !== a.dispatchId) throw orcaError('inactive_dispatch', `任务 ${t.id} 的派发已失效`)
       if (a.from !== t.assigneeHandle) throw orcaError('worker_identity_changed', `${a.from} 不是该派发的执行者`)
       t.status = a.outcome === 'succeeded' ? 'completed' : 'failed'
