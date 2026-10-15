@@ -36,7 +36,14 @@ export function specHash(spec: TeamSpec, readFile: (p: string) => Buffer = (p) =
       launch: p.launch,
       worktree: p.worktree,
       brief: p.briefPaths.map(ref),
+      selfClaim: p.selfClaim,
+      tags: p.tags,
+      planFirst: p.planFirst,
+      gate: p.gate,
+      reviewedBy: p.reviewedBy,
+      handsTo: p.handsTo,
     })),
+    budgets: spec.budgets,
   }
   return sha256(JSON.stringify(canonical(normalised)))
 }
