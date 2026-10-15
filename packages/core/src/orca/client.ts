@@ -140,23 +140,10 @@ const orchestrationMethods = (runner: OrcaRunner): OrchestrationMethods => ({
   ...gateAndViewMethods(runner),
 })
 
-/**
- * terminal create 没有 --retry-request（Orca 会以 invalid_argument 拒绝未知参数），
- * 所以创建靠“按标题查找”保证幂等；其余变更类调用才带重试 id。
- */
-export function createOrcaClient(runner: OrcaRunner): OrcaClient {
+type TerminalMethods = Pick<OrcaClient, 'terminalList' | 'terminalCreate' | 'terminalWait' | 'terminalSend' | 'terminalClose'>
+
+function terminalMethods(runner: OrcaRunner): TerminalMethods {
   return {
-    ...orchestrationMethods(runner),
-
-    async version() {
-      return (await runner.text(['--version'])).trim()
-    },
-
-    async status() {
-      const r = await runner.json<{ runtime: { reachable: boolean } }>(['status'])
-      return { reachable: r.runtime.reachable }
-    },
-
     async terminalList(a) {
       // 有界面的标签页：list 里的 title 是 shell 窗口标题，--title 设的自定义标题只在 visualLayouts 里。
       // 无界面（macOS CI 实测，tabId 形如 pty:10）的终端不在布局里，其 title 本身就是自定义标题。
@@ -201,6 +188,26 @@ export function createOrcaClient(runner: OrcaRunner): OrcaClient {
     async terminalClose(a) {
       const r = await runner.json<{ close: { ptyKilled: boolean } }>(['terminal', 'close', '--terminal', a.handle])
       return { ptyKilled: r.close.ptyKilled }
+    },
+  }
+}
+
+/**
+ * terminal create 没有 --retry-request（Orca 会以 invalid_argument 拒绝未知参数），
+ * 所以创建靠“按标题查找”保证幂等；其余变更类调用才带重试 id。
+ */
+export function createOrcaClient(runner: OrcaRunner): OrcaClient {
+  return {
+    ...orchestrationMethods(runner),
+    ...terminalMethods(runner),
+
+    async version() {
+      return (await runner.text(['--version'])).trim()
+    },
+
+    async status() {
+      const r = await runner.json<{ runtime: { reachable: boolean } }>(['status'])
+      return { reachable: r.runtime.reachable }
     },
   }
 }

@@ -170,5 +170,5 @@ export function renderResolve(r: Awaited2<typeof resolveGate>): string {
 
 export function renderRecover(r: Awaited2<typeof recoverTask>, id: string): string {
   const head = `任务 ${id}：${r.status}（第 ${r.epoch} 轮）${r.reason ? `，${r.reason}` : ''}\n`
-  return head + deliveryLine(undefined, id, r)
+  return head + deliveryLine(r.owner ?? undefined, id, r)
 }

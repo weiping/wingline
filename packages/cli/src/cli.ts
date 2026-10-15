@@ -102,11 +102,7 @@ function registerTaskCommands(program: Command, commands: Commands, execute: Exe
     .option('--stale', '只列卡住的任务').option('--as <addr>', '以该岗位身份')
     .action((team: string | undefined, o: AsJson & { mine?: boolean; status?: string; tags?: string; stale?: boolean }) => {
       if (!o.stale) return execute(!!o.json, (d) => commands.listTasks(d, { team, mine: o.mine, status: o.status, tags: splitList(o.tags), as: o.as }), renderList)
-      const stale = (d: CommandDeps) => {
-        if (!team) throw new WinglineError('input', 'team_required', '--stale 需要指定团队', { hint: 'wl task list <team> --stale' })
-        return commands.listStale(d, team)
-      }
-      return execute(!!o.json, stale, renderStale)
+      return execute(!!o.json, (d) => commands.listStale(d, team), renderStale)
     })
   sub('show <id>', '查看任务').option('--team <team>', '团队').option('--history', '附变迁记录')
     .action((id: string, o: AsJson & { team?: string; history?: boolean }) =>
@@ -132,6 +128,24 @@ function registerTaskCommands(program: Command, commands: Commands, execute: Exe
       execute(!!o.json, (d) => commands.resolveGate(d, { gateId, resolution: o.resolution, reassign: o.reassign, as: o.as }), renderResolve))
   sub('recover <id>', '恢复派给已消失终端的任务').option('--as <addr>', '以该岗位身份')
     .action((id: string, o: AsJson) => execute(!!o.json, (d) => commands.recoverTask(d, { id, as: o.as }), (r) => renderRecover(r, id)))
+}
+
+function registerBaseCommands(program: Command, commands: Commands, execute: Execute): void {
+  program.command('up <team.yaml>').description('拉起团队的全部岗位').option('--json', '输出 JSON')
+    .option('--adopt-run <id>', '找回指定的 Run').option('--new-run', '丢弃旧 Run，新建一个')
+    .action((specPath: string, o: { json?: boolean; adoptRun?: string; newRun?: boolean }) =>
+      execute(!!o.json, async (d) => {
+        if (o.adoptRun && o.newRun) throw new WinglineError('input', 'run_flags_conflict', '--adopt-run 与 --new-run 互斥')
+        return commands.up(d, { specPath, adoptRun: o.adoptRun, newRun: o.newRun })
+      }, renderUp, exitCodeOfUp))
+  program.command('ps [team]').description('查看岗位状态').option('--json', '输出 JSON')
+    .action((team: string | undefined, o: { json?: boolean }) => execute(!!o.json, (d) => commands.ps(d, { team }), renderPs))
+  program.command('send <post@team> <message>').description('给岗位发消息').option('--json', '输出 JSON')
+    .option('--retry-request <id>', '确认上次未确认的发送：传入当时报告的 Orca 请求 ID，消息须与原来完全相同，不会重复发送')
+    .action((address: string, message: string, o: { json?: boolean; retryRequest?: string }) =>
+      execute(!!o.json, (d) => commands.send(d, { address, message, retryRequest: o.retryRequest }), renderSend))
+  program.command('down <team>').description('停止团队；加 --close 关闭终端').option('--close', '关闭岗位终端').option('--json', '输出 JSON')
+    .action((team: string, o: { close?: boolean; json?: boolean }) => execute(!!o.json, (d) => commands.down(d, { team, close: !!o.close }), renderDown))
 }
 
 export async function run(
@@ -166,25 +180,7 @@ export async function run(
     .exitOverride()
     .configureOutput({ writeOut: (s) => io.stdout.write(s), writeErr: (s) => io.stderr.write(s) })
 
-  program.command('up <team.yaml>').description('拉起团队的全部岗位').option('--json', '输出 JSON')
-    .option('--adopt-run <id>', '找回指定的 Run').option('--new-run', '丢弃旧 Run，新建一个')
-    .action((specPath: string, o: { json?: boolean; adoptRun?: string; newRun?: boolean }) => {
-      if (o.adoptRun && o.newRun) {
-        io.stderr.write('错误：--adopt-run 与 --new-run 互斥\n')
-        code = 1
-        return
-      }
-      return execute(!!o.json, (d) => commands.up(d, { specPath, adoptRun: o.adoptRun, newRun: o.newRun }), renderUp, exitCodeOfUp)
-    })
-  program.command('ps [team]').description('查看岗位状态').option('--json', '输出 JSON')
-    .action((team: string | undefined, o: { json?: boolean }) => execute(!!o.json, (d) => commands.ps(d, { team }), renderPs))
-  program.command('send <post@team> <message>').description('给岗位发消息').option('--json', '输出 JSON')
-    .option('--retry-request <id>', '确认上次未确认的发送：传入当时报告的 Orca 请求 ID，消息须与原来完全相同，不会重复发送')
-    .action((address: string, message: string, o: { json?: boolean; retryRequest?: string }) =>
-      execute(!!o.json, (d) => commands.send(d, { address, message, retryRequest: o.retryRequest }), renderSend))
-  program.command('down <team>').description('停止团队；加 --close 关闭终端').option('--close', '关闭岗位终端').option('--json', '输出 JSON')
-    .action((team: string, o: { close?: boolean; json?: boolean }) => execute(!!o.json, (d) => commands.down(d, { team, close: !!o.close }), renderDown))
-
+  registerBaseCommands(program, commands, execute)
   registerTaskCommands(program, commands, execute)
 
   try {
