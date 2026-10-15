@@ -2,7 +2,7 @@ import { WinglineError } from '../../errors.js'
 import type { CommandDeps } from '../deps.js'
 import { locatePost } from '../locate.js'
 
-export type ScreenState = 'clear' | 'at_prompt' | 'unknown'
+export type ScreenState = 'clear' | 'at_prompt' | 'shell' | 'unknown'
 
 /** 逐条对应 spec 第 7.4 节：agent 或包装器正停在需要人确认的画面上。 */
 export const PROMPT_PATTERNS: readonly RegExp[] = [
@@ -22,7 +22,7 @@ export const PROMPT_PATTERNS: readonly RegExp[] = [
 ]
 
 /** 终端已退回 shell：在那里打字会执行命令。只看最后一个非空行。 */
-const SHELL_PROMPT = /(?:[$%#]\s*$)|(?:^PS .*>\s*$)/
+const SHELL_PROMPT = /(?:[$%#]\s*$)|(?:^PS .*>\s*$)|(?:^[A-Za-z]:\\.*>\s*$)/
 
 export const SCREEN_TAIL_LINES = 8
 const WAIT_SUBMIT_SEC = 10
@@ -34,7 +34,7 @@ export function classifyPreview(preview: string): ScreenState {
   if (lines.length === 0) return 'unknown'
   const tail = lines.slice(-SCREEN_TAIL_LINES)
   if (tail.some((line) => PROMPT_PATTERNS.some((p) => p.test(line)))) return 'at_prompt'
-  if (SHELL_PROMPT.test(tail[tail.length - 1]!)) return 'unknown'
+  if (SHELL_PROMPT.test(tail[tail.length - 1]!)) return 'shell'
   return 'clear'
 }
 
@@ -63,7 +63,7 @@ export interface NotifyResult {
   reason?: 'at_prompt' | 'screen_unknown' | 'post_offline' | 'send_failed'
 }
 
-const REFUSED = { at_prompt: 'at_prompt', unknown: 'screen_unknown', offline: 'post_offline' } as const
+const REFUSED = { at_prompt: 'at_prompt', shell: 'screen_unknown', unknown: 'screen_unknown', offline: 'post_offline' } as const
 
 /** 永不抛出。text 必须是单行、≤ 600 字符。不写 requests 行：通知不重试（spec 第 7.3 节）。 */
 export async function notifyPost(deps: CommandDeps, address: string, text: string): Promise<NotifyResult> {

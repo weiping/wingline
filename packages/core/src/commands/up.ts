@@ -64,20 +64,27 @@ function lifetimeGen(l: Launch, post: string, located: boolean): number {
   return g
 }
 
-/** 非 path: 的 worktree 选择器（如缺省的 current）按 wl up 时的调用目录解析一次，记成 path:，之后 gate 不再重新解析。 */
+/**
+ * 非 path: 的 worktree 选择器（如缺省的 current）按 wl up 时的调用目录解析一次，记成 path:，之后 gate 不再重新解析。
+ * 终端仍然存活的岗位保持原来的 path: 固定值（从别的目录重跑 wl up 不改动它们）；新建、已消失、将重建的才重新解析。
+ */
 async function pinWorktrees(l: Launch): Promise<void> {
   const { orca, registry } = l.deps
+  const open = l.spec.posts.filter((p) => !p.worktree.startsWith('path:'))
+  const anyPinned = open.some((p) => registry.getPost(postAddress(p.id, l.spec.name))?.worktree.startsWith('path:'))
+  const live = anyPinned ? new Set((await orca.terminalList()).map((t) => t.title)) : new Set<string | null>()
   const resolved = new Map<string, string>()
-  for (const p of l.spec.posts) {
-    if (p.worktree.startsWith('path:')) continue
+  for (const p of open) {
+    const address = postAddress(p.id, l.spec.name)
+    const row = registry.getPost(address)!
+    if (row.worktree.startsWith('path:') && live.has(address)) continue
     try {
       if (!resolved.has(p.worktree)) resolved.set(p.worktree, (await orca.worktreeShow({ worktree: p.worktree })).path)
     } catch (err) {
       if (!(err instanceof WinglineError) || err.kind === 'input' || err.kind === 'internal') throw err
       continue
     }
-    const address = postAddress(p.id, l.spec.name)
-    registry.upsertPost({ ...registry.getPost(address)!, worktree: `path:${resolved.get(p.worktree)}` })
+    registry.upsertPost({ ...row, worktree: `path:${resolved.get(p.worktree)}` })
   }
 }
 
@@ -95,7 +102,8 @@ async function registerTeam(l: Launch): Promise<void> {
     const address = postAddress(p.id, l.spec.name)
     const prev = registry.listPosts(l.spec.name).find((r) => r.address === address)
     registry.upsertPost({
-      address, team: l.spec.name, agent: p.agent, worktree: p.worktree,
+      address, team: l.spec.name, agent: p.agent,
+      worktree: prev?.worktree.startsWith('path:') && !p.worktree.startsWith('path:') ? prev.worktree : p.worktree,
       handle: prev?.handle ?? null, status: prev?.status ?? 'offline', isLead: p.id === l.spec.lead,
     })
   }
@@ -111,7 +119,9 @@ function briefText(l: Launch, post: PostSpec, briefing: string): string {
 
 type PostResult = UpResult['posts'][number]
 
-type StartResult = 'sent' | 'unconfirmed' | 'at_prompt'
+const REFUSE_REASON = { at_prompt: '岗位停在确认提示上，处理后重跑 wl up', shell: '岗位已退回 shell，处理后重跑 wl up', unconfirmed: '岗位未确认就绪，启动包未送达' } as const
+
+type StartResult = 'sent' | 'unconfirmed' | 'at_prompt' | 'shell'
 
 async function startPost(l: Launch, post: PostSpec, briefing: string, existingHandle: string | null, gen: number): Promise<StartResult> {
   const { orca, registry } = l.deps
@@ -130,7 +140,8 @@ async function startPost(l: Launch, post: PostSpec, briefing: string, existingHa
     const waited = await recorded(registry, rid('wait'), () => orca.terminalWait({ handle, forState: 'tui-idle', timeoutMs: WAIT_TIMEOUT_MS }), (v) => v.satisfied)
     if (!waited.confirmed) return 'unconfirmed'
   }
-  if ((await screenGuard(l.deps, handle)) === 'at_prompt') return 'at_prompt'
+  const screen = await screenGuard(l.deps, handle)
+  if (screen === 'at_prompt' || screen === 'shell') return screen
   const text = briefText(l, post, briefing)
   const id = rid('brief')
   const sent = await recorded(registry, id, () =>
@@ -156,7 +167,7 @@ async function launchPost(l: Launch, post: PostSpec, briefing: string): Promise<
     const result = await startPost(l, post, briefing, located?.handle ?? null, gen)
     registry.setPostStatus(address, result === 'sent' ? 'live' : 'uncertain')
     if (result === 'sent') return { address, outcome: 'launched' }
-    const reason = result === 'at_prompt' ? '岗位停在确认提示上，处理后重跑 wl up' : '岗位未确认就绪，启动包未送达'
+    const reason = REFUSE_REASON[result as 'at_prompt' | 'shell' | 'unconfirmed'] ?? '岗位未确认就绪，启动包未送达'
     return { address, outcome: 'uncertain', reason, retry }
   } catch (err) {
     if (!(err instanceof WinglineError) || err.kind === 'input' || err.kind === 'internal') throw err

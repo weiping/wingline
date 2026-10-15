@@ -174,6 +174,11 @@ export class Registry {
     for (let v = current; v < MIGRATIONS.length; v++) {
       db.exec('BEGIN IMMEDIATE')
       try {
+        // 等写锁期间别的进程可能已经执行完这一步：拿到锁后重新读版本
+        if ((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version > v) {
+          db.exec('ROLLBACK')
+          continue
+        }
         db.exec(MIGRATIONS[v]!)
         db.exec(`PRAGMA user_version = ${v + 1}`)
         db.exec('COMMIT')
