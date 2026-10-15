@@ -18,7 +18,7 @@ test('fresh up does create → wait → brief per post', async () => {
   const r = await up(deps, { specPath: duo() })
   expect(r.posts.map((p) => p.outcome)).toEqual(['launched', 'launched'])
   expect(o.calls).toEqual([
-    'version', 'status',
+    'version', 'status', 'worktreeShow',
     'terminalList', 'terminalCreate', 'terminalWait', 'terminalShow', 'terminalSend',
     'terminalList', 'terminalCreate', 'terminalWait', 'terminalShow', 'terminalSend',
     'runList', 'runCreate', 'taskList', 'terminalList',
