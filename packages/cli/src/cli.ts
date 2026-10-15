@@ -69,6 +69,7 @@ export function defaultMakeDeps(env: NodeJS.ProcessEnv, warn: (m: string) => voi
     home,
     env,
     now: () => new Date(),
+    monotonic: () => performance.now(),
   }
 }
 

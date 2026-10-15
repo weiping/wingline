@@ -14,6 +14,8 @@ export interface CommandDeps {
   home: string
   env: NodeJS.ProcessEnv
   now: () => Date
+  /** 单调时钟（毫秒）；机器睡眠不推进它，用来区分"真的静默"与"睡过头"。 */
+  monotonic: () => number
 }
 
 export type Step = 'create' | 'wait' | 'brief' | 'send' | 'close'

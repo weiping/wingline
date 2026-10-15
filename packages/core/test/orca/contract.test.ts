@@ -85,3 +85,22 @@ test('worktree show gives an absolute path', async () => {
   const w = await clientOver({ 'worktree show': res('worktree-show') }).client.worktreeShow({ worktree: 'path:/x' })
   expect(w.path.startsWith('/')).toBe(true)
 })
+test.each(['check-batch', 'check-batch-replayed', 'check-ack-wait-timeout', 'check-wait-75s-timeout', 'check-question'])('R6 %s parses', async (k) => {
+  const r = await clientOver({ 'orchestration check': (r6[k] as Env).result }).client.check({ terminal: 't', run: 'r' })
+  expect(r.count).toBe(r.messages.length)
+})
+test('R6 check flags: replayed batch, timed-out waits', async () => {
+  const get = (k: string) => clientOver({ 'orchestration check': (r6[k] as Env).result }).client.check({ terminal: 't', run: 'r' })
+  expect((await get('check-batch-replayed')).replayed).toBe(true)
+  expect(await get('check-wait-75s-timeout')).toMatchObject({ timedOut: true, deliveryId: null, messages: [] })
+  expect(await get('check-ack-wait-timeout')).toMatchObject({ timedOut: true, acknowledged: 'delivery_062b05154920' })
+})
+test('R6 question message: fromHandle is dispatch:<id> and the payload names the task', async () => {
+  const r = await clientOver({ 'orchestration check': (r6['check-question'] as Env).result }).client.check({ terminal: 't', run: 'r' })
+  expect(r.messages[0]!.fromHandle).toBe('dispatch:ctx_2fea0dc87772')
+  expect(JSON.parse(r.messages[0]!.payload!)).toMatchObject({ taskId: 'task_6eace60970a8', question: 'r6 probe question?', options: ['a', 'b'] })
+})
+test('R6 worker-list: attention categories and liveness come through', async () => {
+  const w = await clientOver({ 'orchestration worker-list': (r6['worker-list'] as Env).result }).client.workerList({ run: 'r' })
+  expect(w.map((x) => [x.attention, x.liveness])).toEqual([[[], 'live'], [['unverifiable'], 'unverifiable'], [['root_completion'], 'unverifiable']])
+})

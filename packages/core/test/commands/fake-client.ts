@@ -1,5 +1,5 @@
 import { WinglineError } from '../../src/errors.js'
-import type { OrcaClient, OrchestrationTask, RequestShowState, RunSummary, SendResult, TerminalSummary, TerminalView } from '../../src/orca/types.js'
+import type { CheckMessage, CheckResult, OrcaClient, OrchestrationTask, RequestShowState, RunSummary, SendResult, TerminalSummary, TerminalView, WorkerView } from '../../src/orca/types.js'
 import { loadTeamSpec } from '../../src/spec/load.js'
 import { specHash } from '../../src/spec/hash.js'
 import { DUO_YAML, mkTeam } from '../spec/helpers.js'
@@ -57,8 +57,23 @@ export class FakeOrca implements OrcaClient {
   faults: Fault[] = []
   orch: Array<{ m: string; a: Args }> = []
   onMutate?: () => void
-  private ids = { run: 0, task: 0, dispatch: 0, gate: 0 }
+  private ids = { run: 0, task: 0, dispatch: 0, gate: 0, msg: 0, delivery: 0, reply: 0 }
   private knownDispatches = new Set<string>()
+
+  /** 收件箱模型（R6 的 delivery 语义）：换代后上一代 delivery 被 fence，消息以新 id 重投。 */
+  inbox: CheckMessage[] = []
+  generation = 1
+  deliveries = new Map<string, { gen: number; ids: string[]; acked: boolean }>()
+  questions = new Map<string, { dispatchId: string; taskId: string; asker: string; answered: boolean }>()
+  comments: Array<{ worktree: string; comment: string }> = []
+  onCheck?: (a: Args) => void
+  workerListError?: Error
+
+  postMessage(m: Partial<CheckMessage> & { type: string }): CheckMessage {
+    const msg: CheckMessage = { id: `msg-${++this.ids.msg}`, fromHandle: null, subject: null, body: null, payload: null, threadId: null, createdAt: null, ...m }
+    this.inbox.push(msg)
+    return msg
+  }
 
   callsOf(m: string): Args[] {
     return this.orch.filter((x) => x.m === m).map((x) => x.a)
@@ -143,6 +158,7 @@ export class FakeOrca implements OrcaClient {
     this.observe('runUse', a)
     if (!this.runs.some((r) => r.id === a.id)) throw orcaError('run_not_found', `Run ${a.id} 不存在`)
     this.coordinator = a.from
+    this.generation += 1
     return { coordinatorHandle: a.from }
   }
 
@@ -204,6 +220,10 @@ export class FakeOrca implements OrcaClient {
       if (a.from !== t.assigneeHandle) throw orcaError('worker_identity_changed', `${a.from} 不是该派发的执行者`)
       t.status = a.outcome === 'succeeded' ? 'completed' : 'failed'
       t.result = JSON.stringify({ provenance: 'worker_report', outcome: a.outcome, reportedBy: a.from })
+      this.postMessage({
+        type: 'worker_done', fromHandle: a.from, subject: a.subject, body: a.body ?? '',
+        payload: JSON.stringify({ taskId: a.taskId, dispatchId: a.dispatchId, outcome: a.outcome }),
+      })
       return { value: {}, raw: {} }
     })
   }
@@ -226,6 +246,59 @@ export class FakeOrca implements OrcaClient {
       this.release(this.task(g.taskId), 'ready')
       return { value: {}, raw: {} }
     })
+  }
+
+  async check(a: { terminal: string; run: string; ack?: string; wait?: boolean; timeoutMs?: number }): Promise<CheckResult> {
+    this.observe('check', a)
+    this.onCheck?.(a)
+    if (a.terminal !== this.coordinator) throw orcaError('consumer_fenced', `${a.terminal} 不是当前协调者`)
+    if (a.ack) this.ackDelivery(a.ack)
+    const res = this.nextDelivery(a)
+    this.takeFault('check', 'after', a)
+    return res
+  }
+
+  private ackDelivery(id: string): void {
+    const d = this.deliveries.get(id)
+    if (!d) return
+    if (d.gen < this.generation) throw orcaError('consumer_fenced', `delivery ${id} 属于上一代协调者`)
+    d.acked = true
+    this.inbox = this.inbox.filter((m) => !d.ids.includes(m.id))
+  }
+
+  private nextDelivery(a: { ack?: string; wait?: boolean }): CheckResult {
+    const open = [...this.deliveries.entries()].find(([, d]) => d.gen === this.generation && !d.acked)
+    const base = { replayed: false, acknowledged: a.ack ?? null, timedOut: false, cancelled: false, connectionLost: false }
+    if (open) return { ...base, deliveryId: open[0], messages: this.inbox.filter((m) => open[1].ids.includes(m.id)), count: open[1].ids.length, replayed: true }
+    if (this.inbox.length === 0) return { ...base, deliveryId: null, messages: [], count: 0, timedOut: !!a.wait }
+    const deliveryId = `dlv-${++this.ids.delivery}`
+    const messages = this.inbox.map((m) => ({ ...m }))
+    this.deliveries.set(deliveryId, { gen: this.generation, ids: messages.map((m) => m.id), acked: false })
+    return { ...base, deliveryId, messages, count: messages.length }
+  }
+
+  async reply(a: { id: string; body: string; run: string; from: string }) {
+    return this.mutate<{ messageId: string; duplicate: boolean }>('reply', a, { coordinatorOnly: true }, () => {
+      const q = this.questions.get(a.id)
+      if (!q) throw orcaError('question_not_found', `提问 ${a.id} 不存在`)
+      const duplicate = q.answered
+      q.answered = true
+      return { value: { messageId: `msg-r${++this.ids.reply}`, duplicate }, raw: {} }
+    })
+  }
+
+  async workerList(a: { run: string }): Promise<WorkerView[]> {
+    this.read('workerList', a)
+    if (this.workerListError) throw this.workerListError
+    return this.tasks.filter((t) => t.status === 'dispatched').map((t) => {
+      const asking = [...this.questions.values()].some((q) => q.dispatchId === t.dispatchId && !q.answered)
+      return { dispatchId: t.dispatchId!, taskId: t.id, terminalHandle: t.assigneeHandle, dispatchStatus: 'dispatched', attention: asking ? ['input'] : [], liveness: 'live' }
+    })
+  }
+
+  async worktreeSet(a: { worktree: string; comment: string }): Promise<void> {
+    this.observe('worktreeSet', a)
+    this.comments.push({ ...a })
   }
 
   async terminalShow(a: { handle: string }): Promise<TerminalView> {
@@ -265,13 +338,37 @@ export class FakeOrca implements OrcaClient {
   }
 }
 
+/** 在任务当前的 dispatch 上推一条 question 消息（R6 形态），并记入 questions。 */
+export function ask(o: FakeOrca, taskId: string, question: string, options: string[] = []): CheckMessage {
+  const t = o.tasks.find((x) => x.id === taskId)!
+  const msg = o.postMessage({
+    type: 'question', fromHandle: `dispatch:${t.dispatchId}`, subject: 'Question', body: question,
+    payload: JSON.stringify({ taskId, dispatchId: t.dispatchId, question, options }),
+  })
+  msg.threadId = msg.id
+  o.questions.set(msg.id, { dispatchId: t.dispatchId!, taskId, asker: t.assigneeHandle!, answered: false })
+  return msg
+}
+
+/** 可拨动的假时钟：advance 同时推进墙钟与单调时钟，sleepJump 只推进墙钟（模拟机器睡眠）。 */
+export function clock(start = Date.parse('2026-10-15T10:00:00Z')) {
+  let wall = start
+  let mono = 1000
+  return {
+    now: () => new Date(wall),
+    monotonic: () => mono,
+    advance(ms: number) { wall += ms; mono += ms },
+    sleepJump(ms: number) { wall += ms },
+  }
+}
+
 export function mkDeps(orca: FakeOrca, over: Partial<CommandDeps> = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'wl-home-'))
   const registry = Registry.open(path.join(home, 'state.db'))
   const warnings: string[] = []
   const deps: CommandDeps = {
     orca, registry, warn: (m) => warnings.push(m),
-    verifiedOrca: '>=1.4.214 <1.5.0', multilineSafe: true, home, env: {}, now: () => new Date(), ...over,
+    verifiedOrca: '>=1.4.214 <1.5.0', multilineSafe: true, home, env: {}, now: () => new Date(), monotonic: () => performance.now(), ...over,
   }
   return { deps, warnings, registry, home }
 }

@@ -4,6 +4,8 @@ export interface TerminalSummary {
   title: string | null
   connected: boolean
   worktreeId: string
+  /** 可选：阶段 1/2A 的测试里大量字面量不带它；读取处一律 `?? null`。 */
+  lastOutputAt?: number | null
 }
 
 export type SendStage = 'input_accepted' | 'turn_started'
@@ -50,6 +52,37 @@ export interface TerminalView {
   preview: string
 }
 
+export interface CheckMessage {
+  id: string
+  type: string
+  fromHandle: string | null
+  subject: string | null
+  body: string | null
+  payload: string | null
+  threadId: string | null
+  createdAt: string | null
+}
+
+export interface CheckResult {
+  deliveryId: string | null
+  messages: CheckMessage[]
+  count: number
+  replayed: boolean
+  acknowledged: string | null
+  timedOut: boolean
+  cancelled: boolean
+  connectionLost: boolean
+}
+
+export interface WorkerView {
+  dispatchId: string
+  taskId: string
+  terminalHandle: string | null
+  dispatchStatus: string
+  attention: string[]
+  liveness: string | null
+}
+
 export interface OrcaClient {
   version(): Promise<string>
   status(): Promise<{ reachable: boolean }>
@@ -72,4 +105,8 @@ export interface OrcaClient {
   gateResolve(a: { id: string; resolution: string; from: string; retryRequest?: string }): Promise<{ replayed: boolean }>
   terminalShow(a: { handle: string }): Promise<TerminalView>
   worktreeShow(a: { worktree: string }): Promise<{ path: string }>
+  check(a: { terminal: string; run: string; ack?: string; wait?: boolean; timeoutMs?: number }): Promise<CheckResult>
+  reply(a: { id: string; body: string; run: string; from: string }): Promise<{ messageId: string; duplicate: boolean }>
+  workerList(a: { run: string }): Promise<WorkerView[]>
+  worktreeSet(a: { worktree: string; comment: string }): Promise<void>
 }
