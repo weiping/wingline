@@ -66,7 +66,9 @@ export class FakeOrca implements OrcaClient {
   deliveries = new Map<string, { gen: number; ids: string[]; acked: boolean }>()
   questions = new Map<string, { dispatchId: string; taskId: string; asker: string; answered: boolean }>()
   comments: Array<{ worktree: string; comment: string }> = []
-  onCheck?: (a: Args) => void
+  onCheck?: (a: Args) => void | Promise<void>
+  /** 为真时下一次 check 返回 connectionLost: true 的空批并复位。 */
+  connectionLostOnce = false
   workerListError?: Error
 
   postMessage(m: Partial<CheckMessage> & { type: string }): CheckMessage {
@@ -250,9 +252,13 @@ export class FakeOrca implements OrcaClient {
 
   async check(a: { terminal: string; run: string; ack?: string; wait?: boolean; timeoutMs?: number }): Promise<CheckResult> {
     this.observe('check', a)
-    this.onCheck?.(a)
+    await this.onCheck?.(a)
     if (a.terminal !== this.coordinator) throw orcaError('consumer_fenced', `${a.terminal} 不是当前协调者`)
     if (a.ack) this.ackDelivery(a.ack)
+    if (this.connectionLostOnce) {
+      this.connectionLostOnce = false
+      return { deliveryId: null, messages: [], count: 0, replayed: false, acknowledged: null, timedOut: false, cancelled: false, connectionLost: true }
+    }
     const res = this.nextDelivery(a)
     this.takeFault('check', 'after', a)
     return res

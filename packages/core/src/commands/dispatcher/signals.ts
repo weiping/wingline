@@ -63,13 +63,23 @@ export const LADDERS: Readonly<Record<PatrolSignal, Ladder>> = {
 
 const ms = (iso: string | null | undefined): number => (iso ? Date.parse(iso) : 0)
 
-async function quietScreens(deps: CommandDeps, spec: TeamSpec, tasks: TaskRow[], byHandle: Map<string, TerminalSummary>, now: Date): Promise<Map<string, ScreenState | 'offline'>> {
+async function quietScreens(
+  deps: CommandDeps,
+  spec: TeamSpec,
+  tasks: TaskRow[],
+  byHandle: Map<string, TerminalSummary>,
+  now: Date,
+  onProgress: () => void,
+): Promise<Map<string, ScreenState | 'offline'>> {
   const screens = new Map<string, ScreenState | 'offline'>()
   for (const t of tasks.filter((x) => x.status === 'dispatched' && x.assigneeHandle)) {
     const term = byHandle.get(t.assigneeHandle!)
     if (!term || screens.has(term.handle)) continue
     const lastOut = term.lastOutputAt ?? ms(t.dispatchedAt)
-    if ((now.getTime() - lastOut) / MINUTE_MS > spec.patrol.promptMinutes) screens.set(term.handle, await screenGuard(deps, term.handle))
+    if ((now.getTime() - lastOut) / MINUTE_MS > spec.patrol.promptMinutes) {
+      screens.set(term.handle, await screenGuard(deps, term.handle))
+      onProgress()
+    }
   }
   return screens
 }
@@ -101,19 +111,24 @@ function localHistory(deps: CommandDeps, spec: TeamSpec, tasks: TaskRow[]) {
 }
 
 /** 一次 taskList、一次 terminalList（必需，失败则抛出）；worker-list（可选）；候选 handle 的 terminal show；本地表。 */
-export async function takeSnapshot(deps: CommandDeps, ctx: { team: TeamRow; spec: TeamSpec }, o: { wokeAt: Date | null }): Promise<ScanSnapshot> {
+export async function takeSnapshot(deps: CommandDeps, ctx: { team: TeamRow; spec: TeamSpec }, o: { wokeAt: Date | null; onProgress?: () => void }): Promise<ScanSnapshot> {
   const { team, spec } = ctx
   const now = deps.now()
+  const progress = o.onProgress ?? (() => {})
   const tasks = await fetchTasks(deps, team.name)
+  progress()
   const terminals = await deps.orca.terminalList()
+  progress()
   const byHandle = new Map(terminals.map((t) => [t.handle, t]))
   const input = await gatherStaleInput(deps, team.name, { tasks, terminals })
+  const workers = await workersOrNull(deps, team.runId!)
+  progress()
   return {
     now, lead: `${spec.lead}@${team.name}`, tasks, byHandle,
     byTitle: new Map(terminals.filter((t) => t.title).map((t) => [t.title!, t])),
-    workers: await workersOrNull(deps, team.runId!),
+    workers,
     stale: staleReasons(input, now, { ownerIdleMinutes: spec.patrol.ownerIdleMinutes, uncertainMinutes: 1 }),
-    screens: await quietScreens(deps, spec, tasks, new Map(byHandle), now),
+    screens: await quietScreens(deps, spec, tasks, new Map(byHandle), now, progress),
     openQuestions: deps.registry.listOpenQuestions(team.name),
     unfinished: deps.registry.listUnfinishedVerdicts(team.name),
     wokeAt: o.wokeAt,
