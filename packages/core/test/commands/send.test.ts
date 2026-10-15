@@ -6,7 +6,7 @@ import { FakeOrca, mkDeps } from './fake-client.js'
 
 function seeded(orca: FakeOrca, over = {}) {
   const m = mkDeps(orca, over)
-  m.registry.upsertTeam({ name: 'duo', specPath: '/s', specHash: 'h', runId: null, status: 'up' })
+  m.registry.upsertTeam({ name: 'duo', specPath: '/s', specHash: 'h', runId: null, coordinatorHandle: null, status: 'up' })
   m.registry.upsertPost({ address: 'checker@duo', team: 'duo', agent: 'codex', worktree: 'current', handle: 'old', status: 'live', isLead: false })
   orca.terminals = [{ handle: 'c1', title: 'checker@duo', connected: true, worktreeId: 'w' }]
   return m
