@@ -83,7 +83,7 @@ test('shell: true appears only in gate-exec.ts, and gate-exec.ts never mentions 
       if (e.name === 'node_modules' || e.name === 'dist') continue
       const f = path.join(dir, e.name)
       if (e.isDirectory()) walk(f)
-      else if (f.endsWith('.ts') && /shell:\s*true/.test(fs.readFileSync(f, 'utf8'))) found.push(path.relative(repoRoot, f))
+      else if (f.endsWith('.ts') && /shell:\s*true/.test(fs.readFileSync(f, 'utf8'))) found.push(path.relative(repoRoot, f).split(path.sep).join('/'))
     }
   }
   for (const pkg of fs.readdirSync(path.join(repoRoot, 'packages'))) walk(path.join(repoRoot, 'packages', pkg, 'src'))
