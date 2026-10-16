@@ -295,6 +295,9 @@ const TASK_OUTCOME = { recovered: '已恢复', queued: '已排队', skipped: '�
 
 const TIMELINE_SOURCE = { task: '任务', patrol: '巡查', command: '命令' } as const
 const SUMMARY_MAX = 120
+/** 复审 I-1b：actor/action/target 来自用户可控的 --as 与正文列，控制字符会伪造出额外的日志行。 */
+const CONTROL = /[\x00-\x1f\x7f]/g
+const flat = (s: string): string => s.replace(CONTROL, ' ')
 const pad2 = (n: number) => String(n).padStart(2, '0')
 
 /** 摘要压成一行，最长 SUMMARY_MAX 字；末尾的空列不留。 */
@@ -309,7 +312,7 @@ export function renderTimelineEvent(e: TimelineEvent): string {
   const d = new Date(e.at)
   const cols = [
     `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`,
-    TIMELINE_SOURCE[e.source], e.actor || '-', e.action, e.target ?? '', eventSummary(e),
+    TIMELINE_SOURCE[e.source], flat(e.actor) || '-', flat(e.action), e.target === null ? '' : flat(e.target), eventSummary(e),
   ]
   while (cols.length && cols.at(-1) === '') cols.pop()
   return cols.join('  ')

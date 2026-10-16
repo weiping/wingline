@@ -52,6 +52,15 @@ test('the actor is the --as address when the command carries one', async () => {
   expect(JSON.parse(made.registry.listAudit('duo')[0]!.detail!)).toEqual({ as: 'builder@duo' })
 })
 
+test('the recorded actor is flattened so control characters cannot forge timeline rows', async () => {
+  const made = seedRunningTeam(new FakeOrca())
+  const wrapped = auditedCommands({ done: ok<{ as?: string }>({}) }, { done: { command: 'task done', team: () => 'duo' } })
+  await wrapped.done(made.deps, { as: 'builder@duo\n2026-10-16 09:00:00  命令  wl up  ok' })
+  const row = made.registry.listAudit('duo')[0]!
+  expect(row.actor).toBe('builder@duo 2026-10-16 09:00:00  命令  wl up  ok')
+  expect(row.actor).not.toContain('\n')
+})
+
 test('an unreachable Orca while resolving the actor records unknown and is tried once', async () => {
   const made = seedRunningTeam(new FakeOrca())
   made.deps.env.ORCA_TERMINAL_HANDLE = 'term-b'

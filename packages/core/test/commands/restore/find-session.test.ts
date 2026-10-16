@@ -98,6 +98,14 @@ test('a hit already bound to another post of the team is excluded before countin
   expect(await findSession(deps, postRow(), '/wt')).toEqual({ kind: 'found', sessionId: 's1', via: 'search' })
 })
 
+test('a session reserved by an earlier post in the same batch is excluded', async () => {
+  const o = new FakeOrca()
+  const { deps } = mkDeps(o)
+  o.sessions.push({ marker: 'WLS-aaaa1111', agent: 'claude', sessionId: 's1', cwd: '/wt' })
+  // 复审 I-4：前一个岗位刚接回 s1（dry-run 尚未落库），后一个岗位不得再接同一个会话
+  expect(await findSession(deps, postRow(), '/wt', undefined, ['s1'])).toEqual({ kind: 'none', reason: '未找到原会话' })
+})
+
 test('search failure → uncertain, never none', async () => {
   const o = new FakeOrca()
   o.searchError = new WinglineError('uncertain', 'timeout', 'x')

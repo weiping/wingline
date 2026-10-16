@@ -49,21 +49,25 @@ const FRESH_REFUSE = {
  * 接不回的走 wl up 的新建路径（新标记、启动包）并醒目标注上下文已丢失。
  */
 export async function restorePost(
-  l: Launch, post: PostSpec, o: { dryRun: boolean; override?: string; briefing: string },
+  l: Launch, post: PostSpec, o: { dryRun: boolean; override?: string; briefing: string; reserved?: string[] },
 ): Promise<RestorePost> {
   const { orca, registry } = l.deps
   const address = postAddress(post.id, l.spec.name)
   const retry = `wl restore ${l.spec.name}`
   try {
     const located = await locatePost(orca, address)
-    if (located && located.connected) return { address, outcome: 'kept' }
+    if (located && located.connected) {
+      registry.setPostHandle(address, located.handle)
+      registry.setPostStatus(address, 'live')
+      return { address, outcome: 'kept' }
+    }
 
     const row = registry.getPost(address)!
     // path: 固定值直接用；选择器（阶段 3 之前的行）现解析一次
     const worktreePath = row.worktree.startsWith('path:')
       ? row.worktree.slice(5)
       : (await orca.worktreeShow({ worktree: row.worktree })).path
-    const lookup = await findSession(l.deps, row, worktreePath, o.override)
+    const lookup = await findSession(l.deps, row, worktreePath, o.override, o.reserved)
     if (lookup.kind === 'ambiguous') {
       return { address, outcome: 'ambiguous', candidates: lookup.candidates, retry: `${retry} --session ${post.id}=<id>` }
     }
@@ -129,8 +133,10 @@ export async function restorePost(
     if (o.dryRun) return { address, outcome: 'fresh', ...(reason !== undefined ? { reason } : {}) }
     const gen = lifetimeGen(l, post.id, located !== null)
     const marker = ensureMarker(l, post, gen)
-    const text = briefText(l, post, withMarker(o.briefing, marker), marker)
-    checkBriefingLimit(text, address)
+    // 复审 I-3：检查完整启动包，且在任何副作用之前（.cmd 模式下 briefText 会落文件、发出去的是短指针）
+    const full = withMarker(o.briefing, marker)
+    checkBriefingLimit(full, address)
+    const text = briefText(l, post, full, marker)
     const result = await startPost(l, post, {
       text, command: post.launch, existingHandle: located?.handle ?? null,
       keyOf: (s) => requestId(l.spec.name, post.id, s, l.hash, gen),

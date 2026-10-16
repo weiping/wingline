@@ -66,8 +66,14 @@ export async function restore(deps: CommandDeps, a: RestoreArgs): Promise<Restor
     const l: Launch = { deps, spec, hash }
     const ordered = [spec.posts.find((p) => p.id === spec.lead)!, ...spec.posts.filter((p) => p.id !== spec.lead)]
     const posts: RestorePost[] = []
+    // 本批次已认领的会话（dry-run 不落库，也得挡住后面的岗位接同一个会话）
+    const reserved: string[] = []
     for (const p of ordered) {
-      posts.push(await restorePost(l, p, { dryRun: !!a.dryRun, override: a.sessions?.[p.id], briefing: renderBriefing(spec, p.id) }))
+      const r = await restorePost(l, p, {
+        dryRun: !!a.dryRun, override: a.sessions?.[p.id], briefing: renderBriefing(spec, p.id), reserved,
+      })
+      posts.push(r)
+      if (r.sessionId) reserved.push(r.sessionId)
     }
 
     // 第 4 步：Run 走 wl up 的现有步骤；dry-run 只读注册表现状，不建不认领

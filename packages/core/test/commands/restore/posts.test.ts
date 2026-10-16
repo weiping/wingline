@@ -36,6 +36,24 @@ test('a live post is kept and nothing is written', async () => {
   expect(s.registry.getRequest(restoreKey('duo', 'builder', 0, 'create'))).toBeNull()
 })
 
+test('a live post refreshes handle and status in the registry', async () => {
+  const s = seed(new FakeOrca(), { handle: 'term-stale', status: 'uncertain' })
+  s.o.terminals.push({ handle: 'term-live', title: 'builder@duo', connected: true, worktreeId: 'wt-1' })
+  expect(await restorePost(s.l, s.post, { dryRun: false, briefing: s.briefing })).toEqual({ address: 'builder@duo', outcome: 'kept' })
+  expect(s.registry.getPost('builder@duo')!.handle).toBe('term-live')
+  expect(s.registry.getPost('builder@duo')!.status).toBe('live')
+})
+
+test('an oversized fresh briefing is rejected before any Orca write, even in .cmd mode', async () => {
+  const s = seed(new FakeOrca())
+  // .cmd 模式：briefing 落文件、发出去的是一行短指针——检查必须落在完整启动包上，且在任何副作用之前
+  s.deps.multilineSafe = false
+  await expect(restorePost(s.l, s.post, { dryRun: false, briefing: 'x'.repeat(13_000) }))
+    .rejects.toMatchObject({ code: 'briefing_too_long' })
+  expect(s.o.created).toEqual([])
+  expect(s.o.sent).toEqual([])
+})
+
 test('a dead post with a found session is resumed with the resume command, notified once, and its session id cached', async () => {
   const s = seed(new FakeOrca())
   s.o.sessions.push(hit('s1'))

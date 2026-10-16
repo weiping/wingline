@@ -67,7 +67,8 @@ async function write(deps: CommandDeps, entry: AuditEntry<any>, a: any, outcome:
     const as = (a as { as?: string } | null | undefined)?.as ?? o.actor
     let actor = 'unknown'
     try {
-      actor = actorOf(await resolveActor(deps, as)).actor
+      // 复审 I-1a：actor 是用户可控的 --as 值，压平控制字符，别让 wl log 里的行被伪造
+      actor = clip(actorOf(await resolveActor(deps, as)).actor)
     } catch {
       // Orca 不可达：记 unknown
     }
