@@ -23,10 +23,14 @@ export function renderBriefing(
     `## 沟通方式\n用 \`wl send <地址> "<消息>"\` 联系其他岗位，例如 \`wl send ${spec.lead}@${spec.name} "..."\`。`,
   ]
   const text = sections.join('\n\n')
+  return text
+}
+
+/** 上限检查在加了会话标记行之后做（spec：标记行计入启动包），任何 Orca 调用之前完成。 */
+export function checkBriefingLimit(text: string, address: string): void {
   if (text.length > BRIEFING_LIMIT) {
-    throw new WinglineError('input', 'briefing_too_long', `岗位 ${postId}@${spec.name} 的启动包 ${text.length} 字符，超过 ${BRIEFING_LIMIT}`, {
+    throw new WinglineError('input', 'briefing_too_long', `岗位 ${address} 的启动包 ${text.length} 字符，超过 ${BRIEFING_LIMIT}`, {
       hint: '请精简 NORMS 或 brief 文件，雁阵不会截断启动包',
     })
   }
-  return text
 }

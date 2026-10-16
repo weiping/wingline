@@ -1,14 +1,13 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { renderBriefing } from '../brief/render.js'
+import { checkBriefingLimit, renderBriefing } from '../brief/render.js'
 import { WinglineError } from '../errors.js'
-import type { Registry } from '../registry/registry.js'
 import { specHash } from '../spec/hash.js'
-import { loadTeamSpec, type PostSpec, type TeamSpec } from '../spec/load.js'
-import { postAddress, preflight, requestId, type CommandDeps, type Step } from './deps.js'
+import { loadTeamSpec, type PostSpec } from '../spec/load.js'
+import { postAddress, preflight, requestId, type CommandDeps } from './deps.js'
+import { ensureMarker, lifetimeGen, newSessionMarker, startPost, withMarker, type Launch } from './launch.js'
 import { locatePost } from './locate.js'
 import { ledgered } from './task/ledger.js'
-import { screenGuard } from './task/notify.js'
 
 export type UpOutcome = 'already_live' | 'launched' | 'failed' | 'uncertain'
 
@@ -25,43 +24,6 @@ export interface UpResult {
   posts: Array<{ address: string; outcome: UpOutcome; reason?: string; retry?: string }>
   run?: { outcome: RunOutcome; runId: string | null; reason?: string; retry?: string; candidates?: Array<{ id: string; createdAt: string }> }
   deadAssignees?: Array<{ taskId: string; title: string; owner: string | null; command: string }>
-}
-
-const WAIT_TIMEOUT_MS = 60_000
-const WAIT_SUBMIT_SEC = 10
-
-interface Launch {
-  deps: CommandDeps
-  spec: TeamSpec
-  hash: string
-}
-
-/** 先记 pending，再调用，最后按结果记 done / uncertain / failed。ok 为 false 表示 Orca 回执未确认成功。 */
-async function recorded<T>(reg: Registry, id: string, fn: () => Promise<T>, ok: (v: T) => boolean = () => true) {
-  reg.beginRequest(id)
-  let value: T
-  try {
-    value = await fn()
-  } catch (err) {
-    reg.finishRequest(id, err instanceof WinglineError && err.kind === 'uncertain' ? 'uncertain' : 'failed', {
-      error: err instanceof Error ? err.message : String(err),
-    })
-    throw err
-  }
-  const confirmed = ok(value)
-  reg.finishRequest(id, confirmed ? 'done' : 'uncertain', value)
-  return { confirmed, value }
-}
-
-const stepDone = (reg: Registry, id: string) => reg.getRequest(id)?.state === 'done'
-
-/** 终端被关后重新拉起要换新 id，否则 Orca 会按旧 id 回放旧回执。 */
-function lifetimeGen(l: Launch, post: string, located: boolean): number {
-  const done = (step: Step, g: number) => stepDone(l.deps.registry, requestId(l.spec.name, post, step, l.hash, g))
-  let g = 0
-  while (done('create', g) && done('brief', g)) g++
-  if (!located && done('create', g)) g++
-  return g
 }
 
 /**
@@ -124,47 +86,18 @@ async function registerTeam(l: Launch): Promise<void> {
   }
 }
 
-function briefText(l: Launch, post: PostSpec, briefing: string): string {
+/** briefing 已含标记行；.cmd 模式下文件里带着标记，一行指引的末尾也附上，保证标记进入会话记录。 */
+function briefText(l: Launch, post: PostSpec, briefing: string, marker: string): string {
   if (l.deps.multilineSafe) return briefing
   const file = path.join(l.deps.home, 'briefs', l.spec.name, `${post.id}.md`)
   fs.mkdirSync(path.dirname(file), { recursive: true })
   fs.writeFileSync(file, briefing)
-  return `请先完整阅读 ${file}，这是你的岗位说明。`
+  return `请先完整阅读 ${file}，这是你的岗位说明。（会话标记 ${marker}）`
 }
 
 type PostResult = UpResult['posts'][number]
 
 const REFUSE_REASON = { at_prompt: '岗位停在确认提示上，处理后重跑 wl up', shell: '岗位已退回 shell，处理后重跑 wl up', unconfirmed: '岗位未确认就绪，启动包未送达' } as const
-
-type StartResult = 'sent' | 'unconfirmed' | 'at_prompt' | 'shell'
-
-async function startPost(l: Launch, post: PostSpec, briefing: string, existingHandle: string | null, gen: number): Promise<StartResult> {
-  const { orca, registry } = l.deps
-  const address = postAddress(post.id, l.spec.name)
-  const rid = (step: Step) => requestId(l.spec.name, post.id, step, l.hash, gen)
-  let handle = existingHandle
-  if (!handle) {
-    const id = rid('create')
-    const created = await recorded(registry, id, () =>
-      orca.terminalCreate({ worktree: post.worktree, title: address, command: post.launch }),
-    )
-    handle = created.value.handle
-    registry.setPostHandle(address, handle)
-  }
-  if (!stepDone(registry, rid('wait'))) {
-    const waited = await recorded(registry, rid('wait'), () => orca.terminalWait({ handle, forState: 'tui-idle', timeoutMs: WAIT_TIMEOUT_MS }), (v) => v.satisfied)
-    if (!waited.confirmed) return 'unconfirmed'
-  }
-  const screen = await screenGuard(l.deps, handle)
-  if (screen === 'at_prompt' || screen === 'shell') return screen
-  const text = briefText(l, post, briefing)
-  const id = rid('brief')
-  const sent = await recorded(registry, id, () =>
-    orca.terminalSend({ handle: handle!, text, enter: true, waitSubmitSec: WAIT_SUBMIT_SEC }),
-    (v) => v.accepted,
-  )
-  return sent.confirmed ? 'sent' : 'unconfirmed'
-}
 
 async function launchPost(l: Launch, post: PostSpec, briefing: string): Promise<PostResult> {
   const { orca, registry } = l.deps
@@ -179,7 +112,13 @@ async function launchPost(l: Launch, post: PostSpec, briefing: string): Promise<
       registry.setPostStatus(address, 'live')
       return { address, outcome: 'already_live' }
     }
-    const result = await startPost(l, post, briefing, located?.handle ?? null, gen)
+    const marker = ensureMarker(l, post, gen)
+    const text = briefText(l, post, withMarker(briefing, marker), marker)
+    checkBriefingLimit(text, address)
+    const result = await startPost(l, post, {
+      text, command: post.launch, existingHandle: located?.handle ?? null,
+      keyOf: (s) => requestId(l.spec.name, post.id, s, l.hash, gen),
+    })
     registry.setPostStatus(address, result === 'sent' ? 'live' : 'uncertain')
     if (result === 'sent') return { address, outcome: 'launched' }
     const reason = REFUSE_REASON[result]
@@ -332,6 +271,11 @@ export async function up(deps: CommandDeps, args: UpArgs): Promise<UpResult> {
   const spec = loadTeamSpec(args.specPath)
   const hash = specHash(spec)
   const briefings = new Map(spec.posts.map((p) => [p.id, renderBriefing(spec, p.id)]))
+  // 标记行长度恒定：锁外用占位标记等价检查"加标记之后"的长度（spec §4.1 要求标记行计入上限），
+  // 任何 Orca 调用之前拒绝超长启动包；真实标记在锁内发送前生成。
+  for (const p of spec.posts) {
+    checkBriefingLimit(withMarker(briefings.get(p.id)!, newSessionMarker(() => '0'.repeat(8))), postAddress(p.id, spec.name))
+  }
   return deps.registry.withTeamLock(spec.name, async () => {
     await preflight(deps)
     const l: Launch = { deps, spec, hash }

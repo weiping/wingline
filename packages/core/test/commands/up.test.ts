@@ -39,7 +39,13 @@ test('terminal is created with title, worktree and launch command; briefing goes
     ['builder@duo', 'current', 'claude --model opus'],
     ['checker@duo', 'current', 'codex --model gpt-6-astra -c model_reasoning_effort="high"'],
   ])
-  expect(o.sent[0]).toMatchObject({ handle: 'term-1', text: renderBriefing(loadTeamSpec(p), 'builder') })
+  // 启动包 = renderBriefing 第一行 + 会话标记行 + 其余部分不变
+  const brief = renderBriefing(loadTeamSpec(p), 'builder')
+  const lines = o.sent[0]!.text.split('\n')
+  expect(o.sent[0]).toMatchObject({ handle: 'term-1' })
+  expect(lines[0]).toBe(brief.split('\n')[0])
+  expect(lines[1]).toMatch(/^会话标记：WLS-[0-9a-f]{8}（雁阵用它在重启后找回本会话，无需理会）$/)
+  expect(lines.slice(2).join('\n')).toBe(brief.split('\n').slice(1).join('\n'))
 })
 
 test('second up with same hash adopts live terminals, no create', async () => {
@@ -123,7 +129,12 @@ test('when multilineSafe is false, briefing goes to a file and a one-line pointe
   const file = path.join(home, 'briefs', 'duo', 'builder.md')
   expect(o.sent[0]!.text).not.toMatch(/\n/)
   expect(o.sent[0]!.text).toContain(file)
-  expect(fs.readFileSync(file, 'utf8')).toBe(renderBriefing(loadTeamSpec(p), 'builder'))
+  // 文件里是加了标记行的完整启动包
+  const brief = renderBriefing(loadTeamSpec(p), 'builder')
+  const fileLines = fs.readFileSync(file, 'utf8').split('\n')
+  expect(fileLines[0]).toBe(brief.split('\n')[0])
+  expect(fileLines[1]).toMatch(/^会话标记：WLS-[0-9a-f]{8}（雁阵用它在重启后找回本会话，无需理会）$/)
+  expect(fileLines.slice(2).join('\n')).toBe(brief.split('\n').slice(1).join('\n'))
 })
 
 test('an over-long briefing fails before any orca call', async () => {

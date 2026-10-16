@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { renderBriefing } from '../../src/brief/render.js'
+import { checkBriefingLimit, renderBriefing } from '../../src/brief/render.js'
 import type { TeamSpec } from '../../src/spec/load.js'
 
 const postDefaults = { selfClaim: false, tags: [], planFirst: false, gate: null, reviewedBy: [], handsTo: [] }
@@ -54,5 +54,6 @@ test('exactly 12000 chars is allowed; over is an input error', () => {
     return renderBriefing(spec, 'builder', (p) => (p === '/t/NORMS.md' ? 'x'.repeat(n - base) : ''))
   }
   expect(sized(12000)).toHaveLength(12000)
-  expect(() => sized(12001)).toThrow(expect.objectContaining({ kind: 'input', code: 'briefing_too_long' }))
+  expect(() => checkBriefingLimit(sized(12001), 'builder@duo')).toThrow(expect.objectContaining({ kind: 'input', code: 'briefing_too_long' }))
+  expect(() => checkBriefingLimit(sized(12000), 'builder@duo')).not.toThrow()
 })
