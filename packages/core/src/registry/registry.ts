@@ -364,11 +364,11 @@ export class Registry {
   upsertPost(p: PostRow): void {
     this.db
       .prepare(
-        `INSERT INTO posts(address, team, agent, worktree, handle, status, is_lead, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO posts(address, team, agent, worktree, handle, status, is_lead, session_marker, session_id, session_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(address) DO UPDATE SET team = excluded.team, agent = excluded.agent, worktree = excluded.worktree,
            handle = excluded.handle, status = excluded.status, is_lead = excluded.is_lead, updated_at = excluded.updated_at`,
       )
-      .run(p.address, p.team, p.agent, p.worktree, p.handle, p.status, p.isLead ? 1 : 0, this.now())
+      .run(p.address, p.team, p.agent, p.worktree, p.handle, p.status, p.isLead ? 1 : 0, p.sessionMarker, p.sessionId, p.sessionAt, this.now())
   }
 
   setPostHandle(address: string, handle: string | null): void {
