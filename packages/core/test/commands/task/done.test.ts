@@ -33,7 +33,7 @@ const unreachable = (o: FakeOrca) => o.faults.push({ method: 'requestShow', when
 const REVIEW = 'links:\n  builder:\n    reviewed_by: [checker]\n'
 const AUDITOR = DUO_YAML + '  - id: auditor\n    agent: claude\n    worktree: current\n' + gates() + 'links:\n  builder:\n    reviewed_by: [checker, auditor]\n'
 const addAuditor = (o: FakeOrca, registry: Registry) => {
-  registry.upsertPost({ address: 'auditor@duo', team: 'duo', agent: 'claude', worktree: 'current', handle: 'term-a', status: 'live', isLead: false })
+  registry.upsertPost({ address: 'auditor@duo', team: 'duo', agent: 'claude', worktree: 'current', handle: 'term-a', status: 'live', isLead: false, sessionMarker: null, sessionId: null, sessionAt: null })
   o.terminals.push({ handle: 'term-a', title: 'auditor@duo', connected: true, worktreeId: 'w' })
 }
 

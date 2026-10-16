@@ -11,7 +11,8 @@ const tmpDb = () => path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wl-reg-')),
 
 const team: TeamRow = { name: 'duo', specPath: '/s/team.yaml', specHash: 'h'.repeat(64), runId: null, coordinatorHandle: null, status: 'up' }
 const post = (over: Partial<PostRow> = {}): PostRow => ({
-  address: 'builder@duo', team: 'duo', agent: 'claude', worktree: 'current', handle: null, status: 'offline', isLead: true, ...over,
+  address: 'builder@duo', team: 'duo', agent: 'claude', worktree: 'current', handle: null, status: 'offline', isLead: true,
+  sessionMarker: null, sessionId: null, sessionAt: null, ...over,
 })
 
 test('migrates a fresh db (creating its directory) to the latest user_version', () => {
@@ -386,4 +387,49 @@ test('listDeliveries reads the done:*:delivered:<target> ledger rows', () => {
   r.claimRequest('done:t2:0:delivered:builder@duo', { target: 'builder@duo', taskId: 'c2', delivery: 'sent' })
   expect(r.listDeliveries('checker@duo')).toEqual([{ key: 'done:t1:0:delivered:checker@duo', target: 'checker@duo', taskId: 'c1', delivery: 'skipped_frozen', at: expect.any(String) }])
   expect(r.listDeliveries('checker@duo', '9999')).toEqual([])
+})
+
+// ---- 阶段 3A：会话列、审计事件、afterId 游标 ----
+const seededRegistry = () => {
+  const r = Registry.open(tmpDb())
+  r.upsertTeam(running2b)
+  r.upsertPost(post())
+  return r
+}
+
+test('setSessionMarker stores marker and time and clears a cached session id', () => {
+  const r = seededRegistry()
+  r.setSessionId('builder@duo', 'old-id')
+  expect(r.getPost('builder@duo')).toMatchObject({ sessionId: 'old-id' })
+  r.setSessionMarker('builder@duo', 'WLS-0a1b2c3d', '2026-10-16T00:00:00.000Z')
+  expect(r.getPost('builder@duo')).toMatchObject({ sessionMarker: 'WLS-0a1b2c3d', sessionId: null, sessionAt: '2026-10-16T00:00:00.000Z' })
+  r.close()
+})
+
+test('audit rows round-trip; limit keeps the newest n in ascending order; afterId pages forward', () => {
+  const r = seededRegistry()
+  for (let i = 1; i <= 5; i++) r.appendAudit({ team: 'duo', actor: 'human', command: 'send', target: 'builder@duo', outcome: 'ok', detail: { i } })
+  expect(r.listAudit('duo').map((a) => a.id)).toEqual([1, 2, 3, 4, 5])
+  expect(r.listAudit('duo', { limit: 2 }).map((a) => JSON.parse(a.detail!).i)).toEqual([4, 5])
+  expect(r.listAudit('duo', { afterId: 3 }).map((a) => a.id)).toEqual([4, 5])
+  expect(r.listAudit('other')).toEqual([])
+  r.close()
+})
+
+test('pruneAudit deletes rows older than the cutoff', () => {
+  const r = seededRegistry()
+  r.appendAudit({ team: 'duo', at: '2026-09-01T00:00:00.000Z', actor: 'human', command: 'send', target: null, outcome: 'ok' })
+  r.appendAudit({ team: 'duo', at: '2026-10-01T00:00:00.000Z', actor: 'human', command: 'send', target: null, outcome: 'ok' })
+  expect(r.pruneAudit('2026-09-15T00:00:00.000Z')).toBe(1)
+  expect(r.listAudit('duo').map((a) => a.at)).toEqual(['2026-10-01T00:00:00.000Z'])
+  r.close()
+})
+
+test('listTeamTaskLog and listPatrolEvents accept afterId', () => {
+  const r = seededRegistry()
+  for (let i = 0; i < 3; i++) r.appendTaskLog({ team: 'duo', taskId: 't1', epoch: 0, actor: 'human', actorSource: 'human', action: 'create' })
+  for (let i = 0; i < 3; i++) r.appendPatrolEvent({ team: 'duo', action: 'wake' })
+  expect(r.listTeamTaskLog('duo', { afterId: 1 }).map((x) => x.id)).toEqual([2, 3])
+  expect(r.listPatrolEvents('duo', { afterId: 1 }).map((x) => x.id)).toEqual([2, 3])
+  r.close()
 })

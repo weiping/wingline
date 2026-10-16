@@ -398,7 +398,7 @@ export function seedRunningTeam(o: FakeOrca, over: Partial<CommandDeps> & { yaml
   const worktree = `path:${os.tmpdir()}`
   for (const [id, handle, isLead] of [['builder', 'term-b', true], ['checker', 'term-c', false]] as const) {
     const address = `${id}@duo`
-    made.registry.upsertPost({ address, team: 'duo', agent: id === 'builder' ? 'claude' : 'codex', worktree, handle, status: 'live', isLead })
+    made.registry.upsertPost({ address, team: 'duo', agent: id === 'builder' ? 'claude' : 'codex', worktree, handle, status: 'live', isLead, sessionMarker: null, sessionId: null, sessionAt: null })
     o.terminals.push({ handle, title: address, connected: true, worktreeId: 'wt-1' })
   }
   o.terminals.push({ handle: 'coord-1', title: 'zsh', connected: true, worktreeId: 'wt-1' })

@@ -119,6 +119,7 @@ async function registerTeam(l: Launch): Promise<void> {
       address, team: l.spec.name, agent: p.agent,
       worktree: prev?.worktree.startsWith('path:') && !p.worktree.startsWith('path:') ? prev.worktree : p.worktree,
       handle: prev?.handle ?? null, status: prev?.status ?? 'offline', isLead: p.id === l.spec.lead,
+      sessionMarker: null, sessionId: null, sessionAt: null,
     })
   }
 }

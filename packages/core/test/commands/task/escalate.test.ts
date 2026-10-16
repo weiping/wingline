@@ -54,7 +54,7 @@ test('escalate uncertain, then the coordinator changed: --retry-request replays 
 test('escalate by a post that is neither the owner nor the lead → not_your_task; the lead and a human may', async () => {
   const yaml3 = DUO_YAML + '  - id: auditor\n    agent: claude\n    worktree: current\n'
   const o = new FakeOrca(); const { deps, registry } = seedRunningTeam(o, { yaml: yaml3 })
-  registry.upsertPost({ address: 'auditor@duo', team: 'duo', agent: 'claude', worktree: 'current', handle: 'term-a', status: 'live', isLead: false })
+  registry.upsertPost({ address: 'auditor@duo', team: 'duo', agent: 'claude', worktree: 'current', handle: 'term-a', status: 'live', isLead: false, sessionMarker: null, sessionId: null, sessionAt: null })
   const id = await dispatchedTask(o, deps)
   await expect(escalateTask(deps, { id, reason: 'x', as: 'auditor@duo' })).rejects.toMatchObject({ code: 'not_your_task' })
   expect(await escalateTask(deps, { id, reason: 'x', as: 'builder@duo' })).toMatchObject({ gateId: 'gate-1' })

@@ -60,4 +60,12 @@ export const MIGRATIONS: readonly string[] = [
     task_id TEXT, action TEXT NOT NULL, outcome TEXT, message_id TEXT, detail TEXT);
   CREATE UNIQUE INDEX patrol_events_msg ON patrol_events(team, message_id) WHERE message_id IS NOT NULL;
   `,
+  `
+  ALTER TABLE posts ADD COLUMN session_marker TEXT;
+  ALTER TABLE posts ADD COLUMN session_id TEXT;
+  ALTER TABLE posts ADD COLUMN session_at TEXT;
+  CREATE TABLE audit_events (id INTEGER PRIMARY KEY AUTOINCREMENT, team TEXT NOT NULL, at TEXT NOT NULL,
+    actor TEXT NOT NULL, command TEXT NOT NULL, target TEXT, outcome TEXT NOT NULL, detail TEXT);
+  CREATE INDEX audit_events_team_at ON audit_events(team, at);
+  `,
 ]

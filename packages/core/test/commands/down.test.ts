@@ -7,7 +7,7 @@ function seeded(orca: FakeOrca) {
   const { registry } = m
   registry.upsertTeam({ name: 'duo', specPath: '/s', specHash: 'abcdef1234567890', runId: null, coordinatorHandle: null, status: 'up' })
   for (const [p, lead] of [['builder', true], ['checker', false]] as const) {
-    registry.upsertPost({ address: `${p}@duo`, team: 'duo', agent: 'claude', worktree: 'current', handle: p, status: 'live', isLead: lead })
+    registry.upsertPost({ address: `${p}@duo`, team: 'duo', agent: 'claude', worktree: 'current', handle: p, status: 'live', isLead: lead, sessionMarker: null, sessionId: null, sessionAt: null })
   }
   orca.terminals = [
     { handle: 'b1', title: 'builder@duo', connected: true, worktreeId: 'w' },

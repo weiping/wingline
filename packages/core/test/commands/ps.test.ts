@@ -8,8 +8,8 @@ function seeded(orca: FakeOrca) {
   const m = mkDeps(orca)
   const { registry } = m
   registry.upsertTeam({ name: 'duo', specPath: '/s', specHash: 'h', runId: 'run-1', coordinatorHandle: null, status: 'up' })
-  registry.upsertPost({ address: 'builder@duo', team: 'duo', agent: 'claude', worktree: 'current', handle: 'h1', status: 'live', isLead: true })
-  registry.upsertPost({ address: 'checker@duo', team: 'duo', agent: 'codex', worktree: 'current', handle: 'c1', status: 'live', isLead: false })
+  registry.upsertPost({ address: 'builder@duo', team: 'duo', agent: 'claude', worktree: 'current', handle: 'h1', status: 'live', isLead: true, sessionMarker: null, sessionId: null, sessionAt: null })
+  registry.upsertPost({ address: 'checker@duo', team: 'duo', agent: 'codex', worktree: 'current', handle: 'c1', status: 'live', isLead: false, sessionMarker: null, sessionId: null, sessionAt: null })
   return m
 }
 

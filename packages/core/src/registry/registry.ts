@@ -24,6 +24,9 @@ export interface PostRow {
   handle: string | null
   status: PostStatus
   isLead: boolean
+  sessionMarker: string | null
+  sessionId: string | null
+  sessionAt: string | null
 }
 
 export interface RequestRow {
@@ -78,6 +81,28 @@ export interface TaskLogRow {
   action: TaskAction
   detail: string | null
 }
+
+export interface AuditRow {
+  id: number
+  team: string
+  at: string
+  actor: string
+  command: string
+  target: string | null
+  outcome: string
+  detail: string | null
+}
+
+const auditRow = (r: Row): AuditRow => ({
+  id: r.id as number,
+  team: r.team as string,
+  at: r.at as string,
+  actor: r.actor as string,
+  command: r.command as string,
+  target: r.target as string | null,
+  outcome: r.outcome as string,
+  detail: r.detail as string | null,
+})
 
 /** task_ext 单列 setter 的列名白名单。 */
 type ExtColumn = 'claimed_by' | 'plan' | 'ready_since' | 'dispatched_at'
@@ -230,6 +255,9 @@ const postRow = (r: Row): PostRow => ({
   handle: r.handle as string | null,
   status: r.status as PostStatus,
   isLead: r.is_lead === 1,
+  sessionMarker: r.session_marker as string | null,
+  sessionId: r.session_id as string | null,
+  sessionAt: r.session_at as string | null,
 })
 
 export function pidAlive(pid: number): boolean {
@@ -349,6 +377,15 @@ export class Registry {
 
   setPostStatus(address: string, status: PostStatus): void {
     this.db.prepare('UPDATE posts SET status = ?, updated_at = ? WHERE address = ?').run(status, this.now(), address)
+  }
+
+  /** 换标记即换代：缓存的 session_id 一并作废（spec 第 4 节）。 */
+  setSessionMarker(address: string, marker: string, at: string): void {
+    this.db.prepare('UPDATE posts SET session_marker = ?, session_at = ?, session_id = NULL, updated_at = ? WHERE address = ?').run(marker, at, this.now(), address)
+  }
+
+  setSessionId(address: string, sessionId: string): void {
+    this.db.prepare('UPDATE posts SET session_id = ?, updated_at = ? WHERE address = ?').run(sessionId, this.now(), address)
   }
 
   getRequest(id: string): RequestRow | null {
@@ -712,11 +749,39 @@ export class Registry {
     return Number(r.changes) > 0
   }
 
-  listPatrolEvents(team: string, o: { since?: string; limit?: number } = {}): Array<PatrolEvent & { id: number; at: string }> {
+  listPatrolEvents(team: string, o: { afterId?: number; since?: string; limit?: number } = {}): Array<PatrolEvent & { id: number; at: string }> {
     const rows = this.db
-      .prepare('SELECT * FROM patrol_events WHERE team = ? AND at >= ? ORDER BY id DESC LIMIT ?')
-      .all(team, o.since ?? '', o.limit ?? 1000) as Row[]
+      .prepare('SELECT * FROM patrol_events WHERE team = ? AND at >= ? AND id > ? ORDER BY id DESC LIMIT ?')
+      .all(team, o.since ?? '', o.afterId ?? 0, o.limit ?? 1000) as Row[]
     return rows.reverse().map(eventRow)
+  }
+
+  // —— 阶段 3A：审计事件、团队任务日志、时间线游标 ——
+  // 三者共用同一套分页语义：id 升序；带 limit 时取最新 limit 条（仍升序）；afterId 向前翻页。
+
+  appendAudit(r: Omit<AuditRow, 'id' | 'at' | 'detail'> & { at?: string; detail?: unknown }): void {
+    const detail = r.detail === undefined || r.detail === null ? null : typeof r.detail === 'string' ? r.detail : JSON.stringify(r.detail)
+    this.db
+      .prepare('INSERT INTO audit_events(team, at, actor, command, target, outcome, detail) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(r.team, r.at ?? this.now(), r.actor, r.command, r.target, r.outcome, detail)
+  }
+
+  listAudit(team: string, o: { afterId?: number; since?: string; limit?: number } = {}): AuditRow[] {
+    const rows = this.db
+      .prepare('SELECT * FROM audit_events WHERE team = ? AND at >= ? AND id > ? ORDER BY id DESC LIMIT ?')
+      .all(team, o.since ?? '', o.afterId ?? 0, o.limit ?? 1000) as Row[]
+    return rows.reverse().map(auditRow)
+  }
+
+  pruneAudit(before: string): number {
+    return Number(this.db.prepare('DELETE FROM audit_events WHERE at < ?').run(before).changes)
+  }
+
+  listTeamTaskLog(team: string, o: { afterId?: number; since?: string; limit?: number } = {}): TaskLogRow[] {
+    const rows = this.db
+      .prepare('SELECT * FROM task_log WHERE team = ? AND at >= ? AND id > ? ORDER BY id DESC LIMIT ?')
+      .all(team, o.since ?? '', o.afterId ?? 0, o.limit ?? 1000) as Row[]
+    return rows.reverse().map(logRow)
   }
 
   /** team 是否写过 actions 之一的事件。 */
