@@ -68,6 +68,16 @@ export interface DispatcherStatus {
 
 const WARNING_ACTIONS = new Set(['spec_reload_failed', 'loop_error'])
 
+/** 同一 action+outcome 合并成一行并带次数，按首次出现的顺序。 */
+function groupWarnings(events: Array<{ action: string; outcome?: string | null }>): string[] {
+  const counts = new Map<string, number>()
+  for (const e of events) {
+    const line = `${e.action}: ${e.outcome ?? ''}`
+    counts.set(line, (counts.get(line) ?? 0) + 1)
+  }
+  return [...counts].map(([line, n]) => (n > 1 ? `${line} ×${n}` : line))
+}
+
 /** spec 第 2 节 `wl dispatcher status`。 */
 export async function dispatcherStatus(deps: CommandDeps, team: string): Promise<DispatcherStatus> {
   const { registry } = deps
@@ -87,6 +97,6 @@ export async function dispatcherStatus(deps: CommandDeps, team: string): Promise
     frozen: report.frozen.length,
     hushed: registry.listHushes(team).filter((h) => Date.parse(h.until) > now.getTime()).length,
     attentionItems: report.frozen.length + report.signals.length + report.questions.length + report.stale.length,
-    warnings: events.filter((e) => e.at >= since && WARNING_ACTIONS.has(e.action)).map((e) => `${e.action}: ${e.outcome ?? ''}`),
+    warnings: groupWarnings(events.filter((e) => e.at >= since && WARNING_ACTIONS.has(e.action))),
   }
 }

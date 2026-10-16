@@ -54,6 +54,16 @@ test('final-review m10: skipped count and the unfreeze list only cover the curre
   expect((await attention(deps, 'duo')).frozen).toEqual([expect.objectContaining({ skippedChildren: 1 })])
 })
 
+test('final-review m6: repeated warnings are grouped by action+outcome with a count', async () => {
+  const o = new FakeOrca(); const { deps, registry } = seedRunningTeam(o)
+  for (let i = 0; i < 40; i++) registry.appendPatrolEvent({ team: 'duo', action: 'loop_error', outcome: 'failed:runtime_unavailable' })
+  registry.appendPatrolEvent({ team: 'duo', action: 'loop_error', outcome: 'failed:error' })
+  registry.appendPatrolEvent({ team: 'duo', action: 'spec_reload_failed', outcome: 'failed:links_cycle' })
+  expect((await dispatcherStatus(deps, 'duo')).warnings).toEqual([
+    'loop_error: failed:runtime_unavailable ×40', 'loop_error: failed:error', 'spec_reload_failed: failed:links_cycle',
+  ])
+})
+
 test('a signal row shows the command recorded with its latest action, or null', async () => {
   const o = new FakeOrca(); const { deps, registry } = seedRunningTeam(o)
   registry.putPatrolState(st({ signal: 'dead_assignee', taskId: 'd', level: 2 }))

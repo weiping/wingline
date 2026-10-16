@@ -37,6 +37,13 @@ test('dispatcherHealth: never / running / stale (old heartbeat) / stopped', asyn
   registry.appendPatrolEvent({ team: 'duo', action: 'wake' })
   expect(dispatcherHealth(deps, 'duo').state).toBe('stopped')
 })
+test('final-review m4: manual events (freeze/hush) do not make a never-started dispatcher "stopped"; its own events do', async () => {
+  const o = new FakeOrca(); const { deps, registry } = seedRunningTeam(o)
+  for (const action of ['freeze', 'hush', 'unhush', 'unfreeze', 'notify', 'claim']) registry.appendPatrolEvent({ team: 'duo', action })
+  expect(dispatcherHealth(deps, 'duo').state).toBe('never')
+  registry.appendPatrolEvent({ team: 'duo', action: 'check_ok' })
+  expect(dispatcherHealth(deps, 'duo').state).toBe('stopped')
+})
 test("dispatcherUp creates dispatcher@<team> on the lead's registered worktree and waits for the heartbeat", async () => {
   const o = new FakeOrca(); const { deps, registry } = seedRunningTeam(o)
   o.onCreate = () => { fakeRunning(registry) }

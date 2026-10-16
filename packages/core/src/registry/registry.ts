@@ -719,6 +719,12 @@ export class Registry {
     return rows.reverse().map(eventRow)
   }
 
+  /** team 是否写过 actions 之一的事件。 */
+  hasPatrolEventOf(team: string, actions: readonly string[]): boolean {
+    const marks = actions.map(() => '?').join(', ')
+    return this.db.prepare(`SELECT 1 FROM patrol_events WHERE team = ? AND action IN (${marks}) LIMIT 1`).get(team, ...actions) !== undefined
+  }
+
   prunePatrolEvents(before: string): number {
     return Number(this.db.prepare('DELETE FROM patrol_events WHERE at < ?').run(before).changes)
   }

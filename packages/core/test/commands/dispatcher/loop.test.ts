@@ -97,15 +97,24 @@ test('a superseded dispatcher (heartbeat reports the row is no longer ours) stop
   const w = dsp(); const st = await w.start(); st.locked = true
   await expect(w.once(st)).rejects.toMatchObject({ code: 'dispatcher_superseded' })
 })
+test('final-review m3: an unchanged check result is re-recorded at most once per 10 minutes, so "last check" stays fresh', async () => {
+  const w = dsp(); const st = await w.start()
+  const checks = () => w.registry.listPatrolEvents('duo').filter((e) => e.action === 'check_ok')
+  await w.once(st); expect(checks()).toHaveLength(1)
+  w.c.advance(60_000); await w.once(st); expect(checks()).toHaveLength(1)
+  w.c.advance(10 * 60_000); await w.once(st)
+  expect(checks()).toHaveLength(2)
+  expect(checks()[1]!.at).toBe(w.c.now().toISOString())
+})
 test('spec reload follows teams.spec_hash: a valid new spec is adopted; a broken one keeps the old spec and is recorded', async () => {
   const w = dsp(); const st = await w.start()
   const t = w.registry.getTeam('duo')!
   fs.writeFileSync(t.specPath, fs.readFileSync(t.specPath, 'utf8') + 'patrol:\n  no_progress_minutes: 7\n')
   w.registry.upsertTeam({ ...t, specHash: specHash(loadTeamSpec(t.specPath)) })
-  await w.once(st); expect(st.spec.patrol.noProgressMinutes).toBe(7)
+  await w.once(st); expect(st.spec!.patrol.noProgressMinutes).toBe(7)
   fs.writeFileSync(t.specPath, 'posts: [')
   w.registry.upsertTeam({ ...w.registry.getTeam('duo')!, specHash: 'h'.repeat(64) })
-  await w.once(st); expect(st.spec.patrol.noProgressMinutes).toBe(7)
+  await w.once(st); expect(st.spec!.patrol.noProgressMinutes).toBe(7)
   expect(w.registry.listPatrolEvents('duo').map((e) => e.action)).toContain('spec_reload_failed')
 })
 test('task-list failing makes the scan skip (recorded) but lastScanAt still advances', async () => {
@@ -123,6 +132,34 @@ test('a new day prunes call logs, gate outputs and old patrol events', async () 
   const old = path.join(logs, 'duo', 'gate-t-0-1.txt'); fs.writeFileSync(old, 'x'); fs.utimesSync(old, new Date('2026-10-01'), new Date('2026-10-01'))
   w.c.advance(24 * 3_600_000); await w.once(st)
   expect(fs.existsSync(path.join(logs, '2026-10-01.jsonl'))).toBe(false); expect(fs.existsSync(old)).toBe(false)
+})
+test.each([
+  ['unreadable spec file', (p: string) => fs.writeFileSync(p, 'posts: [')],
+  ['spec edited after wl up (hash mismatch)', (p: string) => fs.writeFileSync(p, fs.readFileSync(p, 'utf8') + 'patrol:\n  no_progress_minutes: 7\n')],
+])('final-review m5: %s at startup does not stop the dispatcher; it records spec_reload_failed once and keeps checking', async (_n, damage) => {
+  const w = dsp(); const t = w.registry.getTeam('duo')!
+  const original = fs.readFileSync(t.specPath, 'utf8')
+  damage(t.specPath)
+  const ac = new AbortController(); let checks = 0
+  w.o.onCheck = async () => { checks += 1; if (checks === 3) ac.abort() }
+  await runDispatcherLoop(w.deps, 'duo', { signal: ac.signal, sleep: w.sleep, waitMs: 1 })
+  expect(checks).toBe(3)
+  expect(w.registry.listPatrolEvents('duo').filter((e) => e.action === 'spec_reload_failed')).toHaveLength(1)
+  expect(w.registry.getLock('dispatcher:duo')).toBeNull()
+  // 文件恢复后下一轮自愈
+  fs.writeFileSync(t.specPath, original)
+  const team = await connectDispatcher(w.deps, 'duo', 'term-dsp', { sleep: w.sleep })
+  const st = initialState(w.deps, team, null)
+  await w.once(st)
+  expect(st.spec).not.toBeNull()
+  expect(w.registry.listPatrolEvents('duo').map((e) => e.action)).toContain('spec_reload')
+})
+test('final-review m5: initialState itself checks a passed spec against teams.spec_hash', async () => {
+  const w = dsp(); const t = w.registry.getTeam('duo')!
+  fs.writeFileSync(t.specPath, fs.readFileSync(t.specPath, 'utf8') + 'patrol:\n  no_progress_minutes: 7\n')
+  const st = initialState(w.deps, t, loadTeamSpec(t.specPath))
+  expect(st.spec).toBeNull()
+  expect(w.registry.listPatrolEvents('duo').filter((e) => e.action === 'spec_reload_failed')).toEqual([expect.objectContaining({ outcome: 'failed:team_spec_changed' })])
 })
 test('runDispatcherLoop: outside Orca → dispatcher_not_in_orca; a second one → team_busy; it releases its lock on abort', async () => {
   const w = dsp()

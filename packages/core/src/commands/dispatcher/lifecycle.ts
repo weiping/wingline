@@ -19,10 +19,15 @@ export interface DispatcherHealth {
   ageMs?: number
 }
 
+/** 只有调度员循环自己会写的事件；人手动 freeze/hush 或 2A 命令写的事件不算它启动过。 */
+const DISPATCHER_ACTIONS = [
+  'check_ok', 'check_failed', 'scan', 'scan_skipped', 'wake', 'connect_retry', 'fenced_reclaim', 'spec_reload', 'spec_reload_failed', 'loop_error', 'superseded',
+] as const
+
 /** spec 第 2.2 节：pid 与心跳都要看。 */
 export function dispatcherHealth(deps: CommandDeps, team: string): DispatcherHealth {
   const lock = deps.registry.getLock(lockKey(team))
-  if (!lock) return { state: deps.registry.listPatrolEvents(team, { limit: 1 }).length > 0 ? 'stopped' : 'never' }
+  if (!lock) return { state: deps.registry.hasPatrolEventOf(team, DISPATCHER_ACTIONS) ? 'stopped' : 'never' }
   const ageMs = deps.now().getTime() - Date.parse(lock.heartbeatAt ?? lock.at)
   const state = pidAlive(lock.pid) && ageMs <= HEARTBEAT_STALE_MS ? 'running' : 'stale'
   return { state, pid: lock.pid, heartbeatAt: lock.heartbeatAt, ageMs }
