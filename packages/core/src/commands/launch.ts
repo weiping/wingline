@@ -11,8 +11,8 @@ export interface Launch {
   hash: string
 }
 
-const WAIT_TIMEOUT_MS = 60_000
-const WAIT_SUBMIT_SEC = 10
+export const WAIT_TIMEOUT_MS = 60_000
+export const WAIT_SUBMIT_SEC = 10
 
 /** 先记 pending，再调用，最后按结果记 done / uncertain / failed。ok 为 false 表示 Orca 回执未确认成功。 */
 export async function recorded<T>(reg: Registry, id: string, fn: () => Promise<T>, ok: (v: T) => boolean = () => true) {

@@ -87,7 +87,7 @@ async function registerTeam(l: Launch): Promise<void> {
 }
 
 /** briefing 已含标记行；.cmd 模式下文件里带着标记，一行指引的末尾也附上，保证标记进入会话记录。 */
-function briefText(l: Launch, post: PostSpec, briefing: string, marker: string): string {
+export function briefText(l: Launch, post: PostSpec, briefing: string, marker: string): string {
   if (l.deps.multilineSafe) return briefing
   const file = path.join(l.deps.home, 'briefs', l.spec.name, `${post.id}.md`)
   fs.mkdirSync(path.dirname(file), { recursive: true })
