@@ -3,7 +3,8 @@ import { PassThrough } from 'node:stream'
 import { afterEach, expect, test } from 'vitest'
 import os from 'node:os'
 import path from 'node:path'
-import { READ_ONLY_CALLS, WinglineError, type AttentionReport, type CommandDeps } from '@wingline/core'
+import { READ_ONLY_CALLS, WinglineError, WRITE_COMMANDS, type AttentionReport, type CommandDeps } from '@wingline/core'
+import { AUDIT } from '../src/audit-table.js'
 import { callLogOptions, defaultMakeDeps, installWarningFilter, isReadOnlyCall, run, type Commands } from '../src/cli.js'
 
 function io() {
@@ -21,6 +22,7 @@ const cmds = (over: Partial<Commands> = {}): Commands => ({
   ps: async () => [{ address: 'builder@duo', agent: 'claude', status: 'live', handle: 'h1', worktree: 'current', isLead: true }],
   send: async (_d, a) => ({ address: a.address, outcome: 'delivered', handle: 'h1' }),
   down: async (_d, a) => ({ team: a.team, posts: [{ address: 'builder@duo', outcome: a.close ? 'closed' : 'stopped' }] }),
+  restore: async () => { throw new Error('未注入：restore') },
   createTask: async () => { throw new Error('未注入：createTask') },
   listTasks: async () => { throw new Error('未注入：listTasks') },
   listStale: async () => { throw new Error('未注入：listStale') },
@@ -50,6 +52,16 @@ const exec = (argv: string[], c: Commands = cmds()) => {
   const h = io()
   return run(argv, h.io, c, makeDeps).then((code) => ({ code, out: h.out(), err: h.err() }))
 }
+
+/** Commands 里允许只读、不进审计表的字段（新增命令忘了登记时下面那条测试会失败）。 */
+const READ_COMMANDS = ['ps', 'listTasks', 'listStale', 'showTask', 'runDispatcherLoop', 'dispatcherStatus', 'attention']
+
+test('every write command is in the audit table and no read command is', () => {
+  expect(Object.keys(AUDIT).sort()).toEqual([...WRITE_COMMANDS].sort())
+  expect(Object.keys(cmds()).sort()).toEqual([...WRITE_COMMANDS, ...READ_COMMANDS].sort())
+  expect(AUDIT.restore!.skip!({ team: 'duo', dryRun: true })).toBe(true)
+  expect(AUDIT.restore!.skip!({ team: 'duo' })).toBe(false)
+})
 
 test.each([
   ['input', 1],

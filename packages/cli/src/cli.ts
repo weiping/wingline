@@ -3,10 +3,11 @@ import path from 'node:path'
 import type { Writable } from 'node:stream'
 import { Command, CommanderError } from 'commander'
 import {
-  READ_ONLY_CALLS, Registry, type CallLogOptions, WinglineError, attention, claimTask, createCallLog, createOrcaClient, createOrcaRunner, createTask, doneTask, down, escalateTask, exitCodeOf,
-  listStale, listTasks, parseDuration, planTask, ps, reassignTask, recoverTask, releaseTask, resolveGate, resolveOrcaExecutable, send, showTask, startTask,
+  READ_ONLY_CALLS, Registry, type CallLogOptions, WinglineError, attention, auditedCommands, claimTask, createCallLog, createOrcaClient, createOrcaRunner, createTask, doneTask, down, escalateTask, exitCodeOf,
+  listStale, listTasks, parseDuration, planTask, ps, reassignTask, recoverTask, releaseTask, resolveGate, resolveOrcaExecutable, restore, send, showTask, startTask,
   up, winglineHome, dispatcherUp, dispatcherDown, dispatcherStatus, dispatcherReply, freezePostCmd, unfreezePostCmd, hushCmd, unhushCmd, runDispatcherLoop, type CommandDeps,
 } from '@wingline/core'
+import { AUDIT } from './audit-table.js'
 import verified from './verified.json' with { type: 'json' }
 import {
   errorDoc, renderAttention, renderDispatcherDown, renderDispatcherStatus, renderDispatcherUp, renderUnfreeze, renderCreate, renderDone, renderDown, renderError, renderEscalate, renderList, renderPs, renderReassign, renderRecover, renderResolve,
@@ -24,6 +25,7 @@ export interface Commands {
   ps: typeof ps
   send: typeof send
   down: typeof down
+  restore: typeof restore
   createTask: typeof createTask
   listTasks: typeof listTasks
   listStale: typeof listStale
@@ -49,11 +51,13 @@ export interface Commands {
   attention: typeof attention
 }
 
-const realCommands: Commands = {
-  up, ps, send, down, createTask, listTasks, listStale, showTask, claimTask, releaseTask, reassignTask, startTask, planTask, doneTask,
+const rawCommands: Commands = {
+  up, ps, send, down, restore, createTask, listTasks, listStale, showTask, claimTask, releaseTask, reassignTask, startTask, planTask, doneTask,
   escalateTask, resolveGate, recoverTask, dispatcherUp, dispatcherDown, runDispatcherLoop, dispatcherStatus, freezePostCmd, unfreezePostCmd,
   hushCmd, unhushCmd, dispatcherReply, attention,
 }
+/** 表里登记过的写命令每执行一次写一行审计（spec 6.2）。 */
+const realCommands: Commands = auditedCommands(rawCommands, AUDIT)
 const splitList = (s: string | undefined) => s?.split(',').filter(Boolean)
 /** done：通过 0；gate 失败/转人工/绕过后补跑失败 1。 */
 const exitCodeOfDone = (r: { outcome: string }) => (r.outcome === 'done' ? 0 : 1)
