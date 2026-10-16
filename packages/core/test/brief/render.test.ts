@@ -14,6 +14,7 @@ const spec: TeamSpec = {
     { id: 'checker', agent: 'codex', launch: 'codex', worktree: 'current', briefPaths: ['/t/briefs/c1.md', '/t/briefs/c2.md'], ...postDefaults },
   ],
   budgets: { task: { maxGateFailures: 3, gateTimeoutSeconds: 600, maxMinutes: null } },
+  patrol: { noProgressMinutes: 20, promptMinutes: 5, ownerIdleMinutes: 30, postFailureStreak: 3, freezeLead: false, autoRecover: false, worktreeComment: false, notify: null },
   dir: '/t',
   specPath: '/t/team.yaml',
 }

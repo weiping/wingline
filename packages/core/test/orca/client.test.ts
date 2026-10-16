@@ -55,8 +55,8 @@ test('terminalList asks for visual layouts and resolves each terminal title from
     },
   })
   expect(await client.terminalList({ worktree: 'w' })).toEqual([
-    { handle: 'h1', title: 'builder@duo', connected: true, worktreeId: 'w' },
-    { handle: 'h2', title: 'checker@duo', connected: false, worktreeId: 'w' },
+    { handle: 'h1', title: 'builder@duo', connected: true, worktreeId: 'w', lastOutputAt: null },
+    { handle: 'h2', title: 'checker@duo', connected: false, worktreeId: 'w', lastOutputAt: null },
   ])
   expect(calls[0]).toEqual(['terminal', 'list', '--include-visual-layouts', '--worktree', 'w'])
 })
@@ -220,4 +220,59 @@ test('runCreate / dispatch / gateCreate omit --retry-request when not given', as
   await client.gateCreate({ task: 't', question: 'q', from: 'c' })
   for (const c of calls) expect(c).not.toContain('--retry-request')
   expect(calls[1]).not.toContain('--inject')
+})
+
+test('check builds argv (ack before wait) and maps every field', async () => {
+  const { client, calls } = clientWith({ 'orchestration check': {
+    runId: 'run-1', deliveryId: 'dlv-2', count: 1, replayed: false, acknowledged: 'dlv-1', timedOut: false, cancelled: false, connectionLost: false,
+    messages: [{ id: 'msg-1', type: 'question', from_handle: 'dispatch:ctx-1', subject: 's', body: 'b', payload: '{"x":1}', thread_id: 'msg-1', created_at: 'T' }],
+  } })
+  expect(await client.check({ terminal: 'term-dsp', run: 'run-1', ack: 'dlv-1', wait: true, timeoutMs: 60000 })).toEqual({
+    deliveryId: 'dlv-2', count: 1, replayed: false, acknowledged: 'dlv-1', timedOut: false, cancelled: false, connectionLost: false,
+    messages: [{ id: 'msg-1', type: 'question', fromHandle: 'dispatch:ctx-1', subject: 's', body: 'b', payload: '{"x":1}', threadId: 'msg-1', createdAt: 'T' }],
+  })
+  expect(calls[0]).toEqual(['orchestration', 'check', '--terminal', 'term-dsp', '--run', 'run-1', '--ack', 'dlv-1', '--wait', '--timeout-ms', '60000'])
+})
+
+test('check defaults missing fields; --wait gets a process timeout with slack, a plain check does not', async () => {
+  const { client, opts } = clientWith({ 'orchestration check': { deliveryId: null, messages: [{ id: 'm1', type: 'worker_done' }] } })
+  const r = await client.check({ terminal: 't', run: 'r', wait: true, timeoutMs: 60_000 })
+  expect(r).toMatchObject({ count: 1, replayed: false, timedOut: false, cancelled: false, connectionLost: false, acknowledged: null })
+  expect(r.messages[0]).toEqual({ id: 'm1', type: 'worker_done', fromHandle: null, subject: null, body: null, payload: null, threadId: null, createdAt: null })
+  expect(opts[0]).toEqual({ timeoutMs: 60_000 + 15_000 })
+  await client.check({ terminal: 't', run: 'r' })
+  expect(opts[1]).toBeUndefined()
+})
+
+test('check --wait without timeoutMs defaults the process timeout to 60s plus slack', async () => {
+  const { client, opts } = clientWith({ 'orchestration check': { messages: [] } })
+  await client.check({ terminal: 't', run: 'r', wait: true })
+  expect(opts[0]).toEqual({ timeoutMs: 60_000 + 15_000 })
+})
+
+test('reply / workerList / worktreeSet argv and mapping', async () => {
+  const { client, calls } = clientWith({
+    'orchestration reply': { message: { id: 'msg-9' }, duplicate: false },
+    'orchestration worker-list': { workers: [{ dispatchId: 'ctx-1', taskId: 't1', agentTerminalHandle: 'h', dispatchStatus: 'dispatched', projection: { attention: { categories: ['input'] }, liveness: { verdict: 'live' } } }] },
+    'worktree set': { worktree: {} },
+  })
+  expect(await client.reply({ id: 'msg-1', body: '用 a', run: 'run-1', from: 'coord' })).toEqual({ messageId: 'msg-9', duplicate: false })
+  expect(calls[0]).toEqual(['orchestration', 'reply', '--id', 'msg-1', '--body', '用 a', '--run', 'run-1', '--from', 'coord'])
+  expect(await client.workerList({ run: 'run-1' })).toEqual([{ dispatchId: 'ctx-1', taskId: 't1', terminalHandle: 'h', dispatchStatus: 'dispatched', attention: ['input'], liveness: 'live' }])
+  expect(calls[1]).toEqual(['orchestration', 'worker-list', '--run', 'run-1'])
+  await client.worktreeSet({ worktree: 'id:w', comment: 'c' })
+  expect(calls[2]).toEqual(['worktree', 'set', '--worktree', 'id:w', '--comment', 'c'])
+})
+
+test('workerList tolerates a worker without projection', async () => {
+  const { client } = clientWith({ 'orchestration worker-list': { workers: [{ dispatchId: 'ctx-1', taskId: 't1', dispatchStatus: 'dispatched' }] } })
+  expect(await client.workerList({ run: 'r' })).toEqual([{ dispatchId: 'ctx-1', taskId: 't1', terminalHandle: null, dispatchStatus: 'dispatched', attention: [], liveness: null }])
+})
+
+test('terminalList maps lastOutputAt (a number), defaulting to null', async () => {
+  const { client } = clientWith({ 'terminal list': { terminals: [
+    { handle: 'a', tabId: 't1', title: 'x', connected: true, worktreeId: 'w', lastOutputAt: 1791941667225 },
+    { handle: 'b', tabId: 't2', title: 'y', connected: true, worktreeId: 'w' },
+  ] } })
+  expect((await client.terminalList()).map((t) => t.lastOutputAt)).toEqual([1791941667225, null])
 })

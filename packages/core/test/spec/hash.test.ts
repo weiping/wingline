@@ -62,3 +62,28 @@ test('B-M9: consults participates in the spec hash (spec §4: the new fields all
   const withConsults = specHash(loadTeamSpec(mkTeam(DUO_YAML + 'links:\n  builder:\n    consults: [checker]\n')))
   expect(withConsults).not.toBe(base)
 })
+
+test('patrol settings participate in the hash', () => {
+  const a = specHash(loadTeamSpec(mkTeam(DUO_YAML)))
+  expect(specHash(loadTeamSpec(mkTeam(DUO_YAML + 'patrol:\n  no_progress_minutes: 7\n')))).not.toBe(a)
+})
+
+test('final-review I1: a team without a patrol section keeps exactly its 2A-era hash', () => {
+  // 在加入 patrol 之前的提交上算出的 DUO_YAML 哈希；patrol 全是默认值时不得改变它
+  expect(specHash(loadTeamSpec(mkTeam(DUO_YAML)))).toBe('d6cf0b333ae8418f9fe51eced88cc223e889ebcdf2f6278c633fc37fbb2dc00c')
+  expect(specHash(loadTeamSpec(mkTeam(DUO_YAML + 'patrol: {}\n')))).toBe(specHash(loadTeamSpec(mkTeam(DUO_YAML))))
+  expect(specHash(loadTeamSpec(mkTeam(DUO_YAML + 'patrol:\n  no_progress_minutes: 20\n')))).toBe(specHash(loadTeamSpec(mkTeam(DUO_YAML))))
+})
+
+test('final-review I1: a non-default patrol value changes the hash', () => {
+  const base = specHash(loadTeamSpec(mkTeam(DUO_YAML)))
+  const a = specHash(loadTeamSpec(mkTeam(DUO_YAML + 'patrol:\n  no_progress_minutes: 45\n')))
+  const b = specHash(loadTeamSpec(mkTeam(DUO_YAML + 'patrol:\n  freeze_lead: true\n')))
+  const c = specHash(loadTeamSpec(mkTeam(DUO_YAML + 'patrol:\n  notify:\n    webhook: https://example.com/h\n')))
+  expect(new Set([base, a, b, c]).size).toBe(4)
+})
+
+test('DEFAULT_PATROL matches what the schema fills in', async () => {
+  const { DEFAULT_PATROL } = await import('../../src/spec/load.js')
+  expect(loadTeamSpec(mkTeam(DUO_YAML)).patrol).toEqual(DEFAULT_PATROL)
+})

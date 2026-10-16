@@ -4,7 +4,7 @@ import type { CommandDeps } from '../deps.js'
 import { locatePost } from '../locate.js'
 import { shellQuote } from './quote.js'
 import { announce, bumpRound, dispatchTo, type Delivery } from './dispatch.js'
-import { isPostFrozen } from './frozen.js'
+import { frozenError, isPostFrozen } from './frozen.js'
 import { resolveActor } from './identity.js'
 import { ledgered, oneShot } from './ledger.js'
 import { logTask } from './log.js'
@@ -58,7 +58,7 @@ export async function resolveGate(
   if (a.reassign && !spec.posts.some((p) => `${p.id}@${gate.team}` === a.reassign)) {
     throw fail('post_unknown', `${a.reassign} 不是团队 ${gate.team} 的岗位`)
   }
-  if (a.reassign && isPostFrozen(deps, a.reassign)) throw fail('post_frozen', `岗位 ${a.reassign} 已冻结`)
+  if (a.reassign && isPostFrozen(deps, a.reassign)) throw frozenError(a.reassign)
   const actor = await resolveActor(deps, a.as)
   await ledgered(deps, {
     key: `resolve:${a.gateId}`,

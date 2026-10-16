@@ -1,6 +1,7 @@
 import { WinglineError } from '../../errors.js'
-import type { OrchestrationTaskStatus } from '../../orca/types.js'
+import type { OrchestrationTaskStatus, TerminalSummary } from '../../orca/types.js'
 import type { DoneVerdictRow, RequestState, TaskKind, TaskLogRow, TeamRow } from '../../registry/registry.js'
+import { loadTeamSpec } from '../../spec/load.js'
 import type { CommandDeps } from '../deps.js'
 import { requireActor } from './identity.js'
 import { shellQuote } from './quote.js'
@@ -262,9 +263,13 @@ export function staleReasons(input: StaleInput, now: Date, th: StaleThresholds =
 }
 
 /** 一次 taskList + 一次 terminalList + 本地表。 */
-export async function gatherStaleInput(deps: CommandDeps, team: string): Promise<StaleInput> {
-  const tasks = await fetchTasks(deps, team)
-  const alive = new Set((await deps.orca.terminalList()).map((t) => t.handle))
+export async function gatherStaleInput(
+  deps: CommandDeps,
+  team: string,
+  pre?: { tasks: TaskRow[]; terminals: TerminalSummary[] },
+): Promise<StaleInput> {
+  const tasks = pre?.tasks ?? (await fetchTasks(deps, team))
+  const alive = new Set((pre?.terminals ?? (await deps.orca.terminalList())).map((t) => t.handle))
   const verdicts = new Map<string, DoneVerdictRow[]>()
   for (const t of tasks) if (t.status === 'completed' || t.status === 'failed') verdicts.set(t.id, deps.registry.listVerdictsOf(t.id))
   return {
@@ -275,13 +280,25 @@ export async function gatherStaleInput(deps: CommandDeps, team: string): Promise
   }
 }
 
+/** 阈值取自团队规格的 patrol 段；规格读不到时用默认值（扫描不因规格问题失败）。 */
+function thresholdsFor(deps: CommandDeps, team: string): StaleThresholds {
+  const row = deps.registry.getTeam(team)
+  if (!row) return DEFAULT_STALE
+  try {
+    return { ...DEFAULT_STALE, ownerIdleMinutes: loadTeamSpec(row.specPath).patrol.ownerIdleMinutes }
+  } catch (err) {
+    if (!(err instanceof WinglineError)) throw err
+    return DEFAULT_STALE
+  }
+}
+
 /** 不给团队时扫描所有有 Run 的团队；某个团队扫描失败只告警，不影响其他团队。 */
 export async function listStale(deps: CommandDeps, team?: string): Promise<StaleItem[]> {
-  if (team) return staleReasons(await gatherStaleInput(deps, team), deps.now())
+  if (team) return staleReasons(await gatherStaleInput(deps, team), deps.now(), thresholdsFor(deps, team))
   const items: StaleItem[] = []
   for (const t of deps.registry.listTeams().filter((x) => x.runId)) {
     try {
-      items.push(...staleReasons(await gatherStaleInput(deps, t.name), deps.now()))
+      items.push(...staleReasons(await gatherStaleInput(deps, t.name), deps.now(), thresholdsFor(deps, t.name)))
     } catch (err) {
       if (!(err instanceof WinglineError)) throw err
       deps.warn(`团队 ${t.name} 的卡住任务扫描失败：${err.message}`)

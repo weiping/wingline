@@ -1,7 +1,7 @@
 import { WinglineError } from '../../errors.js'
 import type { CommandDeps } from '../deps.js'
 import { announce, dispatchTo, type Delivery } from './dispatch.js'
-import { isPostFrozen } from './frozen.js'
+import { frozenError, isPostFrozen } from './frozen.js'
 import { isOwnTerminal, requireActor, resolveHandle } from './identity.js'
 import { taskPreflight } from './preflight.js'
 import { findTask, type TaskRow } from './query.js'
@@ -22,6 +22,7 @@ export async function startTask(deps: CommandDeps, a: { id: string; as?: string 
   if (task.claimedBy !== actor.address) throw fail('not_claimed_by_you', `任务 ${a.id} 不是 ${actor.address} 认领的`)
   const post = spec.posts.find((p) => `${p.id}@${team}` === actor.address)
   if (!post) throw fail('post_unknown', `${actor.address} 不是团队 ${team} 的岗位`)
+  if (isPostFrozen(deps, actor.address)) throw frozenError(actor.address)
   if (post.planFirst && !task.plan) throw fail('plan_required', `岗位 ${actor.address} 要求先写计划`, `wl task plan ${a.id} "<计划>"`)
   const handle = await resolveHandle(deps, actor)
   if (task.status === 'dispatched' && task.assigneeHandle === handle) {
@@ -29,7 +30,6 @@ export async function startTask(deps: CommandDeps, a: { id: string; as?: string 
     return { delivery: isOwnTerminal(deps, handle) ? 'self' : 'not_notified', already: true }
   }
   if (task.status !== 'ready') throw fail('task_not_open', `任务 ${a.id} 状态为 ${task.status}，不能开始`)
-  if (isPostFrozen(deps, actor.address)) throw fail('post_frozen', `岗位 ${actor.address} 已冻结`)
   const target = { address: actor.address, handle }
   const d = await dispatchTo(deps, team, a.id, target)
   if (d.status === 'queued') {

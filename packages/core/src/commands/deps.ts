@@ -12,8 +12,12 @@ export interface CommandDeps {
   /** 经 Windows .cmd 包装时为 false：换行无法安全传递。 */
   multilineSafe: boolean
   home: string
+  /** Orca 可执行文件路径（经 .cmd 包装时是 .cmd 本身）；调度员启动命令显式带上它。 */
+  orcaPath: string
   env: NodeJS.ProcessEnv
   now: () => Date
+  /** 单调时钟（毫秒）；机器睡眠不推进它，用来区分"真的静默"与"睡过头"。 */
+  monotonic: () => number
 }
 
 export type Step = 'create' | 'wait' | 'brief' | 'send' | 'close'

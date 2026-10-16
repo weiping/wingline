@@ -27,3 +27,13 @@ test('path() is today\'s file', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wl-log-'))
   expect(createCallLog(dir, () => new Date('2026-10-13T10:00:00Z')).path()).toBe(path.join(dir, '2026-10-13.jsonl'))
 })
+
+test('summarized calls keep argv, timing and exit code but not stdout', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wl-log-'))
+  const log = createCallLog(dir, () => new Date('2026-10-15T00:00:00Z'), { summarize: (a) => a[1] === 'check' })
+  log.record({ args: ['orchestration', 'check'], ms: 3, exitCode: 0, stdout: 'x'.repeat(100), stderr: '' })
+  log.record({ args: ['orchestration', 'dispatch'], ms: 3, exitCode: 0, stdout: 'receipt', stderr: '' })
+  const lines = fs.readFileSync(log.path(), 'utf8').trim().split('\n').map((l) => JSON.parse(l))
+  expect(lines[0]).toMatchObject({ args: ['orchestration', 'check'], stdoutBytes: 100 }); expect(lines[0].stdout).toBeUndefined()
+  expect(lines[1].stdout).toBe('receipt')
+})

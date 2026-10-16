@@ -8,6 +8,7 @@ import { oneShot } from './ledger.js'
 import { logTask } from './log.js'
 import type { NotifyResult } from './notify.js'
 import { taskPreflight } from './preflight.js'
+import { frozenError, isPostFrozen } from './frozen.js'
 
 export interface CreateArgs {
   team: string
@@ -88,6 +89,7 @@ export async function createTask(deps: CommandDeps, a: CreateArgs): Promise<{ id
   if (a.post && !spec.posts.some((p) => `${p.id}@${a.team}` === a.post)) {
     throw new WinglineError('input', 'post_unknown', `${a.post} 不是团队 ${a.team} 的岗位`)
   }
+  if (a.post && isPostFrozen(deps, a.post)) throw frozenError(a.post)
   if (a.post) await resolveHandle(deps, { address: a.post, explicit: true })
   const actor = await resolveActor(deps, a.as)
   const id = a.retryRequest ?? randomUUID()

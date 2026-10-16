@@ -5,7 +5,7 @@ import { logTask } from './log.js'
 import { neutralize, notifyPost, type NotifyResult } from './notify.js'
 import { preflightTask, taskPreflight } from './preflight.js'
 import { findTask, type TaskRow } from './query.js'
-import { isPostFrozen } from './frozen.js'
+import { frozenError, isPostFrozen } from './frozen.js'
 
 const teamOfAddress = (address: string) => address.slice(address.indexOf('@') + 1)
 const fail = (code: string, message: string, hint?: string) => new WinglineError('input', code, message, { hint })
@@ -20,6 +20,7 @@ export async function claimTask(deps: CommandDeps, a: { id: string; as?: string 
   const { spec } = await taskPreflight(deps, team)
   const post = spec.posts.find((p) => `${p.id}@${team}` === actor.address)
   if (!post) throw fail('post_unknown', `${actor.address} 不是团队 ${team} 的岗位`)
+  if (isPostFrozen(deps, actor.address)) throw frozenError(actor.address)
   if (!post.selfClaim) throw fail('self_claim_disabled', `岗位 ${actor.address} 没有开启 self_claim`, '在 team.yaml 里给该岗位加 self_claim: true')
   await deps.registry.withTeamLock(team, async () => {
     const task = await findTask(deps, team, a.id)
@@ -54,7 +55,7 @@ export async function releaseTask(deps: CommandDeps, a: { id: string; as?: strin
 export async function reassignTask(deps: CommandDeps, a: { id: string; to: string; as?: string }): Promise<{ notify: NotifyResult }> {
   const { team: row, task, spec } = await preflightTask(deps, a.id)
   if (!spec.posts.some((p) => `${p.id}@${row.name}` === a.to)) throw fail('post_unknown', `${a.to} 不是团队 ${row.name} 的岗位`)
-  if (isPostFrozen(deps, a.to)) throw fail('post_frozen', `岗位 ${a.to} 已冻结`)
+  if (isPostFrozen(deps, a.to)) throw frozenError(a.to)
   const actor = await resolveActor(deps, a.as)
   await deps.registry.withTeamLock(row.name, async () => {
     const now = await findTask(deps, row.name, a.id)

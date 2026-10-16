@@ -156,3 +156,20 @@ test('an empty reviewed_by next to a hands_to is not a conflict (nothing is revi
   const y = DUO_YAML + 'links:\n  builder:\n    reviewed_by: []\n    hands_to: [checker]\n'
   expect(() => loadTeamSpec(mkTeam(y))).not.toThrow()
 })
+
+test('patrol defaults; custom values parse', () => {
+  expect(loadTeamSpec(mkTeam(DUO_YAML)).patrol).toEqual({ noProgressMinutes: 20, promptMinutes: 5, ownerIdleMinutes: 30, postFailureStreak: 3, freezeLead: false, autoRecover: false, worktreeComment: false, notify: null })
+  const y = DUO_YAML + 'patrol:\n  no_progress_minutes: 5\n  freeze_lead: true\n  notify:\n    webhook: https://example.invalid/h\n'
+  expect(loadTeamSpec(mkTeam(y)).patrol).toMatchObject({ noProgressMinutes: 5, freezeLead: true, notify: { webhook: 'https://example.invalid/h' } })
+  expect(loadTeamSpec(mkTeam(DUO_YAML + "patrol:\n  notify:\n    command: ['/usr/bin/notify', '-m']\n")).patrol.notify).toEqual({ command: ['/usr/bin/notify', '-m'] })
+})
+test('patrol.notify: both or neither of webhook/command → notify_conflict; a non-http URL is rejected', () => {
+  expect(() => loadTeamSpec(mkTeam(DUO_YAML + "patrol:\n  notify:\n    webhook: https://a\n    command: ['x']\n"))).toThrow(expect.objectContaining({ code: 'notify_conflict' }))
+  expect(() => loadTeamSpec(mkTeam(DUO_YAML + 'patrol:\n  notify: {}\n'))).toThrow(expect.objectContaining({ code: 'notify_conflict' }))
+  expect(() => loadTeamSpec(mkTeam(DUO_YAML + 'patrol:\n  notify:\n    webhook: file:///etc/passwd\n'))).toThrow()
+})
+test('on Windows a .cmd/.bat notify command → notify_command_unsupported', () => {
+  const y = DUO_YAML + "patrol:\n  notify:\n    command: ['C:\\\\tools\\\\toast.cmd']\n"
+  expect(() => loadTeamSpec(mkTeam(y), { platform: 'win32' })).toThrow(expect.objectContaining({ code: 'notify_command_unsupported' }))
+  expect(() => loadTeamSpec(mkTeam(y), { platform: 'linux' })).not.toThrow()
+})

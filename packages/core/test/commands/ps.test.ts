@@ -54,3 +54,11 @@ test('ps preflights: unreachable orca is an error', async () => {
   o.reachable = false
   await expect(ps(seeded(o).deps, {})).rejects.toMatchObject({ code: 'runtime_unavailable' })
 })
+
+test('ps shows the dispatcher state when one was ever started', async () => {
+  const o = new FakeOrca()
+  const { deps, registry } = seeded(o)
+  expect((await ps(deps, {}))[0]!.dispatcher).toBeUndefined()
+  registry.appendPatrolEvent({ team: 'duo', action: 'wake' })
+  expect((await ps(deps, {}))[0]!.dispatcher).toMatchObject({ state: 'stopped' })
+})

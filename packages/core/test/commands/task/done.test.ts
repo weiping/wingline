@@ -370,3 +370,12 @@ test('only a successful report precedes links: a failed report (rejection) creat
   expect(o.callsOf('taskCreate')).toEqual([])
   expect(gateRuns()).toBe(0)
 })
+test('reviewed_by a frozen checker: child created and owned by checker, not dispatched, skipped_frozen; frozen beats offline', async () => {
+  const { o, deps, registry, id } = await dispatched(REVIEW)
+  registry.freezePost({ post: 'checker@duo', team: 'duo', reason: 'test' })
+  o.terminals = o.terminals.filter((t) => t.title !== 'checker@duo')
+  const r = await doneTask(deps, { id })
+  expect(r.linkedTasks).toEqual([{ target: 'checker@duo', taskId: expect.any(String), delivery: 'skipped_frozen' }])
+  expect(registry.getTaskExt(r.linkedTasks![0]!.taskId)!.claimedBy).toBe('checker@duo')
+  expect(o.callsOf('dispatch')).toEqual([])
+})

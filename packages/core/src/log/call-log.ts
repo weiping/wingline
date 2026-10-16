@@ -27,7 +27,8 @@ function redact(args: string[]): string[] {
   return args.map((a, i) => (MESSAGE_FLAGS.has(args[i - 1] ?? '') ? a.slice(0, MESSAGE_LIMIT) : a))
 }
 
-function prune(dir: string, now: Date): void {
+/** 删除 7 天前的日志文件；调度员每天调用一次。 */
+export function pruneCallLogs(dir: string, now: Date): void {
   const cutoff = dayOf(new Date(now.getTime() - KEEP_DAYS * DAY_MS))
   for (const f of fs.readdirSync(dir)) {
     const m = /^(\d{4}-\d{2}-\d{2})\.jsonl$/.exec(f)
@@ -35,21 +36,33 @@ function prune(dir: string, now: Date): void {
   }
 }
 
-export function createCallLog(dir: string, now: () => Date = () => new Date()): CallLog {
+/** 摘要行里保留的信息：回执的 ok、错误码、消息/任务条数（回执不是合法 JSON 时什么也不加）。 */
+function receiptSummary(stdout: string): Record<string, unknown> {
+  try {
+    const env = JSON.parse(stdout) as { ok?: boolean; error?: { code?: string }; result?: { count?: number; messages?: unknown[] } }
+    const count = env.result?.count ?? env.result?.messages?.length
+    return { ok: env.ok, ...(env.error?.code ? { errorCode: env.error.code } : {}), ...(count === undefined ? {} : { count }) }
+  } catch {
+    return {}
+  }
+}
+
+export interface CallLogOptions {
+  /** 为真时这一行只记 args/ms/exitCode/stdoutBytes（只读轮询，避免一天上千条完整回执）；失败时仍保留 stderr。 */
+  summarize?: (args: string[]) => boolean
+}
+
+export function createCallLog(dir: string, now: () => Date = () => new Date(), o: CallLogOptions = {}): CallLog {
   fs.mkdirSync(dir, { recursive: true })
-  prune(dir, now())
+  pruneCallLogs(dir, now())
   const file = () => path.join(dir, `${dayOf(now())}.jsonl`)
   return {
     path: file,
     record(e) {
-      const line = {
-        at: now().toISOString(),
-        args: redact(e.args),
-        ms: e.ms,
-        exitCode: e.exitCode,
-        stdout: e.stdout.slice(0, RECEIPT_LIMIT),
-        stderr: e.stderr.slice(0, RECEIPT_LIMIT),
-      }
+      const head = { at: now().toISOString(), args: redact(e.args), ms: e.ms, exitCode: e.exitCode }
+      const line = o.summarize?.(e.args)
+        ? { ...head, stdoutBytes: e.stdout.length, ...receiptSummary(e.stdout), ...(e.exitCode === 0 ? {} : { stderr: e.stderr.slice(0, RECEIPT_LIMIT) }) }
+        : { ...head, stdout: e.stdout.slice(0, RECEIPT_LIMIT), stderr: e.stderr.slice(0, RECEIPT_LIMIT) }
       fs.appendFileSync(file(), JSON.stringify(line) + '\n')
     },
   }

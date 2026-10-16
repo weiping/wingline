@@ -1,6 +1,6 @@
 import { WinglineError } from '../errors.js'
 import type { OrcaRunner } from './run.js'
-import type { OrcaClient, OrchestrationTask, RequestShowState, RunSummary, SendStage } from './types.js'
+import type { CheckMessage, CheckResult, OrcaClient, OrchestrationTask, RequestShowState, RunSummary, SendStage, WorkerView } from './types.js'
 
 /** terminal wait 自带超时；进程级超时多留一点余量，避免先于 Orca 自己的超时回执杀掉它。 */
 const WAIT_PROCESS_SLACK_MS = 15_000
@@ -11,6 +11,7 @@ interface RawTerminal {
   title: string | null
   connected: boolean
   worktreeId: string
+  lastOutputAt?: number | null
 }
 
 /** 递归收集布局树里所有标签页（带 tabId、title 和 panes 的对象）的自定义标题。 */
@@ -142,10 +143,99 @@ function gateAndViewMethods(runner: OrcaRunner): Pick<OrcaClient, 'gateCreate' |
   }
 }
 
+interface RawCheckMessage {
+  id: string
+  type: string
+  from_handle?: string | null
+  subject?: string | null
+  body?: string | null
+  payload?: string | null
+  thread_id?: string | null
+  created_at?: string | null
+}
+
+interface RawCheck {
+  deliveryId?: string | null
+  messages?: RawCheckMessage[]
+  count?: number
+  replayed?: boolean
+  acknowledged?: string | null
+  timedOut?: boolean
+  cancelled?: boolean
+  connectionLost?: boolean
+}
+
+interface RawWorker {
+  dispatchId: string
+  taskId: string
+  agentTerminalHandle?: string | null
+  dispatchStatus: string
+  projection?: { attention?: { categories?: string[] }; liveness?: { verdict?: string | null } }
+}
+
+const toCheckMessage = (m: RawCheckMessage): CheckMessage => ({
+  id: m.id,
+  type: m.type,
+  fromHandle: m.from_handle ?? null,
+  subject: m.subject ?? null,
+  body: m.body ?? null,
+  payload: m.payload ?? null,
+  threadId: m.thread_id ?? null,
+  createdAt: m.created_at ?? null,
+})
+
+function inboxMethods(runner: OrcaRunner): Pick<OrcaClient, 'check' | 'reply' | 'workerList' | 'worktreeSet'> {
+  return {
+    async check(a): Promise<CheckResult> {
+      const args = [
+        'orchestration', 'check', '--terminal', a.terminal, '--run', a.run,
+        ...(a.ack !== undefined ? ['--ack', a.ack] : []),
+        ...(a.wait ? ['--wait'] : []),
+        ...(a.timeoutMs !== undefined ? ['--timeout-ms', String(a.timeoutMs)] : []),
+      ]
+      const r = a.wait
+        ? await runner.json<RawCheck>(args, { timeoutMs: (a.timeoutMs ?? 60_000) + WAIT_PROCESS_SLACK_MS })
+        : await runner.json<RawCheck>(args)
+      const messages = (r.messages ?? []).map(toCheckMessage)
+      return {
+        deliveryId: r.deliveryId ?? null,
+        messages,
+        count: r.count ?? messages.length,
+        replayed: r.replayed ?? false,
+        acknowledged: r.acknowledged ?? null,
+        timedOut: r.timedOut ?? false,
+        cancelled: r.cancelled ?? false,
+        connectionLost: r.connectionLost ?? false,
+      }
+    },
+    async reply(a) {
+      const r = await runner.json<{ message: { id: string }; duplicate?: boolean }>([
+        'orchestration', 'reply', '--id', a.id, '--body', a.body, '--run', a.run, '--from', a.from,
+      ])
+      return { messageId: r.message.id, duplicate: r.duplicate ?? false }
+    },
+    async workerList(a): Promise<WorkerView[]> {
+      const r = await runner.json<{ workers: RawWorker[] }>(['orchestration', 'worker-list', '--run', a.run])
+      return r.workers.map((w) => ({
+        dispatchId: w.dispatchId,
+        taskId: w.taskId,
+        terminalHandle: w.agentTerminalHandle ?? null,
+        dispatchStatus: w.dispatchStatus,
+        attention: w.projection?.attention?.categories ?? [],
+        liveness: w.projection?.liveness?.verdict ?? null,
+      }))
+    },
+    async worktreeSet(a) {
+      await runner.json(['worktree', 'set', '--worktree', a.worktree, '--comment', a.comment])
+    },
+  }
+}
+
 const orchestrationMethods = (runner: OrcaRunner): OrchestrationMethods => ({
   ...runMethods(runner),
   ...taskMethods(runner),
   ...gateAndViewMethods(runner),
+  ...inboxMethods(runner),
 })
 
 type TerminalMethods = Pick<OrcaClient, 'terminalList' | 'terminalCreate' | 'terminalWait' | 'terminalSend' | 'terminalClose'>
@@ -159,7 +249,7 @@ function terminalMethods(runner: OrcaRunner): TerminalMethods {
       const r = await runner.json<{ terminals: RawTerminal[]; visualLayouts?: unknown[] }>(args)
       const titles = tabTitles(r.visualLayouts ?? [])
       return r.terminals.map((t) => ({
-        handle: t.handle, title: titles.get(t.tabId) ?? t.title, connected: t.connected, worktreeId: t.worktreeId,
+        handle: t.handle, title: titles.get(t.tabId) ?? t.title, connected: t.connected, worktreeId: t.worktreeId, lastOutputAt: t.lastOutputAt ?? null,
       }))
     },
 

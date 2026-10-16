@@ -90,9 +90,9 @@ export async function gateCwd(deps: CommandDeps, address: string): Promise<strin
 }
 
 /** 清理候选可能在列出之后被别的进程删掉：stat 不到就当没有。 */
-function isStale(file: string): boolean {
+function isStale(file: string, now: Date): boolean {
   try {
-    return Date.now() - fs.statSync(file).mtimeMs > WEEK_MS
+    return now.getTime() - fs.statSync(file).mtimeMs > WEEK_MS
   } catch {
     return false
   }
@@ -103,14 +103,20 @@ export const GATE_BODY_LIMIT = 4000
 export const gateOutputPath = (home: string, team: string, taskId: string, epoch: number, n: number): string =>
   path.join(home, 'logs', team, `gate-${taskId}-${epoch}-${n}.txt`)
 
-/** 写 <home>/logs/<team>/gate-<task>-<epoch>-<n>.txt，写之前删除同目录 7 天前的 gate-*.txt；返回路径。 */
-export function writeGateOutput(home: string, team: string, taskId: string, epoch: number, n: number, output: string): string {
+/** 删除 <home>/logs/<team>/ 下 7 天前的 gate-*.txt。 */
+export function pruneGateOutputs(home: string, team: string, now: Date): void {
   const dir = path.join(home, 'logs', team)
-  fs.mkdirSync(dir, { recursive: true })
+  if (!fs.existsSync(dir)) return
   for (const name of fs.readdirSync(dir)) {
     const file = path.join(dir, name)
-    if (/^gate-.*\.txt$/.test(name) && isStale(file)) fs.rmSync(file, { force: true })
+    if (/^gate-.*\.txt$/.test(name) && isStale(file, now)) fs.rmSync(file, { force: true })
   }
+}
+
+/** 写 <home>/logs/<team>/gate-<task>-<epoch>-<n>.txt，写之前清理 7 天前的旧输出；返回路径。 */
+export function writeGateOutput(home: string, team: string, taskId: string, epoch: number, n: number, output: string): string {
+  fs.mkdirSync(path.join(home, 'logs', team), { recursive: true })
+  pruneGateOutputs(home, team, new Date())
   const file = gateOutputPath(home, team, taskId, epoch, n)
   fs.writeFileSync(file, output)
   return file
