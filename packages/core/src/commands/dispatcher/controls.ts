@@ -41,11 +41,12 @@ async function stillReady(deps: CommandDeps, team: string, ids: string[]): Promi
 /** 解冻：先重置巡查行与游标，最后删冻结行（中途崩溃仍是冻结状态，可重跑）。 */
 export async function unfreezePostCmd(deps: CommandDeps, a: { address: string }): Promise<{ skipped: Array<{ taskId: string; command: string }> }> {
   const team = knownPost(deps, a.address)
-  if (!deps.registry.getFrozen(a.address)) throw new WinglineError('input', 'post_not_frozen', `岗位 ${a.address} 没有被冻结`)
+  const frozen = deps.registry.getFrozen(a.address)
+  if (!frozen) throw new WinglineError('input', 'post_not_frozen', `岗位 ${a.address} 没有被冻结`)
   const at = deps.now().toISOString()
   deps.registry.resetPatrolForPost(a.address, at)
   deps.registry.setCursor(team, a.address, at)
-  const skipped = deps.registry.listDeliveries(a.address).filter((d) => d.delivery === 'skipped_frozen')
+  const skipped = deps.registry.listDeliveries(a.address, frozen.frozenAt).filter((d) => d.delivery === 'skipped_frozen')
   const ready = await stillReady(deps, team, skipped.map((d) => d.taskId))
   deps.registry.unfreezePost(a.address)
   deps.registry.appendPatrolEvent({ team, post: a.address, action: 'unfreeze', outcome: 'ok' })

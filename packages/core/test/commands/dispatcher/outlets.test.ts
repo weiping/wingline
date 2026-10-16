@@ -50,6 +50,14 @@ test('notifyHuman command: spawned without a shell, the message is the last argu
   expect((await notifyHuman(deps, ctxOf(deps, y), { post: 'builder@duo', signal: 's', level: 2, message: 'a "b" $HOME 中文' })).external).toBe('ok')
   expect(fs.readFileSync(out, 'utf8')).toBe('a "b" $HOME 中文')
 })
+test('final-review m9: a synchronously throwing spawn is a failed outlet, not a rejection', async () => {
+  const o = new FakeOrca(); const { deps, registry } = seedRunningTeam(o)
+  const y = DUO_YAML + "patrol:\n  notify:\n    command: ['/no/such/bin']\n"
+  const spawn = (() => { throw new Error('EACCES') }) as unknown as typeof import('node:child_process').spawn
+  const r = await notifyHuman(deps, ctxOf(deps, y), { post: 'builder@duo', signal: 's', level: 2, message: 'm' }, { spawn })
+  expect(r.external).toBe('failed')
+  expect(registry.listPatrolEvents('duo').filter((e) => e.action === 'notify')).toHaveLength(1)
+})
 test('worktreeComment only when enabled; failures are swallowed', async () => {
   const o = new FakeOrca(); const { deps } = seedRunningTeam(o)
   await worktreeComment(deps, ctxOf(deps), 'checker@duo', 'c')

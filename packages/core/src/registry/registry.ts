@@ -730,11 +730,11 @@ export class Registry {
   }
 
   /** 2A done 写下的交付记录（requests 里 done:%:delivered:<target> 且 done 的行）。 */
-  listDeliveries(target: string): Array<{ key: string; target: string; taskId: string; delivery: string }> {
+  listDeliveries(target: string, since?: string): Array<{ key: string; target: string; taskId: string; delivery: string; at: string }> {
     const rows = this.db
-      .prepare("SELECT id, receipt FROM requests WHERE state = 'done' AND id LIKE 'done:%:delivered:' || ? ORDER BY updated_at, id")
-      .all(target) as Row[]
-    return rows.map((r) => ({ key: r.id as string, ...(JSON.parse(r.receipt as string) as { target: string; taskId: string; delivery: string }) }))
+      .prepare("SELECT id, receipt, updated_at FROM requests WHERE state = 'done' AND id LIKE 'done:%:delivered:' || ? AND updated_at >= ? ORDER BY updated_at, id")
+      .all(target, since ?? '') as Row[]
+    return rows.map((r) => ({ key: r.id as string, at: r.updated_at as string, ...(JSON.parse(r.receipt as string) as { target: string; taskId: string; delivery: string }) }))
   }
 
   close(): void {

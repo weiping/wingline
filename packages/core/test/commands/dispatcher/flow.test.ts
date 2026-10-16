@@ -82,6 +82,9 @@ test('a lead stuck in a one-post team is never "notified about itself" and is no
   await createTask(deps, { team: 'solo', title: 't', post: 'builder@solo' })
   for (let i = 0; i < 10; i++) { c.advance(PATROL_INTERVAL_MS); await loopOnce(dsp, 'term-dsp', st, { sleep, waitMs: 1, io: { fetch: hook as unknown as typeof fetch } }) }
   expect(registry.getFrozen('builder@solo')).toBeNull()
-  expect(o.sent.filter((s) => s.text.includes('请关注') || s.text.includes('已冻结'))).toEqual([])
+  // 通知文案以 `[雁阵] <岗位地址>` 开头；单岗位团队里牵头岗就是该岗位，不得收到这类通知
+  expect(o.sent.filter((s) => s.text.startsWith('[雁阵] builder@solo'))).toEqual([])
+  expect(registry.listPatrolEvents('solo').filter((e) => e.action === 'notify_lead')).toEqual([])
+  expect(registry.listPatrolEvents('solo').filter((e) => e.action === 'notify').map((e) => e.outcome)).toContain('lead:skipped_self;external:ok')
   expect(hook).toHaveBeenCalled()
 })

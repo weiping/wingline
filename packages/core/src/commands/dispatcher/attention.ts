@@ -42,7 +42,7 @@ export async function attention(deps: CommandDeps, team: string): Promise<Attent
   if (!deps.registry.getTeam(team)) throw new WinglineError('input', 'team_unknown', `团队 ${team} 未登记`)
   const { registry } = deps
   const frozen = registry.listFrozen(team).map((f) => ({
-    ...f, skippedChildren: registry.listDeliveries(f.post).filter((d) => d.delivery === 'skipped_frozen').length,
+    ...f, skippedChildren: registry.listDeliveries(f.post, f.frozenAt).filter((d) => d.delivery === 'skipped_frozen').length,
   }))
   const signals = registry.listPatrolState(team).filter((s) => !s.clearedAt && s.level >= 1).sort((a, b) => b.level - a.level)
   return {

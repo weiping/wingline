@@ -384,5 +384,6 @@ test('listDeliveries reads the done:*:delivered:<target> ledger rows', () => {
   const r = Registry.open(tmpDb()); r.upsertTeam(running2b)
   r.claimRequest('done:t1:0:delivered:checker@duo', { target: 'checker@duo', taskId: 'c1', delivery: 'skipped_frozen' })
   r.claimRequest('done:t2:0:delivered:builder@duo', { target: 'builder@duo', taskId: 'c2', delivery: 'sent' })
-  expect(r.listDeliveries('checker@duo')).toEqual([{ key: 'done:t1:0:delivered:checker@duo', target: 'checker@duo', taskId: 'c1', delivery: 'skipped_frozen' }])
+  expect(r.listDeliveries('checker@duo')).toEqual([{ key: 'done:t1:0:delivered:checker@duo', target: 'checker@duo', taskId: 'c1', delivery: 'skipped_frozen', at: expect.any(String) }])
+  expect(r.listDeliveries('checker@duo', '9999')).toEqual([])
 })

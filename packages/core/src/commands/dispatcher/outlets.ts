@@ -73,7 +73,12 @@ async function postWebhook(url: string, n: HumanNotice, team: string, at: string
 
 function runCommand(cmd: string[], message: string, io: OutletIo): Promise<boolean> {
   return new Promise((resolve) => {
-    const child = (io.spawn ?? nodeSpawn)(cmd[0]!, [...cmd.slice(1), message], { shell: false, stdio: 'ignore' })
+    let child: ReturnType<typeof nodeSpawn>
+    try {
+      child = (io.spawn ?? nodeSpawn)(cmd[0]!, [...cmd.slice(1), message], { shell: false, stdio: 'ignore' })
+    } catch {
+      return resolve(false)
+    }
     const timer = setTimeout(() => { child.kill(); resolve(false) }, io.timeoutMs ?? TIMEOUT_MS)
     child.on('error', () => { clearTimeout(timer); resolve(false) })
     child.on('close', (code) => { clearTimeout(timer); resolve(code === 0) })

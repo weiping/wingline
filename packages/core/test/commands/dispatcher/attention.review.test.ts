@@ -45,6 +45,15 @@ test('frozen posts carry the number of children skipped while frozen', async () 
   expect((await attention(deps, 'duo')).frozen).toEqual([expect.objectContaining({ post: 'checker@duo', skippedChildren: 2 })])
 })
 
+test('final-review m10: skipped count and the unfreeze list only cover the current freeze, not earlier ones', async () => {
+  const c = clock(); const o = new FakeOrca(); const { deps, registry } = seedRunningTeam(o, { now: c.now })
+  const skip = (n: number) => { const k = `done:p${n}:0:delivered:checker@duo`; registry.beginRequest(k); registry.finishRequest(k, 'done', { target: 'checker@duo', taskId: `c${n}`, delivery: 'skipped_frozen' }) }
+  skip(1); c.advance(60_000)
+  registry.freezePost({ post: 'checker@duo', team: 'duo', reason: 'x' }); c.advance(60_000)
+  skip(2)
+  expect((await attention(deps, 'duo')).frozen).toEqual([expect.objectContaining({ skippedChildren: 1 })])
+})
+
 test('a signal row shows the command recorded with its latest action, or null', async () => {
   const o = new FakeOrca(); const { deps, registry } = seedRunningTeam(o)
   registry.putPatrolState(st({ signal: 'dead_assignee', taskId: 'd', level: 2 }))
