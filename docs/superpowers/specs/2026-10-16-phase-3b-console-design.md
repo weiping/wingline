@@ -101,7 +101,7 @@ wl console [--port <n>] [--open] [--link] [--json]
 
 - **响应格式**与命令行 `--json` 相同：成功 `{ ok: true, result }`，失败 `{ ok: false, error: { kind, code, message, hint } }`；结果不确定时 `error` 里带 CLI 给出的 `retry` 提示与 `retryRequest`。
 - **状态码**：`input` → 400，`orca` → 502，`uncertain` → 504，`internal` → 500，未登录 → 401，写请求校验失败 → 403，Host 不符 → 421，路由不存在 → 404。
-- **Orca 只读调用的合并（`snapshot.ts`）**：`task-list`、`terminal list` 按团队缓存，最多 5 秒查一次，供所有读请求与 SSE 共用；同一团队的并发请求等待同一次进行中的调用。任何写请求完成后作废该团队的缓存。
+- **Orca 只读调用的合并（`core/src/view/snapshot.ts`）**：`task-list`、`terminal list` 按团队缓存，最多 5 秒查一次，供所有读请求与 SSE 共用；同一团队的并发请求等待同一次进行中的调用。任何写请求完成后作废该团队的缓存。
 - 团队名、岗位、任务 id 等路径参数先按现有规则校验（小写字母、数字、连字符；任务 id 按 Orca 的格式），不合法 → 400 `input:invalid_param`。
 
 ### 6.2 读接口（GET）
@@ -173,10 +173,11 @@ packages/core/src/server/
   index.ts       # createConsoleServer(deps, opts) → { url, close }；组装各模块
   auth.ts        # 一次性 token、会话、CSRF、Host / Origin / Content-Type 校验
   routes.ts      # 路由表：路径 → 参数校验 → core 命令 / 查询；错误类别 → 状态码
-  snapshot.ts    # 按团队 5 秒缓存的 Orca 只读结果；写后作废
   sse.ts         # 按团队的读取循环、游标、订阅者管理、心跳
   static.ts      # 静态资源、SPA 回退、CSP 与安全响应头
   control.ts     # /_control/link 与 console.json 的读写
+packages/core/src/view/
+  snapshot.ts    # 按团队 5 秒缓存的 Orca 只读结果；写后作废（放在 view/ 而非 server/，3C 的 wl tui 复用）
 packages/web/    # 私有工作区包：Preact + Vite；构建产物输出到 packages/cli/dist/web/
   src/api.ts     # fetch 封装（带 CSRF 头）、错误类型、EventSource 封装与重连状态
   src/pages/*.tsx
