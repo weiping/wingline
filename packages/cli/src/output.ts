@@ -19,7 +19,7 @@ function table(head: string[], rows: string[][]): string {
 const teamOfAddress = (address: string) => address.slice(address.indexOf('@') + 1)
 const minutesOrSeconds = (ms: number) => (ms < 60_000 ? `${Math.round(ms / 1000)} 秒前` : `${Math.floor(ms / 60_000)} 分钟前`)
 
-/** 调度员状态的一行文字（never 返回 null，不显示）。 */
+/** 调度员状态的一行文字；从未启动过（never）返回 null，调用方据此不显示。 */
 export function dispatcherLine(h: DispatcherHealth): string | null {
   const age = h.ageMs === undefined ? '' : `（心跳 ${minutesOrSeconds(h.ageMs)}）`
   if (h.state === 'running') return `调度员：运行中${age}`

@@ -2,7 +2,10 @@ import fs from 'node:fs'
 import { PassThrough } from 'node:stream'
 import { afterEach, expect, test } from 'vitest'
 import { WinglineError, type CommandDeps } from '@wingline/core'
-import { installWarningFilter, run, type Commands } from '../src/cli.js'
+import os from 'node:os'
+import path from 'node:path'
+import { READ_ONLY_CALLS } from '@wingline/core'
+import { defaultMakeDeps, installWarningFilter, isReadOnlyCall, run, type Commands } from '../src/cli.js'
 
 function io() {
   const out: string[] = []
@@ -424,10 +427,61 @@ test('wl dispatcher up --json prints the outcome; start unconfirmed exits 3', as
   expect(JSON.parse(r.out).result.outcome).toBe('started')
   expect((await exec(['dispatcher', 'up', 'duo'], cmds({ dispatcherUp: async () => { throw new WinglineError('uncertain', 'dispatcher_start_unconfirmed', 'x') } }))).code).toBe(3)
 })
-test('wl dispatcher run passes --home/--orca into deps construction and awaits the loop', async () => {
+test('wl dispatcher run passes --home/--orca/summarize into deps construction and awaits the loop', async () => {
   let seen: { team?: string; home?: string } = {}
-  const r = await exec(['dispatcher', 'run', 'duo', '--home', '/tmp/h', '--orca', '/tmp/orca'], cmds({ runDispatcherLoop: async (d, t) => { seen = { team: t, home: d.home } } }))
-  expect(r.code).toBe(0); expect(seen).toEqual({ team: 'duo', home: '/tmp/h' })
+  let overrides: unknown
+  const mk = (_env: NodeJS.ProcessEnv, _warn: (m: string) => void, o?: unknown) => { overrides = o; return { home: (o as { home: string }).home, registry: { close() {} } } as unknown as CommandDeps }
+  const h = io()
+  const code = await run(['dispatcher', 'run', 'duo', '--home', '/tmp/h', '--orca', '/tmp/orca'], h.io,
+    cmds({ runDispatcherLoop: async (d, t) => { seen = { team: t, home: d.home } } }), mk)
+  expect(code).toBe(0); expect(seen).toEqual({ team: 'duo', home: '/tmp/h' })
+  expect(overrides).toEqual({ home: '/tmp/h', orca: '/tmp/orca', summarize: true })
+})
+test('defaultMakeDeps: overrides become WINGLINE_HOME / WINGLINE_ORCA and summarize is wired', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'wl-home-'))
+  const deps = defaultMakeDeps({ PATH: '', WINGLINE_HOME: '/ignored' }, () => {}, { home, orca: process.execPath, summarize: true })
+  try {
+    expect(deps.home).toBe(home)
+    expect(deps.orcaPath).toBe(process.execPath)
+    expect(fs.existsSync(path.join(home, 'logs'))).toBe(true)
+  } finally { deps.registry.close(); fs.rmSync(home, { recursive: true, force: true }) }
+})
+test('isReadOnlyCall is true for READ_ONLY_CALLS entries and false for mutating calls', () => {
+  const [group, sub] = READ_ONLY_CALLS[0]!
+  expect(isReadOnlyCall([group, sub, '--json'])).toBe(true)
+  expect(isReadOnlyCall(['orchestration', 'send', '--json'])).toBe(false)
+  expect(isReadOnlyCall(['terminal', 'create'])).toBe(false)
+})
+test('wl dispatcher freeze passes --reason through and reports success', async () => {
+  let seen: unknown
+  const r = await exec(['dispatcher', 'freeze', 'builder@duo', '--reason', '等人看'], cmds({ freezePostCmd: async (_d, a) => { seen = a } }))
+  expect(seen).toEqual({ address: 'builder@duo', reason: '等人看' })
+  expect(r.out).toContain('builder@duo 已冻结')
+})
+test('wl attention renders every section with commands; healthy dispatcher last, stale first; gate split from other stale', async () => {
+  const base = {
+    team: 'duo',
+    frozen: [{ post: 'builder@duo', reason: '循环', frozenAt: 'F', skippedChildren: 2 }],
+    signals: [{ team: 'duo', post: 'checker@duo', signal: 'no_progress', taskId: 't2', level: 2, command: 'wl send checker@duo hi' }],
+    questions: [{ team: 'duo', messageId: 'msg-7', asker: 'builder@duo', body: '用 a 还是 b', options: ['a', 'b'] }],
+    stale: [
+      { taskId: 't3', title: 'G', reason: 'blocked_waiting', owner: null, since: null, command: 'wl task resolve g1 --resolution <决定>' },
+      { taskId: 't1', title: 'T', reason: 'dead_assignee', owner: 'b@duo', since: null, command: 'wl task recover t1' },
+    ],
+    unavailable: [],
+  }
+  const healthy = await exec(['attention', 'duo'], cmds({ attention: async () => ({ ...base, dispatcher: { state: 'running', ageMs: 12_000 } }) as never }))
+  const lines = healthy.out.trimEnd().split('\n')
+  expect(lines.at(-1)).toContain('调度员：运行中（心跳 12 秒前）')
+  for (const c of ['wl dispatcher unfreeze builder@duo', 'wl send checker@duo hi', 'wl dispatcher reply duo msg-7 --body <回答>', 'wl task resolve g1', 'wl task recover t1']) expect(healthy.out).toContain(c)
+  expect(healthy.out).toContain('用 a 还是 b')
+  const gate = lines.findIndex((l) => l.startsWith('待决的 gate'))
+  const rest = lines.findIndex((l) => l.startsWith('其余卡住的任务'))
+  expect(gate).toBeGreaterThan(-1); expect(rest).toBeGreaterThan(gate)
+  expect(lines[gate + 1]).toContain('t3'); expect(lines[gate + 1]).not.toContain('t1')
+  expect(lines[rest + 1]).toContain('t1')
+  const stale = await exec(['attention', 'duo'], cmds({ attention: async () => ({ ...base, dispatcher: { state: 'stale', ageMs: 540_000 } }) as never }))
+  expect(stale.out.split('\n')[0]).toContain('调度员：失联')
 })
 test('wl dispatcher freeze requires --reason; hush parses --for; reply passes --again', async () => {
   expect((await exec(['dispatcher', 'freeze', 'builder@duo'], cmds())).code).toBe(1)

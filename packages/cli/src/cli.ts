@@ -68,7 +68,7 @@ function which(name: string, env: NodeJS.ProcessEnv): string | null {
 }
 
 /** 只读轮询（spec 第 8 节）：调度员的 CallLog 只记摘要。 */
-const isReadOnlyCall = (args: string[]) => READ_ONLY_CALLS.some(([group, sub]) => args[0] === group && args[1] === sub)
+export const isReadOnlyCall = (args: string[]) => READ_ONLY_CALLS.some(([group, sub]) => args[0] === group && args[1] === sub)
 
 /** `dispatcher run` 的覆盖项：Orca 启动的终端不继承 WINGLINE_HOME/WINGLINE_ORCA，所以由命令行显式传入。 */
 export interface DepsOverrides {
@@ -117,7 +117,7 @@ type Execute = <T>(
 ) => Promise<void>
 type AsJson = { as?: string; json?: boolean }
 
-function registerDispatcherCommands(program: Command, commands: Commands, execute: Execute): void {
+function registerDispatcherCommands(program: Command, commands: Commands, execute: Execute, io: RunIO): void {
   const disp = program.command('dispatcher').description('调度员：收件箱中继与巡查')
   const sub = (spec: string, desc: string) => disp.command(spec).description(desc).option('--json', '输出 JSON')
   type J = { json?: boolean }
@@ -128,9 +128,9 @@ function registerDispatcherCommands(program: Command, commands: Commands, execut
     .option('--orca <path>', 'Orca 可执行文件（等价 WINGLINE_ORCA）')
     .action((team: string, o: { home?: string; orca?: string }) => {
       const ctl = new AbortController()
-      const stop = () => ctl.abort()
+      const stop = () => { io.stderr.write('收到信号，正在停止…\n'); ctl.abort() }
       process.once('SIGINT', stop); process.once('SIGTERM', stop)
-      return execute(false, (d) => commands.runDispatcherLoop({ ...d, home: o.home ?? d.home }, team, { signal: ctl.signal }).then(() => ({})), () => '', undefined,
+      return execute(false, (d) => commands.runDispatcherLoop(d, team, { signal: ctl.signal }).then(() => ({})), () => '', undefined,
         { home: o.home, orca: o.orca, summarize: true }).finally(() => { process.off('SIGINT', stop); process.off('SIGTERM', stop) })
     })
   sub('status <team>', '调度员状态').action((team: string, o: J) => execute(!!o.json, (d) => commands.dispatcherStatus(d, team), renderDispatcherStatus))
@@ -244,7 +244,7 @@ export async function run(
 
   registerBaseCommands(program, commands, execute)
   registerTaskCommands(program, commands, execute)
-  registerDispatcherCommands(program, commands, execute)
+  registerDispatcherCommands(program, commands, execute, io)
 
   try {
     await program.parseAsync(argv, { from: 'user' })
