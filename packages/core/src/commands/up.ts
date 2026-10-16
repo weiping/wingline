@@ -222,7 +222,8 @@ async function runStep(l: Launch, args: UpArgs, leadHandle: string): Promise<Run
   return discovered ?? createRun(l, leadHandle)
 }
 
-async function ensureRun(l: Launch, posts: PostResult[], args: UpArgs): Promise<RunStep> {
+/** lead 就绪（或本来就在）才动 Run；restore 把 kept/resumed/fresh 映射成同样的两种 outcome 后复用这里。 */
+export async function ensureRun(l: Launch, posts: PostResult[], args: UpArgs): Promise<RunStep> {
   const lead = postAddress(l.spec.lead, l.spec.name)
   const leadResult = posts.find((p) => p.address === lead)
   if (leadResult?.outcome !== 'launched' && leadResult?.outcome !== 'already_live') {
