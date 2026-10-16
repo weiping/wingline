@@ -83,6 +83,14 @@ export interface WorkerView {
   liveness: string | null
 }
 
+/** 会话搜索命中：search 回执缺字段时映射为 null。 */
+export interface SearchHit {
+  sessionId: string
+  cwd: string | null
+  updatedAt: string | null
+  messageCount: number | null
+}
+
 export interface OrcaClient {
   version(): Promise<string>
   status(): Promise<{ reachable: boolean }>
@@ -109,4 +117,6 @@ export interface OrcaClient {
   reply(a: { id: string; body: string; run: string; from: string }): Promise<{ messageId: string; duplicate: boolean }>
   workerList(a: { run: string }): Promise<WorkerView[]>
   worktreeSet(a: { worktree: string; comment: string }): Promise<void>
+  /** query 原样作为一个参数（调用方负责加引号实现精确搜索）。 */
+  search(a: { query: string; agent: string; environment?: string }): Promise<SearchHit[]>
 }

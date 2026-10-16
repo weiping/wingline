@@ -104,3 +104,12 @@ test('R6 worker-list: attention categories and liveness come through', async () 
   const w = await clientOver({ 'orchestration worker-list': (r6['worker-list'] as Env).result }).client.workerList({ run: 'r' })
   expect(w.map((x) => [x.attention, x.liveness])).toEqual([[[], 'live'], [['unverifiable'], 'unverifiable'], [['root_completion'], 'unverifiable']])
 })
+
+// provisional：Task 1 真机回执落地前的手写最小回执（spec 第 2 节第 1 条字段）；落地后直接替换文件，测试不变。
+test('search maps the real claude receipt (provisional)', async () => {
+  const receipt = fixture<{ ok: boolean; result: { hits: Array<{ sessionId?: string; cwd?: string | null; updatedAt?: string | null; messageCount?: number | null }> } }>('search-claude')
+  const { client } = clientOver({ 'search "WLS-provisional"': receipt.result })
+  const hits = await client.search({ query: '"WLS-provisional"', agent: 'claude' })
+  expect(hits.length).toBeGreaterThanOrEqual(1)
+  expect(hits.every((h) => typeof h.sessionId === 'string' && (typeof h.cwd === 'string' || h.cwd === null))).toBe(true)
+})

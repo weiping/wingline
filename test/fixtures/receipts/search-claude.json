@@ -1,0 +1,13 @@
+{
+  "ok": true,
+  "result": {
+    "hits": [
+      {
+        "sessionId": "sess-provisional-1",
+        "cwd": "/Users/liuweiping/workspace/dev/wingline",
+        "updatedAt": "2026-10-16T00:00:00Z",
+        "messageCount": 12
+      }
+    ]
+  }
+}

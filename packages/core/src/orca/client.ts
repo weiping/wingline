@@ -1,6 +1,6 @@
 import { WinglineError } from '../errors.js'
 import type { OrcaRunner } from './run.js'
-import type { CheckMessage, CheckResult, OrcaClient, OrchestrationTask, RequestShowState, RunSummary, SendStage, WorkerView } from './types.js'
+import type { CheckMessage, CheckResult, OrcaClient, OrchestrationTask, RequestShowState, RunSummary, SearchHit, SendStage, WorkerView } from './types.js'
 
 /** terminal wait 自带超时；进程级超时多留一点余量，避免先于 Orca 自己的超时回执杀掉它。 */
 const WAIT_PROCESS_SLACK_MS = 15_000
@@ -52,7 +52,7 @@ const toTask = (t: RawTask): OrchestrationTask => ({
   result: t.result ?? null,
 })
 
-type OrchestrationMethods = Omit<OrcaClient, 'version' | 'status' | 'terminalList' | 'terminalCreate' | 'terminalWait' | 'terminalSend' | 'terminalClose'>
+type OrchestrationMethods = Omit<OrcaClient, 'version' | 'status' | 'search' | 'terminalList' | 'terminalCreate' | 'terminalWait' | 'terminalSend' | 'terminalClose'>
 
 function runMethods(runner: OrcaRunner): Pick<OrcaClient, 'runCreate' | 'runUse' | 'runShow' | 'runList' | 'requestShow'> {
   type RunReply = { run: { id: string; coordinator_handle: string } }
@@ -306,6 +306,13 @@ export function createOrcaClient(runner: OrcaRunner): OrcaClient {
     async status() {
       const r = await runner.json<{ runtime: { reachable: boolean } }>(['status'])
       return { reachable: r.runtime.reachable }
+    },
+
+    async search(a): Promise<SearchHit[]> {
+      const r = await runner.json<{ hits: Array<{ sessionId: string; cwd?: string | null; updatedAt?: string | null; messageCount?: number | null }> }>([
+        'search', a.query, '--agent', a.agent, '--fresh', ...(a.environment ? ['--environment', a.environment] : []),
+      ])
+      return r.hits.map((h) => ({ sessionId: h.sessionId, cwd: h.cwd ?? null, updatedAt: h.updatedAt ?? null, messageCount: h.messageCount ?? null }))
     },
   }
 }

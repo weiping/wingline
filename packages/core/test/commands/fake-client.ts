@@ -71,6 +71,10 @@ export class FakeOrca implements OrcaClient {
   connectionLostOnce = false
   workerListError?: Error
 
+  /** 会话搜索模型（3A）：按去引号后的 query 精确匹配 marker，agent/environment 须一致。 */
+  sessions: Array<{ marker: string; agent: string; sessionId: string; cwd: string | null; updatedAt?: string; messageCount?: number; environment?: string }> = []
+  searchError?: Error
+
   postMessage(m: Partial<CheckMessage> & { type: string }): CheckMessage {
     const msg: CheckMessage = { id: `msg-${++this.ids.msg}`, fromHandle: null, subject: null, body: null, payload: null, threadId: null, createdAt: null, ...m }
     this.inbox.push(msg)
@@ -321,6 +325,14 @@ export class FakeOrca implements OrcaClient {
 
   async version() { this.calls.push('version'); return this.versionText }
   async status() { this.calls.push('status'); return { reachable: this.reachable } }
+  async search(a: { query: string; agent: string; environment?: string }) {
+    this.read('search', a)
+    if (this.searchError) throw this.searchError
+    const marker = a.query.startsWith('"') && a.query.endsWith('"') ? a.query.slice(1, -1) : a.query
+    return this.sessions
+      .filter((s) => s.marker === marker && s.agent === a.agent && s.environment === a.environment)
+      .map((s) => ({ sessionId: s.sessionId, cwd: s.cwd, updatedAt: s.updatedAt ?? null, messageCount: s.messageCount ?? null }))
+  }
   async terminalList() { this.read('terminalList'); return this.terminals.map((t) => ({ ...t })) }
   async terminalCreate(a: { worktree: string; title: string; command: string }) {
     this.calls.push('terminalCreate'); this.created.push(a)
