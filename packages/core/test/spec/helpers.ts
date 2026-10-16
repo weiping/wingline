@@ -20,6 +20,19 @@ posts:
     brief: [briefs/checker.md]
 `
 
+export const SOLO_YAML = `version: 1
+name: solo
+repo: path:/abs/repo
+norms: NORMS.md
+lead: builder
+posts:
+  - id: builder
+    agent: claude
+    model: opus
+    worktree: current
+    brief: [briefs/builder.md]
+`
+
 /** 在临时目录里写出 team.yaml 与引用文件，返回 team.yaml 路径。 */
 export function mkTeam(yaml: string, opts: { dir?: string; files?: Record<string, string> } = {}): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wl-spec-'))
