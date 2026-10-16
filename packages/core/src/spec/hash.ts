@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
-import type { TeamSpec } from './load.js'
+import { DEFAULT_PATROL, type TeamSpec } from './load.js'
 
 const sha256 = (data: string | Buffer) => createHash('sha256').update(data).digest('hex')
 
@@ -18,6 +18,11 @@ function canonical(v: unknown): unknown {
     )
   }
   return v
+}
+
+function patrolDelta(spec: TeamSpec): { patrol?: Record<string, unknown> } {
+  const changed = Object.entries(spec.patrol).filter(([k, v]) => JSON.stringify(v) !== JSON.stringify((DEFAULT_PATROL as unknown as Record<string, unknown>)[k]))
+  return changed.length === 0 ? {} : { patrol: Object.fromEntries(changed) }
 }
 
 export function specHash(spec: TeamSpec, readFile: (p: string) => Buffer = (p) => fs.readFileSync(p)): string {
@@ -45,7 +50,8 @@ export function specHash(spec: TeamSpec, readFile: (p: string) => Buffer = (p) =
       consults: p.consults ?? [],
     })),
     budgets: spec.budgets,
-    patrol: spec.patrol,
+    // 只哈希与默认值不同的 patrol 字段；没写 patrol 的 2A 团队保持原哈希
+    ...patrolDelta(spec),
   }
   return sha256(JSON.stringify(canonical(normalised)))
 }

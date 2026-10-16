@@ -37,6 +37,17 @@ export interface PatrolSpec {
   notify: { webhook: string } | { command: string[] } | null
 }
 
+export const DEFAULT_PATROL: PatrolSpec = {
+  noProgressMinutes: 20,
+  promptMinutes: 5,
+  ownerIdleMinutes: 30,
+  postFailureStreak: 3,
+  freezeLead: false,
+  autoRecover: false,
+  worktreeComment: false,
+  notify: null,
+}
+
 export interface TeamSpec {
   version: 1
   name: string
