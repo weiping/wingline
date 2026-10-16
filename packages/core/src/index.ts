@@ -32,3 +32,14 @@ export * from './commands/task/claim.js'
 export * from './commands/task/start.js'
 export * from './commands/task/done.js'
 export * from './commands/task/escalate.js'
+export {
+  HEARTBEAT_STALE_MS, HEARTBEAT_TAKEOVER_MS, dispatcherHealth, dispatcherLaunchCommand, dispatcherUp, dispatcherDown, type DispatcherHealth,
+  type UpArgs as DispatcherUpArgs,
+} from './commands/dispatcher/lifecycle.js'
+export * from './commands/dispatcher/loop.js'
+export * from './commands/dispatcher/attention.js'
+export * from './commands/dispatcher/controls.js'
+export * from './commands/dispatcher/inbox.js'
+export * from './commands/dispatcher/outlets.js'
+export * from './commands/dispatcher/signals.js'
+export * from './commands/dispatcher/advance.js'

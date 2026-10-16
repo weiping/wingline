@@ -11,6 +11,7 @@ posts:
     brief: [briefs/builder.md]
   - id: checker
     agent: codex
+    # 无人值守时建议用不弹交互确认的权限模式（见 README「无人值守时的权限模式」），避免岗位停在确认框上
     launch: 'codex --model gpt-6-astra -c model_reasoning_effort="high"'
     worktree: current
     brief: [briefs/checker.md]

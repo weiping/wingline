@@ -1,6 +1,6 @@
 import {
   WinglineError, type DoneResult, type DownResult, type PsRow, type SendResultRow, type ShownTask, type StaleItem, type TaskRow, type UpResult,
-  type createTask, type escalateTask, type reassignTask, type recoverTask, type resolveGate, type startTask,
+  type AttentionReport, type DispatcherHealth, type DispatcherStatus, type createTask, type escalateTask, type reassignTask, type recoverTask, type resolveGate, type startTask,
 } from '@wingline/core'
 
 const UP_LABEL = { already_live: '已在岗', launched: '已拉起', failed: '失败', uncertain: '不确定' } as const
@@ -16,9 +16,33 @@ function table(head: string[], rows: string[][]): string {
   return [line(head), ...rows.map(line)].join('\n') + '\n'
 }
 
+const teamOfAddress = (address: string) => address.slice(address.indexOf('@') + 1)
+const minutesOrSeconds = (ms: number) => (ms < 60_000 ? `${Math.round(ms / 1000)} 秒前` : `${Math.floor(ms / 60_000)} 分钟前`)
+
+/** 调度员状态的一行文字（never 返回 null，不显示）。 */
+export function dispatcherLine(h: DispatcherHealth): string | null {
+  const age = h.ageMs === undefined ? '' : `（心跳 ${minutesOrSeconds(h.ageMs)}）`
+  if (h.state === 'running') return `调度员：运行中${age}`
+  if (h.state === 'stale') return `调度员：失联${age}`
+  return h.state === 'stopped' ? '调度员：已停止' : null
+}
+
+function dispatcherTitles(rows: PsRow[]): string {
+  const seen = new Set<string>()
+  const lines: string[] = []
+  for (const r of rows) {
+    const team = teamOfAddress(r.address)
+    const line = r.dispatcher && dispatcherLine(r.dispatcher)
+    if (!line || seen.has(team)) continue
+    seen.add(team)
+    lines.push(`团队 ${team}  ${line}`)
+  }
+  return lines.length ? lines.join('\n') + '\n' : ''
+}
+
 export function renderPs(rows: PsRow[]): string {
   if (rows.length === 0) return '没有已登记的岗位。用 wl up <team.yaml> 拉起团队。\n'
-  return table(
+  return dispatcherTitles(rows) + table(
     ['ADDRESS', 'AGENT', 'STATUS', 'HANDLE', 'WORKTREE', 'LEAD'],
     rows.map((r) => [r.address, r.agent, r.status, r.handle ?? '-', r.worktree, r.isLead ? 'yes' : '']),
   )
@@ -177,4 +201,57 @@ export function renderResolve(r: Awaited2<typeof resolveGate>): string {
 export function renderRecover(r: Awaited2<typeof recoverTask>, id: string): string {
   const head = `任务 ${id}：${r.status}（第 ${r.epoch} 轮）${r.reason ? `，${r.reason}` : ''}\n`
   return head + deliveryLine(r.owner ?? undefined, id, r)
+}
+
+export function renderDispatcherUp(r: { address: string; outcome: 'already_running' | 'started'; handle?: string }): string {
+  return r.outcome === 'started' ? `${r.address} 已启动${r.handle ? `（终端 ${r.handle}）` : ''}\n` : `${r.address} 已在运行\n`
+}
+
+export function renderDispatcherDown(r: { address: string; outcome: 'noop' | 'closed' | 'already_gone' }): string {
+  const label = { noop: '未改动（加 --close 才会关闭终端）', closed: '终端已关闭', already_gone: '终端已不存在' }[r.outcome]
+  return `${r.address}  ${label}\n`
+}
+
+export function renderDispatcherStatus(s: DispatcherStatus): string {
+  const at = (x: { at: string; outcome: string } | null) => (x ? `${x.at}（${x.outcome}）` : '无')
+  const head = `团队 ${s.team}  ${dispatcherLine(s.health) ?? '调度员：从未启动'}\n`
+  const body = `上次收件箱检查：${at(s.lastCheck)}\n上次巡查：${at(s.lastScan)}\n冻结岗位 ${s.frozen}  静音岗位 ${s.hushed}  待处理事项 ${s.attentionItems}\n`
+  return head + body + s.warnings.map((w) => `警告：${w}\n`).join('')
+}
+
+export function renderUnfreeze(r: { skipped: Array<{ taskId: string; command: string }> }, address: string): string {
+  const skipped = r.skipped.map((s) => `  ${s.taskId}  ${s.command}\n`).join('')
+  return `${address} 已解冻\n` + (skipped ? `冻结期间被跳过的派发（按需手动处理）：\n${skipped}` : '')
+}
+
+/** spec 第 6.5 节的分节顺序；调度员失联时放最前。 */
+export function renderAttention(r: AttentionReport): string {
+  const sections: string[] = []
+  const dispatcher = `调度员：${dispatcherLine(r.dispatcher)?.replace('调度员：', '') ?? '从未启动'}`
+  if (r.dispatcher.state === 'stale') sections.push(dispatcher + `\n  重新启动：wl dispatcher up ${r.team}`)
+  if (r.frozen.length) {
+    sections.push(['冻结的岗位：', ...r.frozen.map((f) => `  ${f.post}  ${f.reason}（${f.frozenAt}，跳过 ${f.skippedChildren} 个子任务）  wl dispatcher unfreeze ${f.post}`)].join('\n'))
+  }
+  if (r.signals.length) {
+    sections.push(['处理中的信号：', ...r.signals.map((s) => `  L${s.level} ${s.signal}  ${s.post}${s.taskId ? `  ${s.taskId}` : ''}${s.command ? `  ${s.command}` : ''}`)].join('\n'))
+  }
+  if (r.questions.length) {
+    sections.push(['待回答的问题：', ...r.questions.map((q) => `  ${q.messageId}  ${q.asker}：${q.body}${q.options.length ? `（选项：${q.options.join(' / ')}）` : ''}  wl dispatcher reply ${r.team} ${q.messageId} --body <回答>`)].join('\n'))
+  }
+  sections.push(...staleSections(r))
+  if (r.dispatcher.state !== 'stale') sections.push(dispatcher)
+  return sections.join('\n') + '\n'
+}
+
+function staleSections(r: AttentionReport): string[] {
+  const gates = r.stale.filter((i) => i.reason === 'blocked_waiting')
+  const rest = r.stale.filter((i) => i.reason !== 'blocked_waiting')
+  const line = (i: AttentionReport['stale'][number]) => `  ${i.taskId}  ${i.title}  ${i.reason}  归属 ${i.owner ?? '-'}  ${i.command}`
+  const out: string[] = []
+  const unavailable = r.unavailable.length ? `不可用（${r.unavailable.join('；')}）` : null
+  for (const [title, items] of [['待决的 gate', gates], ['其余卡住的任务', rest]] as const) {
+    if (unavailable) out.push(`${title}：${unavailable}`)
+    else if (items.length) out.push([`${title}：`, ...items.map(line)].join('\n'))
+  }
+  return out
 }

@@ -32,6 +32,16 @@ const cmds = (over: Partial<Commands> = {}): Commands => ({
   escalateTask: async () => { throw new Error('未注入：escalateTask') },
   resolveGate: async () => { throw new Error('未注入：resolveGate') },
   recoverTask: async () => { throw new Error('未注入：recoverTask') },
+  dispatcherUp: async () => { throw new Error('未注入：dispatcherUp') },
+  dispatcherDown: async () => { throw new Error('未注入：dispatcherDown') },
+  runDispatcherLoop: async () => { throw new Error('未注入：runDispatcherLoop') },
+  dispatcherStatus: async () => { throw new Error('未注入：dispatcherStatus') },
+  freezePostCmd: async () => { throw new Error('未注入：freezePostCmd') },
+  unfreezePostCmd: async () => { throw new Error('未注入：unfreezePostCmd') },
+  hushCmd: async () => { throw new Error('未注入：hushCmd') },
+  unhushCmd: async () => { throw new Error('未注入：unhushCmd') },
+  dispatcherReply: async () => { throw new Error('未注入：dispatcherReply') },
+  attention: async () => { throw new Error('未注入：attention') },
   ...over,
 })
 const exec = (argv: string[], c: Commands = cmds()) => {
@@ -407,4 +417,41 @@ test('F-5: the verified Orca range starts at 1.4.222 (the 2A orchestration seman
   expect(inRange('1.4.222', verified.verifiedOrca)).toBe(true)
   expect(inRange('1.4.224', verified.verifiedOrca)).toBe(true)
   expect(inRange('1.5.0', verified.verifiedOrca)).toBe(false)
+})
+
+test('wl dispatcher up --json prints the outcome; start unconfirmed exits 3', async () => {
+  const r = await exec(['dispatcher', 'up', 'duo', '--json'], cmds({ dispatcherUp: async () => ({ address: 'dispatcher@duo', outcome: 'started' }) }))
+  expect(JSON.parse(r.out).result.outcome).toBe('started')
+  expect((await exec(['dispatcher', 'up', 'duo'], cmds({ dispatcherUp: async () => { throw new WinglineError('uncertain', 'dispatcher_start_unconfirmed', 'x') } }))).code).toBe(3)
+})
+test('wl dispatcher run passes --home/--orca into deps construction and awaits the loop', async () => {
+  let seen: { team?: string; home?: string } = {}
+  const r = await exec(['dispatcher', 'run', 'duo', '--home', '/tmp/h', '--orca', '/tmp/orca'], cmds({ runDispatcherLoop: async (d, t) => { seen = { team: t, home: d.home } } }))
+  expect(r.code).toBe(0); expect(seen).toEqual({ team: 'duo', home: '/tmp/h' })
+})
+test('wl dispatcher freeze requires --reason; hush parses --for; reply passes --again', async () => {
+  expect((await exec(['dispatcher', 'freeze', 'builder@duo'], cmds())).code).toBe(1)
+  const seen: unknown[] = []
+  const c = cmds({ hushCmd: async (_d, a) => { seen.push(a); return { until: 'U' } }, dispatcherReply: async (_d, a) => { seen.push(a); return { messageId: 'm', duplicate: false } } })
+  await exec(['dispatcher', 'hush', 'checker@duo', '--for', '15m'], c)
+  await exec(['dispatcher', 'reply', 'duo', 'msg-1', '--body', '用 a', '--again'], c)
+  expect(seen).toEqual([{ address: 'checker@duo', forMs: 900_000 }, { team: 'duo', messageId: 'msg-1', body: '用 a', again: true }])
+})
+test('wl attention prints commands and marks unavailable sources', async () => {
+  const r = await exec(['attention', 'duo'], cmds({ attention: async () => ({ team: 'duo', dispatcher: { state: 'stale', ageMs: 540_000 }, frozen: [], signals: [], questions: [],
+    stale: [{ taskId: 't1', title: 'T', reason: 'dead_assignee', owner: 'b@duo', since: null, command: 'wl task recover t1' }], unavailable: [] }) }))
+  expect(r.out.split('\n')[0]).toContain('调度员')
+  expect(r.out).toContain('wl task recover t1')
+  const u = await exec(['attention', 'duo'], cmds({ attention: async () => ({ team: 'duo', dispatcher: { state: 'running', ageMs: 12_000 }, frozen: [], signals: [], questions: [], stale: [], unavailable: ['orca: runtime_unavailable'] }) }))
+  expect(u.out).toContain('不可用（orca: runtime_unavailable）')
+})
+test('wl dispatcher unfreeze lists skipped commands; invalid --for exits 1', async () => {
+  const r = await exec(['dispatcher', 'unfreeze', 'builder@duo'], cmds({ unfreezePostCmd: async () => ({ skipped: [{ taskId: 't9', command: 'wl task reassign t9 --to builder@duo' }] }) }))
+  expect(r.out).toContain('wl task reassign t9 --to builder@duo')
+  expect((await exec(['dispatcher', 'hush', 'checker@duo', '--for', 'abc'], cmds())).code).toBe(1)
+})
+test('wl ps shows the dispatcher line under the team title', async () => {
+  const row = { address: 'builder@duo', agent: 'claude', status: 'live' as const, handle: 'h1', worktree: 'current', isLead: true }
+  const r = await exec(['ps'], cmds({ ps: async () => [{ ...row, dispatcher: { state: 'stale', ageMs: 540_000 } }] }))
+  expect(r.out).toContain('调度员：失联（心跳 9 分钟前）')
 })

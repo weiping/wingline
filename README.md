@@ -39,6 +39,27 @@ wl down duo --close                # 停止团队并关闭终端
 
 数据目录 `~/.wingline/`（可用 `WINGLINE_HOME` 改变）：`state.db` 注册表，`logs/` 调用日志（保留 7 天）。
 
+## 调度员与 `wl attention`
+
+调度员是每个团队一个的常驻进程：转发岗位的提问与上报、定期巡查卡住的任务并按梯度提醒。
+
+```bash
+wl dispatcher up duo                          # 在终端 dispatcher@duo 里启动（未确认到心跳退出码 3）
+wl dispatcher status duo                      # 运行状态、上次检查/巡查、冻结与静音数
+wl dispatcher down duo [--close]              # --close 才会关闭调度员终端
+wl dispatcher run duo [--home <路径>] [--orca <路径>]   # 前台长期运行；up 用它启动，也可在 Orca 终端里手动运行
+wl dispatcher freeze builder@duo --reason "..."         # 冻结岗位，不再向它派发
+wl dispatcher unfreeze builder@duo                      # 解冻，并列出冻结期间被跳过的命令
+wl dispatcher hush checker@duo --for 15m                # 暂停往该终端自动打字（默认 30 分钟，支持 90s/15m/2h）
+wl dispatcher unhush checker@duo
+wl dispatcher reply duo <message_id> --body "..." [--again]   # 以协调者身份回答岗位的提问
+wl attention duo                              # 只读汇总：需要人处理的事项，每条带可复制的命令
+```
+
+### 无人值守时的权限模式
+
+调度员只能往终端里打字，替不了人点确认框。无人值守的团队建议让岗位使用不弹交互确认的权限模式（在 `team.yaml` 的 `launch` 里指定，具体参数见各 agent 的文档），从源头减少岗位停在确认框上的情形；仍然停住时，`wl attention` 会列出相应信号。
+
 ## 开发
 
 ```bash
