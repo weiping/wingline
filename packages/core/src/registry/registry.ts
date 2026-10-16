@@ -464,6 +464,11 @@ export class Registry {
     return Number(r.changes) === 1
   }
 
+  /** 只删指定 pid 持有的那一行（进程已死、没来得及自己清理时用）。 */
+  deleteLockOf(key: string, pid: number): void {
+    this.db.prepare('DELETE FROM locks WHERE team = ? AND pid = ?').run(key, pid)
+  }
+
   getLock(key: string): { pid: number; at: string; heartbeatAt: string | null } | null {
     const r = this.db.prepare('SELECT pid, at, heartbeat_at FROM locks WHERE team = ?').get(key) as Row | undefined
     return r ? { pid: r.pid as number, at: r.at as string, heartbeatAt: r.heartbeat_at as string | null } : null

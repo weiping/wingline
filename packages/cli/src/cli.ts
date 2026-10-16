@@ -132,9 +132,9 @@ function registerDispatcherCommands(program: Command, commands: Commands, execut
     .action((team: string, o: { home?: string; orca?: string }) => {
       const ctl = new AbortController()
       const stop = () => { io.stderr.write('收到信号，正在停止…\n'); ctl.abort() }
-      process.once('SIGINT', stop); process.once('SIGTERM', stop)
+      process.once('SIGINT', stop); process.once('SIGTERM', stop); process.once('SIGHUP', stop)
       return execute(false, (d) => commands.runDispatcherLoop(d, team, { signal: ctl.signal }).then(() => ({})), () => '', undefined,
-        { home: o.home, orca: o.orca, summarize: true }).finally(() => { process.off('SIGINT', stop); process.off('SIGTERM', stop) })
+        { home: o.home, orca: o.orca, summarize: true }).finally(() => { process.off('SIGINT', stop); process.off('SIGTERM', stop); process.off('SIGHUP', stop) })
     })
   sub('status <team>', '调度员状态').action((team: string, o: J) => execute(!!o.json, (d) => commands.dispatcherStatus(d, team), renderDispatcherStatus))
   sub('freeze <post@team>', '冻结岗位（不再派发给它）').requiredOption('--reason <text>', '理由')

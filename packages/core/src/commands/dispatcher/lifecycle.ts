@@ -103,10 +103,23 @@ export async function dispatcherUp(
   return { address, outcome: 'started', handle }
 }
 
+const CLOSE_POLL_MS = 200
+const CLOSE_POLLS = 15
+
+/** 关终端会给 run 进程发 SIGHUP，进程可能来不及自己清锁；等它死掉后替它删掉锁行，否则状态会一直显示失联。 */
+async function clearDeadLock(deps: CommandDeps, team: string, sleep: (ms: number) => Promise<void>, pollMs: number): Promise<void> {
+  for (let i = 0; i < CLOSE_POLLS; i += 1) {
+    const lock = deps.registry.getLock(lockKey(team))
+    if (!lock) return
+    if (!pidAlive(lock.pid)) return deps.registry.deleteLockOf(lockKey(team), lock.pid)
+    await sleep(pollMs)
+  }
+}
+
 /** 不带 --close 什么也不做；带 --close 只关调度员这一个终端，不交还协调者身份（spec 第 1.1 节）。 */
 export async function dispatcherDown(
   deps: CommandDeps,
-  a: { team: string; close: boolean },
+  a: { team: string; close: boolean; sleep?: (ms: number) => Promise<void>; pollMs?: number },
 ): Promise<{ address: string; outcome: 'noop' | 'closed' | 'already_gone' }> {
   if (!deps.registry.getTeam(a.team)) throw new WinglineError('input', 'team_unknown', `团队 ${a.team} 未登记`)
   const address = addressOf(a.team)
@@ -114,5 +127,6 @@ export async function dispatcherDown(
   const located = await locatePost(deps.orca, address)
   if (!located) return { address, outcome: 'already_gone' }
   await deps.orca.terminalClose({ handle: located.handle })
+  await clearDeadLock(deps, a.team, a.sleep ?? defaultSleep, a.pollMs ?? CLOSE_POLL_MS)
   return { address, outcome: 'closed' }
 }

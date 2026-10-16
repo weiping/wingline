@@ -146,3 +146,26 @@ test('down without --close makes no Orca call at all; unknown team → team_unkn
   expect(o.calls).toEqual([])
   await expect(dispatcherDown(deps, { team: 'ghost', close: true })).rejects.toMatchObject({ code: 'team_unknown' })
 })
+
+test('final-review I2: down --close with the run process already dead (SIGHUP) clears the lock row → stopped, not stale', async () => {
+  const o = new FakeOrca(); const c = clock(); const { deps, registry } = seedRunningTeam(o, { now: c.now })
+  o.terminals.push({ handle: 'term-dsp', title: 'dispatcher@duo', connected: true, worktreeId: 'w' })
+  registry.appendPatrolEvent({ team: 'duo', action: 'scan', outcome: 'ok' })
+  forgeLock(deps.home, 2 ** 22 - 1, c.now().toISOString(), c.now().toISOString())
+  expect(dispatcherHealth(deps, 'duo').state).toBe('stale')
+  await dispatcherDown(deps, { team: 'duo', close: true, sleep: noSleep })
+  expect(registry.getLock('dispatcher:duo')).toBeNull()
+  expect(dispatcherHealth(deps, 'duo').state).toBe('stopped')
+})
+
+test('final-review I2: down --close never deletes a lock whose process is still alive (bounded wait)', async () => {
+  const o = new FakeOrca(); const { deps, registry } = seedRunningTeam(o)
+  o.terminals.push({ handle: 'term-dsp', title: 'dispatcher@duo', connected: true, worktreeId: 'w' })
+  const release = holdLock(registry)
+  let sleeps = 0
+  await dispatcherDown(deps, { team: 'duo', close: true, sleep: async () => { sleeps += 1 } })
+  expect(sleeps).toBeGreaterThan(0)
+  expect(sleeps).toBeLessThan(100)
+  expect(registry.getLock('dispatcher:duo')).not.toBeNull()
+  await release()
+})

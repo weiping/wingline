@@ -436,6 +436,15 @@ test('wl dispatcher run passes --home/--orca/summarize into deps construction an
   expect(code).toBe(0); expect(seen).toEqual({ team: 'duo', home: '/tmp/h' })
   expect(overrides).toEqual({ home: '/tmp/h', orca: '/tmp/orca', summarize: true })
 })
+test.each(['SIGHUP', 'SIGTERM', 'SIGINT'] as const)('final-review I2: wl dispatcher run aborts the loop on %s and removes its listeners afterwards', async (sig) => {
+  let aborted: boolean | undefined
+  const before = process.listenerCount(sig)
+  const mk = () => ({ home: '/tmp/h', registry: { close() {} } }) as unknown as CommandDeps
+  const code = await run(['dispatcher', 'run', 'duo'], io().io,
+    cmds({ runDispatcherLoop: async (_d, _t, o) => { process.emit(sig); aborted = o?.signal?.aborted } }), mk)
+  expect(code).toBe(0); expect(aborted).toBe(true)
+  expect(process.listenerCount(sig)).toBe(before)
+})
 test('defaultMakeDeps: overrides become WINGLINE_HOME / WINGLINE_ORCA and summarize is wired', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'wl-home-'))
   const deps = defaultMakeDeps({ PATH: '', WINGLINE_HOME: '/ignored' }, () => {}, { home, orca: process.execPath, summarize: true })
