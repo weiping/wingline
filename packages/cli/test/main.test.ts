@@ -3,7 +3,7 @@ import { PassThrough } from 'node:stream'
 import { afterEach, expect, test } from 'vitest'
 import os from 'node:os'
 import path from 'node:path'
-import { READ_ONLY_CALLS, WinglineError, WRITE_COMMANDS, type AttentionReport, type CommandDeps } from '@wingline/core'
+import { READ_ONLY_CALLS, WinglineError, WRITE_COMMANDS, type AttentionReport, type CommandDeps, type RestoreResult, type TimelineEvent } from '@wingline/core'
 import { AUDIT } from '../src/audit-table.js'
 import { callLogOptions, defaultMakeDeps, installWarningFilter, isReadOnlyCall, run, type Commands } from '../src/cli.js'
 
@@ -23,6 +23,8 @@ const cmds = (over: Partial<Commands> = {}): Commands => ({
   send: async (_d, a) => ({ address: a.address, outcome: 'delivered', handle: 'h1' }),
   down: async (_d, a) => ({ team: a.team, posts: [{ address: 'builder@duo', outcome: a.close ? 'closed' : 'stopped' }] }),
   restore: async () => { throw new Error('未注入：restore') },
+  log: async () => { throw new Error('未注入：log') },
+  followLog: async () => { throw new Error('未注入：followLog') },
   createTask: async () => { throw new Error('未注入：createTask') },
   listTasks: async () => { throw new Error('未注入：listTasks') },
   listStale: async () => { throw new Error('未注入：listStale') },
@@ -54,7 +56,7 @@ const exec = (argv: string[], c: Commands = cmds()) => {
 }
 
 /** Commands 里允许只读、不进审计表的字段（新增命令忘了登记时下面那条测试会失败）。 */
-const READ_COMMANDS = ['ps', 'listTasks', 'listStale', 'showTask', 'runDispatcherLoop', 'dispatcherStatus', 'attention']
+const READ_COMMANDS = ['ps', 'listTasks', 'listStale', 'showTask', 'runDispatcherLoop', 'dispatcherStatus', 'attention', 'log', 'followLog']
 
 test('every write command is in the audit table and no read command is', () => {
   expect(Object.keys(AUDIT).sort()).toEqual([...WRITE_COMMANDS].sort())
@@ -533,4 +535,82 @@ test('wl ps shows the dispatcher line under the team title', async () => {
   const row = { address: 'builder@duo', agent: 'claude', status: 'live' as const, handle: 'h1', worktree: 'current', isLead: true }
   const r = await exec(['ps'], cmds({ ps: async () => [{ ...row, dispatcher: { state: 'stale', ageMs: 540_000 } }] }))
   expect(r.out).toContain('调度员：失联（心跳 9 分钟前）')
+})
+
+// —— wl restore / wl log ——
+
+/** 时间列按本地时区渲染，测试里用同一个算法算期望值，不断言某个固定时区。 */
+const hhmm = (iso: string) => {
+  const d = new Date(iso)
+  return [d.getHours(), d.getMinutes(), d.getSeconds()].map((n) => String(n).padStart(2, '0')).join(':')
+}
+const ymd = (iso: string) => {
+  const d = new Date(iso)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+const ev = (over: Partial<TimelineEvent> = {}): TimelineEvent => ({
+  id: 'command:1', at: '2026-10-16T10:00:01.000Z', source: 'command', actor: 'human', action: 'send', target: 'builder@duo', outcome: 'ok', detail: null, ...over,
+})
+
+const restoreResult = (over: Partial<RestoreResult> = {}): RestoreResult => ({
+  team: 'duo', dryRun: false, posts: [{ address: 'builder@duo', outcome: 'resumed', sessionId: 's1' }],
+  run: { outcome: 'kept', runId: 'run-1' }, dispatcher: { action: 'left', state: 'running' }, tasks: [], ...over,
+})
+
+test('wl restore passes dry-run/no-tasks/session through, prints the result and exits 3 when ambiguous', async () => {
+  let seen: unknown
+  const res = restoreResult({
+    posts: [{ address: 'builder@duo', outcome: 'ambiguous', candidates: [{ sessionId: 's1', updatedAt: null, messageCount: 3 }] }],
+    tasks: [{ taskId: '', owner: '', outcome: 'skipped', reason: '协调者未认领，未恢复任务；稍后重跑 wl restore' }],
+  })
+  const r = await exec(
+    ['restore', 'duo', '--json', '--no-tasks', '--session', 'builder=s1', '--session', 'checker=s2'],
+    cmds({ restore: async (_d, a) => { seen = a; return res } }),
+  )
+  expect(seen).toEqual({ team: 'duo', dryRun: false, noTasks: true, sessions: { builder: 's1', checker: 's2' } })
+  expect(r.code).toBe(3)
+  expect(JSON.parse(r.out).result).toEqual(res)
+})
+
+test('wl restore rejects --session without = and lists ambiguous candidates with the retry command', async () => {
+  expect((await exec(['restore', 'duo', '--session', 'builder'], cmds())).code).toBe(1)
+  const r = await exec(['restore', 'duo'], cmds({
+    restore: async () => restoreResult({
+      posts: [{ address: 'builder@duo', outcome: 'ambiguous', candidates: [{ sessionId: 's1', updatedAt: null, messageCount: 3 }] }],
+      tasks: [{ taskId: 'task-7', owner: 'builder@duo', outcome: 'skipped', reason: '任务主人未接回（ambiguous），不能替它恢复任务', retry: 'wl restore duo --session builder=s1' }],
+    }),
+  }))
+  expect(r.code).toBe(3)
+  expect(r.out).toContain('builder@duo')
+  expect(r.out).toContain('wl restore duo --session builder=s1')
+})
+
+test('wl log prints one line per event and a date row when the day changes', async () => {
+  const events = [ev({}), ev({ id: 'task:1', at: '2026-10-17T09:00:00.000Z', source: 'task', actor: 'builder@duo', action: 'done', target: 'task-1#2', outcome: null })]
+  const r = await exec(['log', 'duo'], cmds({ log: async () => ({ events, cursor: { task: 1, patrol: 0, command: 1 } }) }))
+  const lines = r.out.trimEnd().split('\n')
+  expect(lines[0]).toBe(`${hhmm('2026-10-16T10:00:01Z')}  命令  human  send  builder@duo  ok`)
+  expect(lines[1]).toBe(`—— ${ymd('2026-10-17T09:00:00Z')} ——`)
+  expect(lines[2]).toBe(`${hhmm('2026-10-17T09:00:00Z')}  任务  builder@duo  done  task-1#2`)
+})
+
+test('wl log --follow --json streams NDJSON, exits 0 on SIGINT and drops its listeners', async () => {
+  const before = process.listenerCount('SIGINT')
+  const mk = () => ({ registry: { close() {} } }) as unknown as CommandDeps
+  const h = io()
+  let aborted: boolean | undefined
+  const code = await run(['log', 'duo', '--follow', '--json'], h.io, cmds({
+    log: async () => ({ events: [ev({})], cursor: { task: 0, patrol: 0, command: 1 } }),
+    followLog: async (_d, _a, emit, o) => {
+      emit(ev({ id: 'command:2', action: 'task done' }))
+      process.emit('SIGINT')
+      aborted = o!.signal.aborted
+    },
+  }), mk)
+  expect(code).toBe(0)
+  expect(aborted).toBe(true)
+  expect(process.listenerCount('SIGINT')).toBe(before)
+  const lines = h.out().trimEnd().split('\n')
+  expect(lines.map((l) => JSON.parse(l).id)).toEqual(['command:1', 'command:2'])
 })

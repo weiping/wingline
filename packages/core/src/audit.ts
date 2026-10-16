@@ -38,7 +38,8 @@ export function clip(s: string, n = 60): string {
   return flat.length <= n ? flat : `${flat.slice(0, n)}…（共 ${flat.length} 字）`
 }
 
-type Command = (deps: CommandDeps, a: any) => Promise<unknown>
+/** 命令一律吃 deps 打头；后面的参数不限于一个（follow 类的命令还要 emit 与信号）。 */
+type Command = (deps: CommandDeps, ...a: any[]) => Promise<unknown>
 
 export interface AuditOptions {
   /** command 列的前缀，给包在更大界面里的调用方（3B）区分来源用。 */

@@ -1,5 +1,6 @@
 import {
-  WinglineError, type DoneResult, type DownResult, type PsRow, type SendResultRow, type ShownTask, type StaleItem, type TaskRow, type UpResult,
+  WinglineError, type DoneResult, type DownResult, type PsRow, type RestorePost, type RestoreResult, type SendResultRow, type ShownTask, type StaleItem,
+  type TaskRow, type TimelineEvent, type UpResult,
   type AttentionReport, type DispatcherHealth, type DispatcherStatus, type createTask, type escalateTask, type reassignTask, type recoverTask, type resolveGate, type startTask,
 } from '@wingline/core'
 
@@ -254,4 +255,82 @@ function staleSections(r: AttentionReport): string[] {
     else if (items.length) out.push([`${title}：`, ...items.map(line)].join('\n'))
   }
   return out
+}
+
+// —— wl restore / wl log ——
+
+const RESTORE_LABEL = {
+  kept: '仍在运行', resumed: '已接回原会话', fresh: '新起（上下文已丢失）',
+  ambiguous: '候选不唯一', uncertain: '不确定', failed: '失败',
+} as const
+
+/** 一行岗位结果；候选不唯一时把候选逐条列出来，并给出重试命令。 */
+function restorePostLines(p: RestorePost, team: string): string[] {
+  const out = [`  ${p.address}  ${RESTORE_LABEL[p.outcome]}${p.reason ? `  ${p.reason}` : ''}${p.sessionId ? `  会话 ${p.sessionId}` : ''}`]
+  for (const c of p.candidates ?? []) {
+    out.push(`      候选 ${c.sessionId}  最后活动 ${c.updatedAt ?? '-'}  ${c.messageCount ?? 0} 条消息`)
+  }
+  const retry = p.retry ?? (p.outcome === 'ambiguous' && p.candidates?.length ? `wl restore ${team} --session ${p.address.split('@')[0]}=<id>` : undefined)
+  if (retry) out.push(`      试：${retry}`)
+  return out
+}
+
+export function renderRestore(r: RestoreResult): string {
+  const head = `团队 ${r.team}${r.dryRun ? '（dry-run：只看不改）' : ''}`
+  const run = r.run ? [`  ${r.run.runId ?? '-'}  ${RUN_LABEL[r.run.outcome]}`] : []
+  const dispatcher = [`  ${r.dispatcher.action === 'restarted' ? '已重启' : r.dispatcher.action === 'left' ? '保持不动' : '未拉起'}  ${r.dispatcher.state}${r.dispatcher.reason ? `  ${r.dispatcher.reason}` : ''}`]
+  const tasks = r.tasks.length
+    ? r.tasks.map((t) => `  ${t.taskId || '-'}  ${t.owner || '-'}  ${TASK_OUTCOME[t.outcome]}${t.reason ? `  ${t.reason}` : ''}${t.retry ? `\n      重试：${t.retry}` : ''}`)
+    : ['  无']
+  return [
+    head,
+    '岗位：', ...r.posts.flatMap((p) => restorePostLines(p, r.team)),
+    'Run：', ...run,
+    '调度员：', ...dispatcher,
+    '任务：', ...tasks,
+  ].join('\n') + '\n'
+}
+
+const TASK_OUTCOME = { recovered: '已恢复', queued: '已排队', skipped: '未恢复', failed: '恢复失败' } as const
+
+const TIMELINE_SOURCE = { task: '任务', patrol: '巡查', command: '命令' } as const
+const SUMMARY_MAX = 120
+const pad2 = (n: number) => String(n).padStart(2, '0')
+
+/** 摘要压成一行，最长 SUMMARY_MAX 字；末尾的空列不留。 */
+function eventSummary(e: TimelineEvent): string {
+  const raw = typeof e.detail === 'string' ? e.detail : e.detail === null || e.detail === undefined ? '' : JSON.stringify(e.detail)
+  const flat = raw.replace(/[\r\n\t]+/g, ' ').trim()
+  const body = [e.outcome ?? '', flat].filter(Boolean).join(' ')
+  return body.length <= SUMMARY_MAX ? body : `${body.slice(0, SUMMARY_MAX)}…`
+}
+
+export function renderTimelineEvent(e: TimelineEvent): string {
+  const d = new Date(e.at)
+  const cols = [
+    `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`,
+    TIMELINE_SOURCE[e.source], e.actor || '-', e.action, e.target ?? '', eventSummary(e),
+  ]
+  while (cols.length && cols.at(-1) === '') cols.pop()
+  return cols.join('  ')
+}
+
+/**
+ * 跨天插一行日期；返回逐条打印的函数，`--follow` 与一次性输出共用同一套格式，
+ * 这样 follow 出来的样子和 `wl log` 一样。
+ */
+export function logPrinter(): (e: TimelineEvent) => string {
+  let day = ''
+  return (e) => {
+    const d = new Date(e.at)
+    const today = `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
+    const head = today === day ? '' : day ? `—— ${today} ——\n` : ''
+    day = today
+    return `${head}${renderTimelineEvent(e)}\n`
+  }
+}
+
+export const renderLog = (events: TimelineEvent[]): string => {
+  const print = logPrinter()
+  return events.map(print).join('')
 }

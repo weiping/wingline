@@ -4,13 +4,15 @@ import type { Writable } from 'node:stream'
 import { Command, CommanderError } from 'commander'
 import {
   READ_ONLY_CALLS, Registry, type CallLogOptions, WinglineError, attention, auditedCommands, claimTask, createCallLog, createOrcaClient, createOrcaRunner, createTask, doneTask, down, escalateTask, exitCodeOf,
-  listStale, listTasks, parseDuration, planTask, ps, reassignTask, recoverTask, releaseTask, resolveGate, resolveOrcaExecutable, restore, send, showTask, startTask,
+  followTimeline, listStale, listTasks, parseDuration, planTask, ps, readTimeline, reassignTask, recoverTask, releaseTask, resolveGate, resolveOrcaExecutable, restore, restoreExitCode, send, showTask, startTask,
   up, winglineHome, dispatcherUp, dispatcherDown, dispatcherStatus, dispatcherReply, freezePostCmd, unfreezePostCmd, hushCmd, unhushCmd, runDispatcherLoop, type CommandDeps,
+  type TimelineEvent, type TimelineSource,
 } from '@wingline/core'
 import { AUDIT } from './audit-table.js'
 import verified from './verified.json' with { type: 'json' }
 import {
-  errorDoc, renderAttention, renderDispatcherDown, renderDispatcherStatus, renderDispatcherUp, renderUnfreeze, renderCreate, renderDone, renderDown, renderError, renderEscalate, renderList, renderPs, renderReassign, renderRecover, renderResolve,
+  errorDoc, renderAttention, renderDispatcherDown, renderDispatcherStatus, renderDispatcherUp, renderUnfreeze, renderCreate, renderDone, renderDown, renderError, renderEscalate, renderList, renderLog, renderPs,
+  renderReassign, renderRecover, renderResolve, renderRestore, logPrinter,
   renderSend, renderShow, renderStale, renderStart, renderUp,
 } from './output.js'
 
@@ -26,6 +28,8 @@ export interface Commands {
   send: typeof send
   down: typeof down
   restore: typeof restore
+  log: typeof readTimeline
+  followLog: typeof followTimeline
   createTask: typeof createTask
   listTasks: typeof listTasks
   listStale: typeof listStale
@@ -52,13 +56,25 @@ export interface Commands {
 }
 
 const rawCommands: Commands = {
-  up, ps, send, down, restore, createTask, listTasks, listStale, showTask, claimTask, releaseTask, reassignTask, startTask, planTask, doneTask,
+  up, ps, send, down, restore, log: readTimeline, followLog: followTimeline, createTask, listTasks, listStale, showTask, claimTask, releaseTask, reassignTask, startTask, planTask, doneTask,
   escalateTask, resolveGate, recoverTask, dispatcherUp, dispatcherDown, runDispatcherLoop, dispatcherStatus, freezePostCmd, unfreezePostCmd,
   hushCmd, unhushCmd, dispatcherReply, attention,
 }
 /** 表里登记过的写命令每执行一次写一行审计（spec 6.2）。 */
 const realCommands: Commands = auditedCommands(rawCommands, AUDIT)
 const splitList = (s: string | undefined) => s?.split(',').filter(Boolean)
+
+/** `--session builder=s1` 可重复；写成只有岗位名就是用法错。 */
+const parseSessions = (list: string[]): Record<string, string> => {
+  const out: Record<string, string> = {}
+  for (const s of list) {
+    const i = s.indexOf('=')
+    if (i < 1) throw new WinglineError('input', 'session_override_invalid', `--session ${s} 无效：应写成 <post>=<sessionId>`)
+    out[s.slice(0, i)] = s.slice(i + 1)
+  }
+  return out
+}
+const collect = (v: string, acc: string[]) => [...acc, v]
 /** done：通过 0；gate 失败/转人工/绕过后补跑失败 1。 */
 const exitCodeOfDone = (r: { outcome: string }) => (r.outcome === 'done' ? 0 : 1)
 const PACKAGE_VERSION = (JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }).version
@@ -196,7 +212,7 @@ function registerTaskCommands(program: Command, commands: Commands, execute: Exe
     .action((id: string, o: AsJson) => execute(!!o.json, (d) => commands.recoverTask(d, { id, as: o.as }), (r) => renderRecover(r, id)))
 }
 
-function registerBaseCommands(program: Command, commands: Commands, execute: Execute): void {
+function registerBaseCommands(program: Command, commands: Commands, execute: Execute, io: RunIO): void {
   program.command('up <team.yaml>').description('拉起团队的全部岗位').option('--json', '输出 JSON')
     .option('--adopt-run <id>', '找回指定的 Run').option('--new-run', '丢弃旧 Run，新建一个')
     .action((specPath: string, o: { json?: boolean; adoptRun?: string; newRun?: boolean }) =>
@@ -214,6 +230,44 @@ function registerBaseCommands(program: Command, commands: Commands, execute: Exe
       execute(!!o.json, (d) => commands.send(d, { address, message, retryRequest: o.retryRequest }), renderSend))
   program.command('down <team>').description('停止团队；加 --close 关闭终端').option('--close', '关闭岗位终端').option('--json', '输出 JSON')
     .action((team: string, o: { close?: boolean; json?: boolean }) => execute(!!o.json, (d) => commands.down(d, { team, close: !!o.close }), renderDown))
+
+  program.command('restore <team>').description('重启之后把团队接回来：恢复岗位会话、Run、调度员与任务')
+    .option('--dry-run', '只看会做什么，不改动任何东西').option('--no-tasks', '不恢复任务，只接回岗位')
+    .option('--session <post=id>', '跳过搜索，直接用给定的会话接回该岗位（可重复）', collect, [])
+    .option('--json', '输出 JSON')
+    .action((team: string, o: { dryRun?: boolean; tasks?: boolean; session: string[]; json?: boolean }) =>
+      execute(!!o.json, (d) => commands.restore(d, {
+        team, dryRun: !!o.dryRun, noTasks: o.tasks === false, sessions: parseSessions(o.session),
+      }), renderRestore, restoreExitCode))
+
+  program.command('log <team>').description('团队时间线：任务、巡查与命令事件按时间合并')
+    .option('--task <id>', '只看某个任务').option('--post <post>', '只看某个岗位')
+    .option('--since <when>', '只看这段时间之后：90s、15m、2h 或 ISO 时间')
+    .option('--limit <n>', '只看最新 n 条', Number).option('--source <s>', '只看某个来源：task/patrol/command')
+    .option('--follow', '持续输出新事件，Ctrl-C 停止').option('--json', '每行一个 JSON（NDJSON）')
+    .action(async (team: string, o: {
+      task?: string; post?: string; since?: string; limit?: number; source?: string; follow?: boolean; json?: boolean
+    }) => {
+      const args = { team, task: o.task, post: o.post, since: o.since, limit: o.limit, source: o.source as TimelineSource | undefined }
+      if (!o.follow) return execute(!!o.json, (d) => commands.log(d, args), (r) => renderLog(r.events))
+      const ctl = new AbortController()
+      const stop = () => ctl.abort()
+      process.once('SIGINT', stop)
+      process.once('SIGTERM', stop)
+      try {
+        // 先把已有的事件打出来，再从那个游标往后跟；日期行与一次性输出共用同一套格式。
+        return await execute(false, async (d) => {
+          const print = o.json ? (e: TimelineEvent) => JSON.stringify(e) + '\n' : logPrinter()
+          const first = await commands.log(d, args)
+          for (const e of first.events) io.stdout.write(print(e))
+          await commands.followLog(d, { ...args, cursor: first.cursor }, (e) => io.stdout.write(print(e)), { signal: ctl.signal })
+          return {}
+        }, () => '')
+      } finally {
+        process.off('SIGINT', stop)
+        process.off('SIGTERM', stop)
+      }
+    })
 }
 
 export async function run(
@@ -249,7 +303,7 @@ export async function run(
     .exitOverride()
     .configureOutput({ writeOut: (s) => io.stdout.write(s), writeErr: (s) => { if (!json) io.stderr.write(s) } })
 
-  registerBaseCommands(program, commands, execute)
+  registerBaseCommands(program, commands, execute, io)
   registerTaskCommands(program, commands, execute)
   registerDispatcherCommands(program, commands, execute, io)
 

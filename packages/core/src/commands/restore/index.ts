@@ -11,7 +11,7 @@ import { gatherStaleInput, staleReasons } from '../task/query.js'
 import { ensureRun, type UpResult } from '../up.js'
 import { restorePost, type RestorePost, type RestorePostOutcome } from './posts.js'
 
-export type { RestorePostOutcome }
+export type { RestorePost, RestorePostOutcome }
 import { SESSION_ID } from './resume-command.js'
 
 export interface RestoreArgs {

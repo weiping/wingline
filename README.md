@@ -159,6 +159,37 @@ wl dispatcher reply duo <message_id> --body "用方案 a"
 wl dispatcher unfreeze checker@duo    # 同时列出冻结期间被跳过的派发
 ```
 
+### 重启之后：`wl restore`
+
+Orca 或本机重启后，岗位终端可能还在，但 agent 会话上下文会丢。雁阵在每次 `wl up` 时给岗位写入会话标记（`WLS-…`），`wl restore` 会按 `team.yaml` 顺序尝试把各岗位接回 Orca 里仍存在的会话，或在新终端里重新拉起并发送启动包。
+
+```bash
+wl restore duo                    # 接回 builder@duo、checker@duo，并恢复 Run / 调度员 / 卡住的任务
+wl restore duo --dry-run          # 只打印会做什么，不改终端、不写审计
+wl restore duo --no-tasks         # 只恢复岗位与 Run，不自动 wl task recover
+wl restore duo --session builder=<会话ID>   # 搜索到多个候选时，指定接哪一个
+```
+
+结果按「岗位 → Run → 调度员 → 任务」分节输出。`resumed` 表示接回了原会话；`fresh` 表示找不到可接回的会话，已新起终端——**上下文已丢失**，需要靠任务状态与 `wl log` 补上下文。`ambiguous` 时会列出候选会话与重试命令，退出码为 3。没有写入过标记的旧岗位只能走 `fresh`。
+
+开机自动恢复（无人值守）留到后续阶段；目前请在 Orca 起来后手动执行 `wl restore <团队>`。
+
+### 时间线：`wl log`
+
+`wl log` 把任务历史、调度员巡查与命令审计按时间合并成一条时间线，方便在重启或排障后回顾「刚才发生了什么」。
+
+```bash
+wl log duo                        # 默认最近 30 天内的记录
+wl log duo --since 2h             # 相对时长（也支持 ISO 时间）
+wl log duo --task task-1          # 只看某个任务
+wl log duo --post builder         # 与某岗位相关（actor 或 target）
+wl log duo --source command       # task | patrol | command
+wl log duo --limit 50
+wl log duo --follow               # 持续输出新事件（Ctrl+C 结束）
+```
+
+人类可读行形如 `10:00:01  命令  human  send  builder@duo  ok`；跨天会插入 `—— 2026-10-16 ——` 分隔行。审计明细超过 30 天会在读取时自动清理（失败只警告）。
+
 ## 调度员与 `wl attention`
 
 ```bash

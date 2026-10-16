@@ -69,3 +69,28 @@ test('spec 7.10 acceptance 1–5: up → up again → ps → send → down --clo
     await wl(['down', 'duo', '--close', '--json'], env).catch(() => {})
   }
 }, 300_000)
+
+// 需要人工重启 Orca：先 up → send 唯一标记 → 重启 Orca → restore → 画面 preview 仍含标记
+const liveRestart = process.env.WL_LIVE_RESTART === '1'
+test.skipIf(!liveRestart)('restore after Orca restart keeps builder session preview', async () => {
+  const { yaml, env } = sandbox()
+  const marker = `WINGLINE_LIVE_RESTORE_${Date.now()}`
+  try {
+    const up = await wl(['up', yaml, '--json'], env)
+    expect(up.json.ok).toBe(true)
+    await wl(['send', 'builder@duo', marker, '--json'], env)
+    // eslint-disable-next-line no-console
+    console.log('\n>>> 请在另一个终端重启 Orca（orca 进程），完成后在本测试继续等待 120s 内执行 restore…\n')
+    await new Promise((r) => setTimeout(r, 120_000))
+    const restored = await wl(['restore', 'duo', '--json'], env)
+    expect(restored.json.ok).toBe(true)
+    const deps = defaultMakeDeps(env, () => {})
+    const ps = await wl(['ps', 'duo', '--json'], env)
+    const builder = ps.json.result.find((r: { address: string }) => r.address === 'builder@duo')
+    expect(builder?.handle).toBeTruthy()
+    const show = await deps.orca.terminalShow({ handle: builder!.handle! })
+    expect(show.preview ?? '').toContain(marker)
+  } finally {
+    await wl(['down', 'duo', '--close', '--json'], env).catch(() => {})
+  }
+}, 600_000)

@@ -3,3 +3,5 @@ dist
 .superpowers
 spikes/out
 *.tsbuildinfo
+.pi/
+.claude/
