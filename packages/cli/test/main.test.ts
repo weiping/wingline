@@ -1,11 +1,10 @@
 import fs from 'node:fs'
 import { PassThrough } from 'node:stream'
 import { afterEach, expect, test } from 'vitest'
-import { WinglineError, type CommandDeps } from '@wingline/core'
 import os from 'node:os'
 import path from 'node:path'
-import { READ_ONLY_CALLS } from '@wingline/core'
-import { defaultMakeDeps, installWarningFilter, isReadOnlyCall, run, type Commands } from '../src/cli.js'
+import { READ_ONLY_CALLS, WinglineError, type AttentionReport, type CommandDeps } from '@wingline/core'
+import { callLogOptions, defaultMakeDeps, installWarningFilter, isReadOnlyCall, run, type Commands } from '../src/cli.js'
 
 function io() {
   const out: string[] = []
@@ -446,6 +445,10 @@ test('defaultMakeDeps: overrides become WINGLINE_HOME / WINGLINE_ORCA and summar
     expect(fs.existsSync(path.join(home, 'logs'))).toBe(true)
   } finally { deps.registry.close(); fs.rmSync(home, { recursive: true, force: true }) }
 })
+test('callLogOptions installs the summarize predicate only when summarize is set', () => {
+  expect(callLogOptions({ summarize: true })).toEqual({ summarize: isReadOnlyCall })
+  expect(callLogOptions({})).toEqual({})
+})
 test('isReadOnlyCall is true for READ_ONLY_CALLS entries and false for mutating calls', () => {
   const [group, sub] = READ_ONLY_CALLS[0]!
   expect(isReadOnlyCall([group, sub, '--json'])).toBe(true)
@@ -459,18 +462,19 @@ test('wl dispatcher freeze passes --reason through and reports success', async (
   expect(r.out).toContain('builder@duo 已冻结')
 })
 test('wl attention renders every section with commands; healthy dispatcher last, stale first; gate split from other stale', async () => {
-  const base = {
+  const base: Omit<AttentionReport, 'dispatcher'> = {
     team: 'duo',
     frozen: [{ post: 'builder@duo', reason: '循环', frozenAt: 'F', skippedChildren: 2 }],
-    signals: [{ team: 'duo', post: 'checker@duo', signal: 'no_progress', taskId: 't2', level: 2, command: 'wl send checker@duo hi' }],
-    questions: [{ team: 'duo', messageId: 'msg-7', asker: 'builder@duo', body: '用 a 还是 b', options: ['a', 'b'] }],
+    signals: [{ team: 'duo', post: 'checker@duo', signal: 'no_progress', taskId: 't2', level: 2, since: 'S', levelAt: 'L', lastNudgedAt: null, notifyCount: 1, nextDueAt: null, clearedAt: null, command: 'wl send checker@duo hi' }],
+    questions: [{ team: 'duo', messageId: 'msg-7', asker: 'builder@duo', body: '用 a 还是 b', options: ['a', 'b'], taskId: null, dispatchId: null, relayedAt: 'R', answeredAt: null }],
     stale: [
       { taskId: 't3', title: 'G', reason: 'blocked_waiting', owner: null, since: null, command: 'wl task resolve g1 --resolution <决定>' },
       { taskId: 't1', title: 'T', reason: 'dead_assignee', owner: 'b@duo', since: null, command: 'wl task recover t1' },
     ],
     unavailable: [],
   }
-  const healthy = await exec(['attention', 'duo'], cmds({ attention: async () => ({ ...base, dispatcher: { state: 'running', ageMs: 12_000 } }) as never }))
+  const report = (dispatcher: AttentionReport['dispatcher']): AttentionReport => ({ ...base, dispatcher })
+  const healthy = await exec(['attention', 'duo'], cmds({ attention: async () => report({ state: 'running', ageMs: 12_000 }) }))
   const lines = healthy.out.trimEnd().split('\n')
   expect(lines.at(-1)).toContain('调度员：运行中（心跳 12 秒前）')
   for (const c of ['wl dispatcher unfreeze builder@duo', 'wl send checker@duo hi', 'wl dispatcher reply duo msg-7 --body <回答>', 'wl task resolve g1', 'wl task recover t1']) expect(healthy.out).toContain(c)
@@ -480,7 +484,7 @@ test('wl attention renders every section with commands; healthy dispatcher last,
   expect(gate).toBeGreaterThan(-1); expect(rest).toBeGreaterThan(gate)
   expect(lines[gate + 1]).toContain('t3'); expect(lines[gate + 1]).not.toContain('t1')
   expect(lines[rest + 1]).toContain('t1')
-  const stale = await exec(['attention', 'duo'], cmds({ attention: async () => ({ ...base, dispatcher: { state: 'stale', ageMs: 540_000 } }) as never }))
+  const stale = await exec(['attention', 'duo'], cmds({ attention: async () => report({ state: 'stale', ageMs: 540_000 }) }))
   expect(stale.out.split('\n')[0]).toContain('调度员：失联')
 })
 test('wl dispatcher freeze requires --reason; hush parses --for; reply passes --again', async () => {

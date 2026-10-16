@@ -3,7 +3,7 @@ import path from 'node:path'
 import type { Writable } from 'node:stream'
 import { Command, CommanderError } from 'commander'
 import {
-  READ_ONLY_CALLS, Registry, WinglineError, attention, claimTask, createCallLog, createOrcaClient, createOrcaRunner, createTask, doneTask, down, escalateTask, exitCodeOf,
+  READ_ONLY_CALLS, Registry, type CallLogOptions, WinglineError, attention, claimTask, createCallLog, createOrcaClient, createOrcaRunner, createTask, doneTask, down, escalateTask, exitCodeOf,
   listStale, listTasks, parseDuration, planTask, ps, reassignTask, recoverTask, releaseTask, resolveGate, resolveOrcaExecutable, send, showTask, startTask,
   up, winglineHome, dispatcherUp, dispatcherDown, dispatcherStatus, dispatcherReply, freezePostCmd, unfreezePostCmd, hushCmd, unhushCmd, runDispatcherLoop, type CommandDeps,
 } from '@wingline/core'
@@ -77,11 +77,14 @@ export interface DepsOverrides {
   summarize?: boolean
 }
 
+/** CallLog 选项：summarize 为真时只读轮询只记摘要。 */
+export const callLogOptions = (o: DepsOverrides): CallLogOptions => (o.summarize ? { summarize: isReadOnlyCall } : {})
+
 export function defaultMakeDeps(inputEnv: NodeJS.ProcessEnv, warn: (m: string) => void, o: DepsOverrides = {}): CommandDeps {
   const env = { ...inputEnv, ...(o.home ? { WINGLINE_HOME: o.home } : {}), ...(o.orca ? { WINGLINE_ORCA: o.orca } : {}) }
   const home = winglineHome(env)
   const exe = resolveOrcaExecutable({ env, platform: process.platform, which: (n) => which(n, env) })
-  const runner = createOrcaRunner(exe, createCallLog(path.join(home, 'logs'), undefined, o.summarize ? { summarize: isReadOnlyCall } : {}))
+  const runner = createOrcaRunner(exe, createCallLog(path.join(home, 'logs'), undefined, callLogOptions(o)))
   return {
     orca: createOrcaClient(runner),
     registry: Registry.open(path.join(home, 'state.db')),
