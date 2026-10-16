@@ -4,7 +4,7 @@
 
 **Goal:** 控制台的团队编辑器（保存 + 预演、草稿）与“关于与诊断”页、`wl up --draft`、调度员把工作区状态与卡片注释同步到 Orca、`wl tui`（总览 / 收件箱 / 时间线，可处理待办）。
 
-**Architecture:** 规格相关的纯逻辑放在 `core/src/spec/`（`planSpecChange`、草稿保存与替换），服务端加 4 个 spec 接口与 1 个 about 接口；Orca 同步是调度员 `scan()` 末尾的一步，输入复用本轮的 `ScanSnapshot`；TUI 在进程内调用 core，复用 3B 的 `OrcaSnapshot`，自写 ANSI 渲染。
+**Architecture:** 规格相关的纯逻辑放在 `core/src/spec/`（`planSpecChange`、草稿保存与替换），服务端加 4 个 spec 接口与 1 个 about 接口；Orca 同步是调度员 `scan()` 末尾的一步，输入复用本轮的 `ScanSnapshot`；TUI 在进程内调用 core，复用 3B 的 `cachedOrca` 装饰器，自写 ANSI 渲染。
 
 **Tech Stack:** TypeScript、`yaml`（Document API，已是 core 依赖）、`node:readline`/`node:tty`、Preact（控制台页面）、vitest。
 
@@ -21,7 +21,7 @@
 - Orca 同步：只在值变化时写；连续 3 次失败后该 worktree 停止尝试直到调度员重启；重启后首轮只计算不写。
 - 编辑器校验防抖 400 毫秒；`yaml` 字段 ≤ 64 KB。
 - TUI 刷新：时间线每 2 秒，岗位与待办每 5 秒；总览底部 8 条时间线。
-- 新错误码：`draft_not_found`（1）、`spec_conflict`（409）、`spec_invalid`（400）、`tui_not_tty`（1）、`tui_unsupported_terminal`（1）。
+- 新错误码：`draft_not_found`（1）、`spec_conflict`（409）、`spec_invalid`（400）、`tui_not_tty`（1）、`tui_unsupported_terminal`（1，仅终端列数为 0 时）。
 - 函数 ≤ 50 行；提交信息末尾附 3A plan 中的两行署名。
 
 ## Review Focus
@@ -124,6 +124,7 @@ test('applyDraft: missing draft, invalid draft (no file touched), success with .
   - `up(deps, { specPath, draft: true })` → 先 `applyDraft(specPath)` 再照常执行；团队仍为 `up` 且草稿与现行哈希不同 → `team_spec_changed`，不改动文件
   - `interface AboutItem { key: string; value: string | number | null; source: 'env' | 'default' | 'registry' | 'file' }`；`about(deps: CommandDeps, o: { version: string; consoleFile: ConsoleFile | null }): { items: AboutItem[]; teams: Array<{ name: string; specPath: string; status: string; draft: boolean; dispatcher: string }> }`
   - 路由：`GET /api/teams/:team/spec`、`POST …/spec/validate`、`POST …/spec`、`POST …/spec/discard-draft`、`GET /api/about`（字段见 spec 第 4.4、5 节）；保存进审计（摘要只含 `wrote`、`path`、`hash`）
+  - `GET …/spec` 与 `validate` 的响应含 `parsed`（`parseDocument(text).toJS()`，语法错误为 `null`）；`validate` 接受可选的 `set: { path, value }`，先 `setField` 再校验，返回新的 `{ yaml, parsed, errors, preview }`（复审 I-6）
   - `attention` 的告警一节增加 `{ kind: 'draft_pending', path, command: 'wl down <team> → wl up <spec> --draft' }`（存在草稿时）
 
 - [ ] **Step 1: 写失败测试**
@@ -138,6 +139,8 @@ test('up --draft applies the draft then launches; with the team still up it refu
 test('about reports each item with its source (WINGLINE_ORCA → env, default home → default)', () => {})
 test('POST spec returns 409 spec_conflict on a stale baseHash and 400 spec_invalid with per-field errors', async () => {})
 test('validate never writes a file', async () => {})
+test('validate with set applies the change via setField and returns the new yaml and parsed', async () => {})
+test('GET spec returns parsed; a YAML syntax error gives parsed null and a yaml_syntax error', async () => {})
 test('attention lists draft_pending when a draft exists', async () => {})
 ```
 
@@ -157,7 +160,7 @@ test('attention lists draft_pending when a draft exists', async () => {})
 
 **Interfaces:**
 - Consumes: Task 3 的接口
-- 前端不解析 YAML：表单的每次修改调用 `POST …/spec/validate`，请求体除 `yaml` 外可带 `{ set: { path, value } }`；服务端用 `setField` 生成新 YAML 并一并返回（在 Task 3 的 validate 接口中实现：返回 `{ yaml, errors, preview }`）。YAML 视图直接提交文本。
+- 前端不解析 YAML：表单显示 `parsed` 中的现值；每次修改调用 `POST …/spec/validate`，请求体为 `{ yaml, set: { path, value } }`，用返回的 `yaml` 与 `parsed` 刷新两个视图。YAML 视图直接提交文本（不带 `set`）。
 
 - [ ] **Step 1: 写失败测试**：表单与 YAML 两个视图切换后内容一致；修改停顿 400 毫秒后才发 validate（假定时器）；错误显示在对应字段旁；预演列出岗位去向与命令，`closeSuggested` 时显示 `--close` 提示；已有草稿时默认载入草稿并显示“丢弃草稿”；409 时提示重新加载；关于页每项显示来源标签。
 - [ ] **Step 2: 运行确认失败。**
@@ -247,13 +250,13 @@ test('LineInput edits with left/right/backspace and submits on enter, cancels on
 - Test: `packages/cli/test/tui/app.test.ts`、`packages/cli/test/tui/views.test.ts`
 
 **Interfaces:**
-- Consumes: Task 6；`OrcaSnapshot`（3B）、`ps`、`attention`、`readTimeline`/`readTimelineAfter`（3A）、`auditedCommands`（前缀 `tui:`）
+- Consumes: Task 6；`cachedOrca`（3B，以 `{ ...deps, orca: cachedOrca(deps.orca) }` 传给 core 函数）、`ps`、`attention`、`readTimeline`/`readTimelineAfter`（3A）、`auditedCommands`（前缀 `tui:`）
 - Produces:
   - `interface TuiState { view: 'overview' | 'inbox' | 'timeline'; selected: number; menu: MenuItem[] | null; input: LineInput | null; confirm: PendingAction | null; status: string; lastAction: PendingAction | null; stale: boolean }`
   - `reduce(s: TuiState, k: Key, data: TuiData): { state: TuiState; effect?: { kind: 'run'; action: PendingAction } | { kind: 'refresh' } | { kind: 'quit' } }` — 纯函数；`R` 在 `lastAction` 结果不确定时重放同一参数与 `retryRequest`
   - `renderView(s: TuiState, data: TuiData, size: { cols: number; rows: number }): string[]` — 宽度 < 40 时只返回一行“窗口太窄”
   - `runTui(deps: CommandDeps, team: string, io: { stdin: ReadStream; stdout: WriteStream }, o?: { signal?: AbortSignal }): Promise<void>` — 进入时 `Screen.enter`、raw 模式；`finally`、`process.on('exit')`、SIGINT/SIGTERM/SIGHUP 都调 `restore`；未捕获异常先 `restore` 再抛出
-  - CLI：`wl tui [team]`；省略团队名的选择逻辑；非 TTY → `tui_not_tty`；Windows 上 `stdout.hasColors?.()` 为假或无法启用 VT → `tui_unsupported_terminal`
+  - CLI：`wl tui [team]`；省略团队名的选择逻辑；非 TTY → `tui_not_tty`；列数为 0 → `tui_unsupported_terminal`；Windows 上没有 `WT_SESSION` 也没有 `TERM_PROGRAM` 时只打印一行警告后继续（复审 M-7）
 
 - [ ] **Step 1: 写失败测试**
 
@@ -267,6 +270,7 @@ test('an exception inside the loop restores the terminal before rethrowing', asy
   // 注入一个在第二次刷新时抛错的 attention；断言内存终端最后的写入含退出备用屏幕与显示光标序列，且 stdin.setRawMode(false) 被调用
 })
 test('not a TTY → tui_not_tty exit 1', async () => {})
+test('on win32 without WT_SESSION/TERM_PROGRAM a warning is printed and the TUI still starts', async () => {})
 test('screen snapshot of the overview view', () => { /* renderView 输出与内联快照比较 */ })
 ```
 

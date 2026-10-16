@@ -42,3 +42,29 @@
 1. 按第 1 节修改 3A、3B、3C 的 spec 与计划（I-1 至 I-6），第 2 节的次要项一并写进对应计划任务。
 2. 修改后做一次针对性复核，只看改动处。
 3. 推送 `docs/phase-3a` 分支并开 PR 合并这批文档，再按选定的执行方式从 3A 开始实施。
+
+## 5. 修订后的针对性复核（2026-10-16）
+
+只看本轮改动处，逐条核对是否落到 spec 与计划里、前后是否一致：
+
+| # | 结果 | 落点 |
+| --- | --- | --- |
+| I-1 | 已修 | 3A spec §5.2 第 3 步“restore 的代数独立计数”；3A 计划 Task 7 `restoreGen` 与“两次重启”测试 |
+| I-2 | 已修 | 3A spec §4.3“标记不外泄”与 §5.2 搜索后的排除；3A 计划 Review Focus 第 1 条、Task 6 排除规则与测试、Task 10 输出不含 `WLS-` 的断言；3B spec 与计划的岗位详情只显示会话 ID、读接口不含标记的测试；3D spec §5.2 引用该规定 |
+| I-3 | 已修 | 3B spec §5.1 改为 200 + meta refresh 并说明原因；探针第 2 条增加跳转后首个请求的检查；3B 计划 Task 8 的接口与测试 |
+| I-4 | 已修 | 3B spec §6.1、§8 改为 `cachedOrca` 装饰器；3B 计划 Global Constraints、Architecture、Task 2（接口与“core 查询经装饰器只调一次”的测试）、Task 5–7 的依赖；3C spec §7.4、§9 与 3C 计划 Architecture、Task 7 |
+| I-5 | 已修 | 3B spec §4.1 增加 `--worktree`、§4.2 的 worktree 规则、错误码 `console_no_worktree`；3B 计划 Global Constraints、Task 8 的 `consoleWorktree` 与测试 |
+| I-6 | 已修 | 3C spec §4.4 的 `parsed` 与 `set`；3C 计划 Task 3 的接口与测试、Task 4 的前端约定 |
+| M-1 | 已写入 | 3A 计划 Task 9 Step 3 |
+| M-2 | 已写入 | 3B 计划 Task 8 定义 `selfCommand`，3D 计划 Task 6 改为复用 |
+| M-3 | 已写入 | 3A 计划 Task 7 Interfaces 与测试 |
+| M-4 | 已写入 | 3A spec 风险表、3A 计划 Task 8 Step 3 |
+| M-5 | 已写入 | 3B 计划 Task 9 Step 3 与构建产物测试 |
+| M-6 | 已写入 | 3D 计划 Task 3 测试 |
+| M-7 | 已写入 | 3C spec §7.5 与错误表、3C 计划 Global Constraints 与 Task 7 |
+| M-8 | 已写入 | 3D spec §7.2 `status`、3D 计划 Task 6 接口与测试 |
+| M-9 | 已写入 | 3B spec 风险表、3B 计划 Task 13 README 要求 |
+
+复核中顺带修正：3A 计划 Review Focus 编号与“`team_busy` 测试归 Task 8”的归属；3C 计划 Architecture 中残留的旧名 `OrcaSnapshot`。全部 8 份文档中已无 `OrcaSnapshot`、`launchArgs`、`restore_nothing`、“工作目录为 `WINGLINE_HOME`”等旧说法。
+
+**结论：第 1、2 节的问题均已处理，可以合并这批文档并进入实现。**

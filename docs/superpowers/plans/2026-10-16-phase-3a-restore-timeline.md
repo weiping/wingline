@@ -30,11 +30,12 @@
 
 ## Review Focus
 
-1. **macOS 上 `cwd` 带 `/private` 前缀**：worktree 记为 `/tmp/x`，搜索命中的 `cwd` 是 `/private/tmp/x`；用户期望照样接回。比较前两边都做 `fs.realpathSync`（路径不存在时用原值）。测试归 Task 6。
-2. **加了会话标记后启动包超过 12 000 字符**：标记行计入上限，超限时报 `briefing_too_long`，而不是静默截断或在拉起一半时失败。测试归 Task 4。
-3. **`restore` 与 `wl up` 同时执行**：后到的一方得到 `team_busy`，不会建出两个同名终端。测试归 Task 7。
-4. **审计摘要里的换行与控制字符**：多行的 `wl send` 正文在时间线上仍是一行，不破坏 `wl log` 的逐行输出与 NDJSON。测试归 Task 9。
-5. **同一秒内的多条事件**：`wl log` 的合并排序稳定（按 `at`，再按来源 `task`<`patrol`<`command`，再按表内 id），`--follow` 不重复也不漏行。测试归 Task 10。
+1. **标记泄露进别的会话**（复审 I-2）：标记不出现在任何 CLI 输出、`--json`、审计摘要里；两条命中且其中一条已是另一岗位的 `session_id` 时判为 `found`。测试归 Task 6 与 Task 10。
+2. **macOS 上 `cwd` 带 `/private` 前缀**：worktree 记为 `/tmp/x`，搜索命中的 `cwd` 是 `/private/tmp/x`；用户期望照样接回。比较前两边都做 `fs.realpathSync`（路径不存在时用原值）。测试归 Task 6。
+3. **加了会话标记后启动包超过 12 000 字符**：标记行计入上限，超限时报 `briefing_too_long`，而不是静默截断或在拉起一半时失败。测试归 Task 4。
+4. **`restore` 与 `wl up` 同时执行**：后到的一方得到 `team_busy`，不会建出两个同名终端。测试归 Task 8。
+5. **审计摘要里的换行与控制字符**：多行的 `wl send` 正文在时间线上仍是一行，不破坏 `wl log` 的逐行输出与 NDJSON。测试归 Task 9。
+6. **同一秒内的多条事件**：`wl log` 的合并排序稳定（按 `at`，再按来源 `task`<`patrol`<`command`，再按表内 id），`--follow` 不重复也不漏行。测试归 Task 10。
 
 ---
 
@@ -254,6 +255,7 @@ test('codex follows the probe result', () => { /* 按 Task 1 结论；未定前�
   - `type SessionLookup = { kind: 'found'; sessionId: string; via: 'override' | 'cached' | 'search' } | { kind: 'none'; reason: string } | { kind: 'ambiguous'; candidates: Array<{ sessionId: string; updatedAt: string | null; messageCount: number | null }> } | { kind: 'uncertain'; reason: string }`
   - `findSession(deps: CommandDeps, post: PostRow, worktreePath: string, override?: string): Promise<SessionLookup>`
   - `samePath(a: string, b: string): boolean` — 两边 `fs.realpathSync`（不存在时用原值）后比较
+  - 判定条数之前，排除 `session_id` 已被本团队其他岗位登记的命中（复审 I-2）
 
 - [ ] **Step 1: 写失败测试**
 
@@ -267,6 +269,9 @@ test('cwd under a symlinked prefix still matches (macOS /private/tmp)', async ()
 })
 test('zero hits → none with reason 未找到原会话; no marker → none with reason 阶段 3 之前启动', async () => {})
 test('more than one matching hit → ambiguous with candidates', async () => {})
+test('a hit already bound to another post of the team is excluded before counting', async () => {
+  // 两条命中：s-other 已是 checker@duo 的 sessionId，s1 未被占用 → found s1
+})
 test('search failure → uncertain, never none', async () => { /* o.searchError = new WinglineError('uncertain', 'timeout', 'x') */ })
 ```
 
@@ -289,7 +294,9 @@ test('search failure → uncertain, never none', async () => { /* o.searchError 
   - `type RestorePostOutcome = 'kept' | 'resumed' | 'fresh' | 'ambiguous' | 'uncertain' | 'failed'`
   - `interface RestorePost { address: string; outcome: RestorePostOutcome; sessionId?: string; reason?: string; candidates?: Array<{ sessionId: string; updatedAt: string | null; messageCount: number | null }>; retry?: string; noticeSkipped?: string }`
   - `restorePost(l: Launch, post: PostSpec, o: { dryRun: boolean; override?: string; briefing: string }): Promise<RestorePost>`
-- 请求键：`restore:<team>:<post>:<gen>:<step>`（`gen` 用 `lifetimeGen`），`step` 取 `create`/`wait`/`notice`；`fresh` 走 Task 4 的 `up` 拉起路径（同一 `requestId` 命名空间）。
+- 请求键：`restore:<team>:<post>:<gen>:<step>`，`step` 取 `create`/`wait`/`notice`；`fresh` 走 Task 4 的 `up` 拉起路径（同一 `requestId` 命名空间）。
+- `restoreGen(reg: Registry, team: string, post: string, located: boolean): number` — 已完成的 `restore:<team>:<post>:<g>:create` 中最大的 `g` 加 1；终端仍活着（`located`）或本代 `create` 尚未完成时不前进（复审 I-1）。**不用 `lifetimeGen`**，它只统计 `wl up` 的键。
+- 处理顺序：牵头岗先，其余按 `team.yaml` 顺序；接回或新开成功后 `setPostHandle` 并 `setPostStatus(address, 'live')`（复审 M-3）。
 - 接回提示文本：`[雁阵] 重启后已接回本会话，你的地址仍是 ${address}。`
 
 - [ ] **Step 1: 写失败测试**
@@ -309,6 +316,10 @@ test('dry run reports the would-be outcome and makes no Orca writes', async () =
   // dryRun: true → o.created 与 o.sent 为空；registry 的 requests 表无新行
 })
 test('rerun after the resume notice was sent does not resend it', async () => {})
+test('a second Orca restart after a first restore creates a new terminal with the new session id', async () => {
+  // 第一次 restore 接回 s1；再次清空 o.terminals 并把命中改为 s2；第二次 restore：o.created 新增一条，命令以 --resume s2 结尾
+})
+test('the lead is processed first and handle/status are updated', async () => {})
 ```
 
 - [ ] **Step 2: 运行确认失败。**
@@ -352,7 +363,7 @@ test('exit code: all good 0, any ambiguous/uncertain 3, orca failure without unc
 `flow.test.ts`（端到端，FakeOrca）：`wl up` duo → 模拟 Orca 重启（清空 `o.terminals`、旧 handle 失效、`o.sessions` 填入两岗位的标记命中）→ 一个 dispatched 任务的 assignee 失效 → `restore`：两岗位 `resumed`、Run `reclaimed`、任务 `recovered`；再跑一次：全部 `kept`，没有新的 `terminalCreate`、接回提示与派发。
 
 - [ ] **Step 2: 运行确认失败。**
-- [ ] **Step 3: 实现**（整个函数体在 `registry.withTeamLock` 内；`dryRun` 时 Run 只读出 `teams.run_id/coordinator_handle` 现状、调度员只读出 `dispatcherHealth`、任务只列出 `dead_assignee`）。
+- [ ] **Step 3: 实现**（整个函数体在 `registry.withTeamLock` 内；`dryRun` 时 Run 只读出 `teams.run_id/coordinator_handle` 现状、调度员只读出 `dispatcherHealth`、任务只列出 `dead_assignee`）。第 6 步在 `dispatcherUp` 返回（已确认心跳）之后执行，执行前重新读取 `teams.coordinator_handle`（复审 M-4）。
 - [ ] **Step 4: 运行确认通过。**
 - [ ] **Step 5: 提交** — `git commit -m "feat(restore): orchestrate posts, run, dispatcher and tasks"`
 
@@ -391,7 +402,7 @@ test('restore --dry-run is not audited', async () => {})
 ```
 
 - [ ] **Step 2: 运行确认失败。**
-- [ ] **Step 3: 实现。** 团队名：地址参数取 `@` 之后；任务 id 参数经 `registry.getTaskExt(id)?.team`；取不到写 `-`。
+- [ ] **Step 3: 实现。** 团队名：地址参数取 `@` 之后；任务 id 参数经 `registry.getTaskExt(id)?.team`；`up` 成功时取结果里的 `team`，失败时为 `-`，不为审计单独加载规格；取不到写 `-`。执行者在命令执行**之后**解析（`resolveActor`），解析失败记 `unknown`，不重试，避免 Orca 不可达时每条命令多一次失败调用（复审 M-1）。
 - [ ] **Step 4: 运行确认通过** — `pnpm vitest run packages/core/test/audit.test.ts packages/cli/test`。
 - [ ] **Step 5: 提交** — `git commit -m "feat(audit): audited command wrapper"`
 
@@ -430,6 +441,8 @@ test('follow emits only rows after the cursor, never twice, and stops on abort',
 })
 test('unknown team → team_unknown', () => {})
 ```
+
+标记不外泄（复审 I-2）：对 `ps`、`attention`、`log`、`restore` 的 `--json` 输出与 `audit_events.detail` 断言不含 `WLS-`。
 
 CLI（`main.test.ts`）：`wl restore duo --json` 透传 `{ team, dryRun, noTasks, sessions }`（`--session builder=s1 --session checker=s2` → `{ builder: 's1', checker: 's2' }`；缺 `=` → 退出码 1）；`wl restore` 结果含 `ambiguous` 时退出码 3；`wl log duo` 每事件一行，形如 `10:00:01  命令  human  send  builder@duo  ok`，跨天插入日期行；`wl log duo --follow --json` 输出 NDJSON 并在 SIGINT 后退出码 0。
 

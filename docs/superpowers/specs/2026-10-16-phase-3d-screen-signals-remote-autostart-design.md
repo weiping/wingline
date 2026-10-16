@@ -115,7 +115,7 @@ posts:
   - 命中有 `cwd` 且等于岗位 worktree 的绝对路径 → 保留；
   - 命中 `cwd` 为空 → 只凭标记判断（标记本身唯一），保留；
   - 命中有 `cwd` 但不等 → 排除。
-  - 之后按 3A 的规则判定（恰好 1 条 → 接回；0 条 → `fresh`；多条 → `ambiguous`）。
+  - 之后按 3A 的规则判定：先排除已被本团队其他岗位登记为 `session_id` 的会话，再看条数（恰好 1 条 → 接回；0 条 → `fresh`；多条 → `ambiguous`）。`cwd` 为空时只凭标记判断，3A 第 4.3 节“标记不外泄”的规定在这里尤其关键。
 - 恢复命令不变：岗位启动命令加恢复参数（3A 第 5.3 节），例如 `claude-lima --dangerously-skip-permissions --resume <id>`。README 写明：包装脚本必须把参数原样传给 agent（例如 `exec limactl shell agent claude "$@"`）。
 - `orca search` 的 `resumeCommand` 在远端环境被扣留不影响本设计：雁阵从不使用它，只用 `sessionId`。
 
@@ -161,7 +161,7 @@ wl autostart status [--json]
 
 - `install` 幂等：重复执行覆盖自己的文件 / 任务。
 - `uninstall`：删除自己的文件 / 任务并从服务管理器注销；没安装过 → 成功（无操作）。
-- `status`：是否已安装、文件 / 任务位置、将执行的命令、`autostart.log` 最后 20 行；Linux 上额外检查 `loginctl show-user <user> -p Linger`，未开启时提示“无界面或 SSH 场景需要 loginctl enable-linger <user>”。
+- `status`：是否已安装、文件 / 任务位置、将执行的命令（并检查其中的 node 与入口脚本是否仍存在；不存在时提示“Node 路径已变化，请重新 wl autostart install”）、`autostart.log` 最后 20 行；Linux 上额外检查 `loginctl show-user <user> -p Linger`，未开启时提示“无界面或 SSH 场景需要 loginctl enable-linger <user>”。
 - Linux 上 Orca 以系统服务运行时（例如 `orca-serve.service`），用户服务无法声明在其之后启动，依靠 `--wait-orca` 等待。
 - 平台没有对应机制（例如 Linux 上没有 systemd 用户会话）→ `autostart_unsupported`。
 - `autostart.log` 与其他日志一样保留 7 天（按天清理时一并处理）。

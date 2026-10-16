@@ -31,7 +31,7 @@
 新增 `spikes/console-tab.ts`，在 macOS 或 Linux 真机上跑，结论写回 `spikes/REPORT.md`：
 
 1. Orca 是否提供在内置浏览器里打开 URL 的 CLI 命令（总纲写作 `orca tab create --url …`，以 `orca --help` 实际列出的为准），能否打开 `http://127.0.0.1:<port>/…`。
-2. 内置浏览器里，`Set-Cookie`（HttpOnly、SameSite=Strict）能否写入并在后续请求中带上；`EventSource` 能否保持连接。
+2. 内置浏览器里，`Set-Cookie`（HttpOnly、SameSite=Strict）能否写入，经 meta refresh 跳转后的首个请求与后续请求是否带上；`EventSource` 能否保持连接。
 3. 在 Orca 终端里长期运行一个本地 HTTP 服务，页面断开、重连后服务是否稳定。
 
 判读：
@@ -45,7 +45,7 @@
 ### 4.1 命令
 
 ```
-wl console [--port <n>] [--open] [--link] [--json]
+wl console [--port <n>] [--open] [--worktree <选择器>] [--link] [--json]
 ```
 
 - **默认**：前台运行服务，绑定 `127.0.0.1`，端口随机（`--port` 指定时用指定端口；被占用 → `console_port_in_use`，退出码 1）。启动后在标准输出打印一次性登录链接。
@@ -60,7 +60,7 @@ wl console [--port <n>] [--open] [--link] [--json]
 ### 4.2 `--open`
 
 1. 已有服务在运行 → 申请新登录链接，跳到第 3 步。
-2. 没有服务 → 在 Orca 里新建终端 `console@wingline`（工作目录为 `WINGLINE_HOME`），命令为 `wl console --home <home> --orca <orca 路径>`（做法与 2B 调度员的 `dispatcher up` 相同，Windows 用 PATH 上的 `node` 执行入口脚本）；轮询 `console.json`（每 200 毫秒，最多 10 秒）直到出现可连的服务，再经控制接口申请登录链接。等不到 → `console_start_unconfirmed`（退出码 3，提示到 `console@wingline` 终端里查看）。
+2. 没有服务 → 在 Orca 里新建终端 `console@wingline`。`terminal create` 需要 worktree 选择器：取 `--worktree <选择器>`；未给时取第一个状态为 `up` 的团队的牵头岗 worktree；一个都没有 → `console_no_worktree`（退出码 1，提示先 `wl up`，或直接在任意终端运行 `wl console`）（复审 I-5）。命令为 `wl console --home <home> --orca <orca 路径>`（做法与 2B 调度员的 `dispatcher up` 相同，Windows 用 PATH 上的 `node` 执行入口脚本）；轮询 `console.json`（每 200 毫秒，最多 10 秒）直到出现可连的服务，再经控制接口申请登录链接。等不到 → `console_start_unconfirmed`（退出码 3，提示到 `console@wingline` 终端里查看）。
 3. 用第 3 节探针确认的命令在 Orca 内置浏览器里打开登录链接；Orca 不支持 → 打印链接，提示 `console_tab_unsupported`，退出码 0。
 
 ### 4.3 控制接口
@@ -72,7 +72,7 @@ wl console [--port <n>] [--open] [--link] [--json]
 ### 5.1 登录
 
 - 一次性登录链接 `http://127.0.0.1:<port>/auth?t=<token>`：token 为 32 字节随机数（base64url），只能使用一次，5 分钟后过期，服务内存中保存其哈希。
-- 访问登录链接 → 校验通过后创建会话，返回 `Set-Cookie: wl_sid=<会话 id>; HttpOnly; SameSite=Strict; Path=/`，302 跳到 `/`。会话有效期 12 小时，保存在服务内存中（服务重启后需要重新登录，用 `wl console --link` 取新链接）。
+- 访问登录链接 → 校验通过后创建会话，返回 `Set-Cookie: wl_sid=<会话 id>; HttpOnly; SameSite=Strict; Path=/`，响应为 200 的小页面，用 `<meta http-equiv="refresh" content="0;url=/">` 跳到 `/`。不用 302：登录链接通常从 Orca 或系统浏览器外部打开，Chromium 系浏览器在由外部发起的重定向链上不发送 `SameSite=Strict` cookie，首屏会 401；由页面自身发起的同源跳转则会带上（复审 I-3）。会话有效期 12 小时，保存在服务内存中（服务重启后需要重新登录，用 `wl console --link` 取新链接）。
 - token 无效、已用或过期 → 返回一个说明页“链接已失效，请运行 wl console --link 获取新链接”，状态码 401。
 
 ### 5.2 读请求
@@ -101,7 +101,7 @@ wl console [--port <n>] [--open] [--link] [--json]
 
 - **响应格式**与命令行 `--json` 相同：成功 `{ ok: true, result }`，失败 `{ ok: false, error: { kind, code, message, hint } }`；结果不确定时 `error` 里带 CLI 给出的 `retry` 提示与 `retryRequest`。
 - **状态码**：`input` → 400，`orca` → 502，`uncertain` → 504，`internal` → 500，未登录 → 401，写请求校验失败 → 403，Host 不符 → 421，路由不存在 → 404。
-- **Orca 只读调用的合并（`core/src/view/snapshot.ts`）**：`task-list`、`terminal list` 按团队缓存，最多 5 秒查一次，供所有读请求与 SSE 共用；同一团队的并发请求等待同一次进行中的调用。任何写请求完成后作废该团队的缓存。
+- **Orca 只读调用的合并（`core/src/view/snapshot.ts`）**：一个缓存型的 `OrcaClient` 装饰器 `cachedOrca`，包住 `deps.orca`，服务端把 `{ ...deps, orca: cachedOrca(deps.orca) }` 传给所有 core 函数。只缓存只读方法（`taskList`、`terminalList`、`terminalShow`、`workerList`、`runShow`），同参数 5 秒内只调用一次、并发请求共享同一次进行中的调用；写方法直接透传，完成后作废全部缓存。必须做成装饰器而不是另一套查询函数：`ps`、`attention`、`listTasks` 等 core 函数内部直接调用 `deps.orca`，只有替换掉 `deps.orca` 才能让它们也命中缓存（复审 I-4）。
 - 团队名、岗位、任务 id 等路径参数先按现有规则校验（小写字母、数字、连字符；任务 id 按 Orca 的格式），不合法 → 400 `input:invalid_param`。
 
 ### 6.2 读接口（GET）
@@ -110,7 +110,7 @@ wl console [--port <n>] [--open] [--link] [--json]
 | --- | --- | --- |
 | `/api/session` | `{ csrfToken, version, teams: string[] }` | — |
 | `/api/teams` | 每个团队：岗位状态摘要、调度员状态、待办数 | `ps`、`dispatcherHealth`、`attention` |
-| `/api/teams/:team` | 岗位表（含冻结 / 静音 / 会话标记）、Run、调度员状态 | `ps`、`dispatcher status` |
+| `/api/teams/:team` | 岗位表（含冻结 / 静音 / 会话 ID）、Run、调度员状态 | `ps`、`dispatcher status` |
 | `/api/teams/:team/attention` | 同 `wl attention --json` | `attention` |
 | `/api/teams/:team/tasks?status&tags&stale` | 任务列表 | `task list` |
 | `/api/teams/:team/tasks/:id` | 任务详情与历史 | `task show --history` |
@@ -156,7 +156,7 @@ wl console [--port <n>] [--open] [--link] [--json]
 | 收件箱 | `/t/:team/inbox` | `wl attention` 的分节：调度员失联、待回答的提问、等待决策的 gate、冻结岗位、卡住的任务、巡查信号、告警 | 每条旁边的操作按钮（提问 → 回答；gate → resolve / 改派；派发失主 → recover；冻结 → 解冻；巡查信号 → 静音 / 发消息）。没有对应写接口的（例如需要岗位自己执行的 `wl task done`）显示可复制的命令 |
 | 任务看板 | `/t/:team/tasks` | 按 ready / dispatched / blocked / completed / failed 分列；卡片显示标题、主人、标签、第几轮、卡住原因角标；按标签、主人、“只看卡住的”筛选 | 新建任务（可直接派给岗位） |
 | 任务详情 | `/t/:team/tasks/:id` | 标题、状态、主人、计划、父 / 子任务（评审 / 交接链）、闸门失败次数、最近一次完成的结果与 gate 输出文件路径、完整变迁历史 | 按状态显示：转人工、改派、recover、resolve |
-| 岗位详情 | `/t/:team/posts/:post` | 状态、会话标记与会话 ID、当前与排队任务、巡查信号及等级、冻结 / 静音信息、终端最后 40 行（只读，5 秒刷新）、该岗位的时间线 | 发消息、冻结 / 解冻、静音 / 取消静音 |
+| 岗位详情 | `/t/:team/posts/:post` | 状态、会话 ID（不显示会话标记，见 3A 第 4.3 节）、当前与排队任务、巡查信号及等级、冻结 / 静音信息、终端最后 40 行（只读，5 秒刷新）、该岗位的时间线 | 发消息、冻结 / 解冻、静音 / 取消静音 |
 | 时间线 | `/t/:team/log` | `TimelineEvent` 列表，新的在上，实时追加；按来源、岗位、任务、时间范围筛选；展开查看完整 `detail`，点任务 / 岗位跳转详情 | — |
 
 通用交互：
@@ -177,7 +177,7 @@ packages/core/src/server/
   static.ts      # 静态资源、SPA 回退、CSP 与安全响应头
   control.ts     # /_control/link 与 console.json 的读写
 packages/core/src/view/
-  snapshot.ts    # 按团队 5 秒缓存的 Orca 只读结果；写后作废（放在 view/ 而非 server/，3C 的 wl tui 复用）
+  snapshot.ts    # cachedOrca：缓存只读方法 5 秒的 OrcaClient 装饰器；写后作废（放在 view/ 而非 server/，3C 的 wl tui 复用）
 packages/web/    # 私有工作区包：Preact + Vite；构建产物输出到 packages/cli/dist/web/
   src/api.ts     # fetch 封装（带 CSRF 头）、错误类型、EventSource 封装与重连状态
   src/pages/*.tsx
@@ -195,6 +195,7 @@ packages/cli/src/ # 新增 wl console 命令；--open 的终端启动复用 2B �
 | `console_port_in_use` | input | 退出码 1 | `--port` 指定的端口被占用 |
 | `console_not_running` | input | 退出码 1 | `--link` 时没有在运行的服务 |
 | `console_start_unconfirmed` | uncertain | 退出码 3 | `--open` 新建的服务 10 秒内没有就绪 |
+| `console_no_worktree` | input | 退出码 1 | `--open` 需要新建终端，但没有 `--worktree` 也没有运行中的团队 |
 | `console_tab_unsupported` | 提示 | 退出码 0 | Orca 不支持打开标签页，已打印链接 |
 | `invalid_param` | input | 400 | 路径参数不合法 |
 | `unknown_field` | input | 400 | 请求体含命令行没有的字段 |
@@ -241,4 +242,5 @@ packages/cli/src/ # 新增 wl console 命令；--open 的终端启动复用 2B �
 | 多个页面并开导致频繁调用 Orca | Orca 负载上升 | 按团队 5 秒缓存、请求合并、SSE 共用读取循环、终端预览单独限速 |
 | 终端预览或提问正文里含恶意 HTML / 转义序列 | 页面注入 | 一律按纯文本渲染；服务端剥除 ANSI 控制序列；CSP 禁止内联脚本 |
 | `console.json` 被其他用户读取 | 控制密钥泄露，可申请登录链接 | 文件权限 0600；数据目录本身在用户主目录下 |
+| 登录链接留在 `console@wingline` 终端的滚动记录里 | 能读该终端的进程可以登录 | 岗位 agent 本就能运行 `wl`，不构成权限提升；链接 5 分钟内有效且只能用一次；README 说明登录链接等同凭据 |
 | 前端构建产物未随包发布 | `wl console` 打开空白页 | 发布前检查 `dist/web/index.html` 存在；服务启动时缺失则报错退出（`internal`，提示重新构建） |

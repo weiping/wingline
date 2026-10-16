@@ -75,12 +75,14 @@
 
 | 方法与路径 | 内容 |
 | --- | --- |
-| `GET /api/teams/:team/spec` | `{ specPath, yaml, hash, draft: { yaml, hash } \| null, running }` |
-| `POST /api/teams/:team/spec/validate` `{ yaml }` | `{ errors: Array<{ path, code, message }>, preview }`，不写文件 |
+| `GET /api/teams/:team/spec` | `{ specPath, yaml, parsed, hash, draft: { yaml, parsed, hash } \| null, running }` |
+| `POST /api/teams/:team/spec/validate` `{ yaml, set? }` | `{ yaml, parsed, errors: Array<{ path, code, message }>, preview }`，不写文件 |
 | `POST /api/teams/:team/spec` `{ yaml, baseHash }` | 保存，返回 `{ wrote: 'draft' \| 'spec', path, hash }` |
 | `POST /api/teams/:team/spec/discard-draft` `{}` | 丢弃草稿 |
 
-`yaml` 字段上限 64 KB（3B 的请求体上限）。审计摘要只记 `wrote`、`path` 与哈希，不记 YAML 内容。
+- `parsed`：YAML 解析后的原始对象（未经 schema 默认值填充；语法错误时为 `null`），供表单显示各字段现值；前端不自己解析 YAML（复审 I-6）。
+- `set`：`{ path: Array<string | number>, value }`。给出时服务端先用 Document API 把这一处写回 `yaml`（保留注释与顺序），再校验并返回新的 `yaml` 与 `parsed`；表单的每次修改都走这里。
+- `yaml` 字段上限 64 KB（3B 的请求体上限）。审计摘要只记 `wrote`、`path` 与哈希，不记 YAML 内容。
 
 ### 4.5 `wl up <spec> --draft`
 
@@ -181,7 +183,7 @@ wl tui [team]
 ### 7.4 数据
 
 - 在进程内直接调用 core，不依赖控制台服务。
-- 与 3B 共用按团队缓存 5 秒的 Orca 只读快照模块（`packages/core/src/view/snapshot.ts`，见第 9 节）。
+- 与 3B 共用缓存型 OrcaClient 装饰器 `cachedOrca`（`packages/core/src/view/snapshot.ts`）：TUI 把 `{ ...deps, orca: cachedOrca(deps.orca) }` 传给 core 函数，只读调用 5 秒内合并。
 - 时间线按 3A `wl log --follow` 的游标每 2 秒读一次；岗位与待办每 5 秒刷新；写操作完成后立即刷新并作废快照。
 
 ### 7.5 渲染
@@ -190,7 +192,7 @@ wl tui [team]
 - 终端尺寸变化（`stdout` 的 `resize` 事件）时重新布局并整屏重绘。
 - 按显示宽度截断与对齐：自写 `cellWidth`（东亚宽字符与常见 emoji 计 2 列、组合字符计 0 列、控制字符剥除），单独测试。
 - 退出时恢复终端（退出备用屏幕、显示光标、关闭 raw 模式）：在 `finally`、`process.on('exit')` 与 SIGINT/SIGTERM/SIGHUP 处理中都执行一次（幂等）；未捕获的异常先恢复终端再打印错误。
-- Windows：要求支持 VT 序列的终端（Windows Terminal、新版控制台）；无法启用时 → `tui_unsupported_terminal`（退出码 1）。
+- Windows：要求支持 VT 序列的终端（Windows Terminal、新版控制台）。没有可靠的探测方法，因此不拒绝运行：没有 `WT_SESSION` 也没有 `TERM_PROGRAM` 时先打印一行警告“当前终端可能不支持 VT 序列，显示异常请改用 Windows Terminal”，再照常启动（复审 M-7）。`tui_unsupported_terminal` 只用于 `stdout.isTTY` 为真但报告的列数为 0 的情形。
 - 提问正文、消息等外部文本在显示前剥除控制字符与 ANSI 序列。
 
 ## 8. 注册表迁移
@@ -213,7 +215,7 @@ CREATE TABLE orca_sync (
 ## 9. 代码结构
 
 ```text
-packages/core/src/view/snapshot.ts     # 按团队 5 秒缓存的 Orca 只读快照（3B 与 TUI 共用）
+packages/core/src/view/snapshot.ts     # cachedOrca：缓存只读方法的 OrcaClient 装饰器（3B 与 TUI 共用）
 packages/core/src/spec/plan-change.ts  # planSpecChange
 packages/core/src/spec/draft.ts        # 草稿路径、保存（临时文件 + 改名）、baseHash、--draft 的替换流程
 packages/core/src/commands/dispatcher/orca-sync.ts  # postWorkspaceStatus、worktree 汇总、注释拼接、写入
@@ -233,7 +235,7 @@ packages/cli/src/tui/                  # screen.ts（备用屏幕、差分、恢
 | `spec_conflict` | input | 409 | 保存时文件在这期间被改过 |
 | `spec_invalid` | input | 400 | 保存的 YAML 未通过校验（返回逐项错误，不写文件） |
 | `tui_not_tty` | input | 退出码 1 | `wl tui` 不在交互式终端里 |
-| `tui_unsupported_terminal` | input | 退出码 1 | Windows 控制台不支持 VT 序列 |
+| `tui_unsupported_terminal` | input | 退出码 1 | 终端报告的列数为 0，无法布局 |
 
 - `wl up --draft` 的替换顺序为“校验 → 备份 → 改名 → up”；任一步失败都不会留下半新半旧的规格文件。
 - Orca 同步失败只记事件与告警，不影响巡查与任务（第 6.4 节）。

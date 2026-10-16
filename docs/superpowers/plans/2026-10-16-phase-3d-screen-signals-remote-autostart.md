@@ -137,6 +137,7 @@ test('at reset with the notice still there, the signal stays and is re-notified 
 test('continue line is not typed while the screen is at a prompt', async () => {})
 test('lead out of usage: only external outlet and attention, never notified about itself', async () => {})
 test('context low: one notice per session; a new session marker clears it', async () => {})
+test('when the session changes the old context_low row is cleared so attention shows only one', async () => {})
 test('neither signal ever freezes a post', async () => {})
 test('first scan after restart only observes; pause deadline survives a restart', async () => {})
 test('attention shows percent / reset time; Orca comment carries ⚠ marks', async () => {})
@@ -210,7 +211,8 @@ test('migration from a 3C database adds unread_marks', () => {})
 
 **Files:**
 - Create: `packages/core/src/commands/autostart/plan.ts`、`apply.ts`、`status.ts`
-- Modify: `packages/core/src/commands/dispatcher/lifecycle.ts`（抽出共用的绝对路径命令构造 `selfCommand(deps, args: string[]): { file: string; args: string[] }`）、`packages/cli/src/cli.ts`、`output.ts`、`README.md`
+- Consumes: 3B 计划 Task 8 抽出的 `selfCommand(deps, args, o?)`（不再另写一个）
+- Modify: `packages/cli/src/cli.ts`、`output.ts`、`README.md`
 - Test: `packages/core/test/commands/autostart/plan.test.ts`、`apply.test.ts`、`status.test.ts`
 
 **Interfaces:**
@@ -221,7 +223,7 @@ test('migration from a 3C database adds unread_marks', () => {})
   - `windowsTaskCommand(file: string, args: string[]): string` — `/TR` 用的命令行：每个参数含空格或引号时用双引号包裹，内部双引号写作 `\"`
   - `applyAutostart(plan: AutostartPlan, exec: (file: string, args: string[]) => Promise<{ code: number; stdout: string; stderr: string }>, fsx?: Pick<typeof fs, 'writeFileSync' | 'renameSync' | 'rmSync' | 'mkdirSync'>): Promise<void>` — 先写临时文件再改名；注册失败删除刚写的文件并抛 `autostart_failed`（附原始输出）
   - `removeAutostart(plan, exec, fsx?): Promise<void>` — 未安装视为成功
-  - `autostartStatus(plan, exec, readFile): Promise<{ installed: boolean; location: string; command: string; logTail: string[]; linger?: boolean }>`
+  - `autostartStatus(plan, exec, readFile, exists: (p: string) => boolean): Promise<{ installed: boolean; location: string; command: string; commandMissing: string[]; logTail: string[]; linger?: boolean }>` — `commandMissing` 列出命令中已不存在的 node / 入口脚本路径（复审 M-8）
   - 不支持的平台或 Linux 上 `systemctl --user` 不可用 → `autostart_unsupported`
   - CLI：`wl autostart install [--wait-orca <时长>]`、`uninstall`、`status`，均支持 `--json`
 
@@ -241,6 +243,7 @@ test.each([
 test('install twice overwrites; uninstall when absent succeeds', async () => {})
 test('a failing register removes the written file and throws autostart_failed with the stderr', async () => {})
 test('status reports location, command, last 20 log lines and linger on linux', async () => {})
+test('status flags a node path that no longer exists', async () => {})
 test('no systemd user session → autostart_unsupported', async () => {})
 ```
 

@@ -58,9 +58,16 @@ Orca 完整重启（或机器重启）后，所有岗位终端随进程销毁，
 
 走 `resumed` 的岗位**不生成新标记**：会话没变，原标记仍在它的记录里。接回成功后把查到的会话 ID 写入 `posts.session_id`，供下一次 `restore` 直接使用（第 5.2 节第 2 步）。
 
-### 4.3 阶段 3 之前启动的岗位
+### 4.3 标记不外泄
 
-`posts.session_marker` 为空的岗位没有可搜索的标记，`restore` 时视同“找不到原会话”，结果为 `fresh`，原因写“该岗位在阶段 3 之前启动，没有会话标记”。用户也可以用 `--session` 手工指定（第 5.4 节）。
+标记只要出现在任何一个 agent 的会话记录里，就会被引号精确搜索命中；duo 的两个岗位共用一个 worktree，`cwd` 过滤分不开它们（复审 I-2）。因此：
+
+- 标记只写进启动包。`wl ps`、`wl attention`、`wl log`、`wl restore` 的人读输出与 `--json` 结果、审计事件的摘要、控制台与 TUI 都不包含标记；需要展示时只给会话 ID。
+- 注册表里的 `session_marker` 只供 `restore` 内部使用。
+
+### 4.4 阶段 3 之前启动的岗位
+
+`posts.session_marker` 为空的岗位没有可搜索的标记，`restore` 时视同“找不到原会话”，结果为 `fresh`，原因写“该岗位在阶段 3 之前启动，没有会话标记”。用户也可以用 `--session` 手工指定（第 5.1 节）。
 
 ## 5. `wl restore`
 
@@ -85,7 +92,7 @@ wl restore <team> [--dry-run] [--no-tasks] [--session <post>=<sessionId> ...] [-
    - **终端已失效** → 确定会话 ID：
      - 有 `--session` → 用它。
      - 否则 `posts.session_id` 非空 → 用它（上一次接回时记下的）。
-     - 否则 `posts.session_marker` 非空 → `orca search '"<标记>"' --agent <agent> --fresh --json`，只保留 `cwd` 等于该岗位 worktree 绝对路径的命中：
+     - 否则 `posts.session_marker` 非空 → `orca search '"<标记>"' --agent <agent> --fresh --json`，只保留 `cwd` 等于该岗位 worktree 绝对路径的命中（两边先解析真实路径，例如 macOS 的 `/tmp` 与 `/private/tmp`），再排除已被本团队其他岗位登记为 `session_id` 的会话：
        - 恰好 1 条 → 用它的 `sessionId`。
        - 0 条 → 结果 `fresh`，原因“未找到原会话”。
        - 多于 1 条 → 结果 `ambiguous`，列出候选（`sessionId`、`updatedAt`、消息数），提示用 `--session <post>=<id>` 指定后重跑。**不猜、不新开。**
@@ -96,6 +103,7 @@ wl restore <team> [--dry-run] [--no-tasks] [--session <post>=<sessionId> ...] [-
    - `resumed`：`terminal create --title <地址> --worktree <worktree> --command <恢复命令>`，等 `tui-idle`；经 `screenGuard`（2A 第 7.4 节）检查画面为 `clear` 后发一行“[雁阵] 重启后已接回本会话，你的地址仍是 <地址>。”；把 `sessionId` 写入 `posts.session_id`。等不到空闲 → `uncertain`，不重发、不关闭（沿用 `wl up` 的规则）；画面不是 `clear` → 不发提示，结果仍为 `resumed`，附“未发送接回提示（<画面状态>）”。
    - `fresh`：与 `wl up` 的新建路径完全相同（新标记、启动包），结果标 `fresh` 并醒目提示“上下文已丢失”。
    - 每一步按 `wl up` 的方式落账（`requests` 表，先记进行中再调用），请求键的命名空间为 `restore:<team>:<post>:<代数>:<步骤>`，与 `wl up` 的键不冲突；重跑时已完成的步骤直接取存下的结果。
+   - **`restore` 的代数独立计数**（复审 I-1）：`wl up` 的生命周期代数只统计 `wl up` 自己的键，`restore` 建的终端不会让它前进。`restore` 的代数取“已完成的 `restore:<team>:<post>:<g>:create` 中最大的 `g` 加 1”；只有该岗位终端已失效、需要重新拉起时才开新的一代，同一次拉起被中断后重跑沿用原代数。否则 Orca 第二次重启后，`restore` 会回放上一次的 `create` 回执，拿到早已失效的 handle。
 4. **重新认领协调者**：调用 `wl up` 现有的 Run 步骤（结果 `kept`/`reclaimed`/`lost`/`ambiguous` 等，原样输出）。牵头岗不是 `kept`/`resumed`/`fresh` 之一时，与 `wl up` 一样推迟（`deferred`）。
 5. **调度员**：`dispatcherHealth(team)` 为“失联”（锁行存在、进程已死）时，说明重启前它在跑 → 调用 `dispatcherUp(team)`。“已停止”“从未启动”“运行中”都不动。调度员被拉起后首轮只观察（2B 既有设计），不需要额外恢复它的状态。
 6. **在办任务**（`--no-tasks` 时跳过）：协调者处于 `kept`/`reclaimed` 后，用 `staleReasons` 取本团队原因为 `dead_assignee` 的任务，逐个调用 `recoverTask(id)`（2A 第 10 节，派回 `claimed_by`，主人忙则 `queued`）。主人岗位本次结果为 `ambiguous`/`uncertain`/失败时，跳过它名下的任务，记“主人未接回，稍后重跑 wl restore 或 wl task recover <id>”。协调者没能认领时整步跳过并说明原因。
@@ -296,3 +304,4 @@ CREATE INDEX audit_events_team_at ON audit_events(team, at);
 | 接回的会话停在重启前那一轮的半途 | agent 不知道自己被中断 | 接回提示告诉它已重启；在办任务经 recover 重新派发，岗位会收到新一轮的派发通知 |
 | 审计写入拖慢命令 | 每条写命令多一次 sqlite 写 | 单行插入，与 `task_log` 同量级；失败不阻塞 |
 | 重启后同时有大量任务需要 recover | 一次输出很长 | 这是期望行为：一屏列出全部结果；`--no-tasks` 可先只接回岗位 |
+| `restore` 与刚拉起的调度员同时 recover 同一任务 | 重复的 gate 调用 | 第 6 步在调度员确认心跳之后、重新读取协调者 handle 再执行；2B 的 `auto_recover` 需要连续两轮命中且调度员首轮只观察，`restore` 已先于它完成 |

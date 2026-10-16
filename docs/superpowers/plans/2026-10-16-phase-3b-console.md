@@ -4,7 +4,7 @@
 
 **Goal:** `wl console` 在 127.0.0.1 上提供带登录与 CSRF 保护的 HTTP API + SSE，以及 Preact 控制台的 6 个页面（总览、收件箱、任务看板、任务详情、岗位详情、时间线），`wl console --open` 在 Orca 内打开。
 
-**Architecture:** 服务端只用 `node:http`，位于 `packages/core/src/server/`；读接口复用 core 的查询命令，写接口一律经 3A 的 `auditedCommands`（前缀 `console:`）。Orca 只读调用经 `core/src/view/snapshot.ts` 按团队缓存 5 秒。SSE 复用 3A 的 `readTimelineAfter` 游标。前端是私有工作区包 `packages/web`，Vite 构建到 `packages/cli/dist/web/` 随包发布。
+**Architecture:** 服务端只用 `node:http`，位于 `packages/core/src/server/`；读接口复用 core 的查询命令，写接口一律经 3A 的 `auditedCommands`（前缀 `console:`）。Orca 只读调用经 `core/src/view/snapshot.ts` 的 `cachedOrca` 装饰器缓存 5 秒，core 函数内部的调用也一并命中。SSE 复用 3A 的 `readTimelineAfter` 游标。前端是私有工作区包 `packages/web`，Vite 构建到 `packages/cli/dist/web/` 随包发布。
 
 **Tech Stack:** TypeScript、`node:http`/`node:crypto`、Preact + Vite（仅构建时）、vitest + @testing-library/preact + jsdom、Playwright（仅 CI 冒烟）。
 
@@ -20,10 +20,10 @@
 - 响应头：`Content-Security-Policy: default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self'; frame-ancestors 'none'; base-uri 'none'`；`X-Content-Type-Options: nosniff`；`Referrer-Policy: no-referrer`；`Cache-Control: no-store`（带内容哈希的静态文件除外）。
 - 状态码：`input` 400、`orca` 502、`uncertain` 504、`internal` 500、未登录 401、校验失败 403、Host 不符 421、无路由 404、冲突 409（3C 用）。
 - 响应格式与 CLI `--json` 相同：`{ ok: true, result }` / `{ ok: false, error: { kind, code, message, hint, retry?, retryRequest? } }`。
-- Orca 只读快照按团队缓存 5 秒；写请求完成后作废该团队缓存；终端预览每岗位每 5 秒最多读一次。
+- Orca 只读调用经 `cachedOrca` 装饰器缓存 5 秒（`taskList`、`terminalList`、`terminalShow`、`workerList`、`runShow`）；写方法透传并作废全部缓存；服务端传给 core 函数的 `deps.orca` 一律是装饰后的客户端。
 - SSE：`timeline` 每 2 秒、`snapshot` 每 5 秒（仅哈希变化时推送）、心跳注释 `: ping` 每 15 秒；事件 id `<来源>:<表内 id>`。
 - `console.json`：`{ pid, port, startedAt, controlKey }`，权限 0600；`--open` 等待服务就绪每 200 毫秒一次、最多 10 秒。
-- 新错误码：`console_port_in_use`（1）、`console_not_running`（1）、`console_start_unconfirmed`（3）、`console_tab_unsupported`（提示，0）、`invalid_param`（400）、`unknown_field`（400）、`body_too_large`（413）。
+- 新错误码：`console_port_in_use`（1）、`console_not_running`（1）、`console_no_worktree`（1）、`console_start_unconfirmed`（3）、`console_tab_unsupported`（提示，0）、`invalid_param`（400）、`unknown_field`（400）、`body_too_large`（413）。
 - 页面从不自动重试写操作；终端预览与外部文本按纯文本渲染，服务端剥除 ANSI 控制序列。
 - 函数 ≤ 50 行；提交信息末尾附 3A plan 中的两行署名。
 
@@ -42,7 +42,7 @@
 | 文件 | 职责 |
 | --- | --- |
 | `spikes/console-tab.ts`（新） | Orca 内置浏览器打开本地页面的探针 |
-| `packages/core/src/view/snapshot.ts`（新） | 按团队 5 秒缓存的 Orca 只读快照（3C 的 TUI 复用） |
+| `packages/core/src/view/snapshot.ts`（新） | `cachedOrca`：缓存只读方法的 OrcaClient 装饰器（3C 的 TUI 复用） |
 | `packages/core/src/view/plain-text.ts`（新） | 剥除 ANSI 与控制字符 |
 | `packages/core/src/server/auth.ts`（新） | token、会话、CSRF、Host/Origin/Content-Type 校验 |
 | `packages/core/src/server/static.ts`（新） | 静态资源、SPA 回退、安全响应头 |
@@ -75,7 +75,7 @@
 
 ---
 
-### Task 2: Orca 只读快照与纯文本工具
+### Task 2: 缓存型 OrcaClient 与纯文本工具
 
 **Files:**
 - Create: `packages/core/src/view/snapshot.ts`、`packages/core/src/view/plain-text.ts`
@@ -83,19 +83,21 @@
 
 **Interfaces:**
 - Produces:
-  - `class OrcaSnapshot { constructor(deps: CommandDeps, o?: { ttlMs?: number }); tasks(team: string): Promise<TaskRow[]>; terminals(): Promise<TerminalSummary[]>; preview(handle: string): Promise<string>; invalidate(team?: string): void }` — `ttlMs` 默认 5000；同一键的并发请求共享同一个进行中的 Promise；`tasks` 用 `fetchTasks`；`preview` 用 `terminalShow(...).preview` 并经 `plainText`，单独按 handle 缓存 5 秒；失败不缓存
+  - `type CachedOrca = OrcaClient & { invalidate(): void }`
+  - `cachedOrca(inner: OrcaClient, o?: { ttlMs?: number; now?: () => number }): CachedOrca` — `ttlMs` 默认 5000；缓存 `taskList`、`terminalList`、`terminalShow`、`workerList`、`runShow`，键为方法名 + 参数的 JSON；同键并发共享同一个进行中的 Promise；失败不缓存；其余方法透传，写方法（`terminalCreate`、`terminalSend`、`terminalClose`、`runCreate`、`runUse`、`taskCreate`、`dispatch`、`workerDone`、`gateCreate`、`gateResolve`、`reply`、`worktreeSet`）完成后（成功或失败）调用 `invalidate()`
+  - 背景（复审 I-4）：`ps`、`attention`、`listTasks` 等 core 函数内部直接调用 `deps.orca`，所以缓存必须做成装饰器，由调用方以 `{ ...deps, orca: cachedOrca(deps.orca) }` 传入
   - `plainText(s: string): string` — 去掉 ANSI CSI/OSC 序列与除 `\n`、`\t` 外的控制字符
 
 - [ ] **Step 1: 写失败测试**
 
 ```ts
-test('concurrent reads within ttl share one Orca call per kind', async () => {
-  const o = new FakeOrca(); const { deps } = seedRunningTeam(o); const s = new OrcaSnapshot(deps)
-  await Promise.all([s.tasks('duo'), s.tasks('duo'), s.terminals(), s.terminals()])
+test('core queries run through the decorator share one Orca call per kind within ttl', async () => {
+  const o = new FakeOrca(); const { deps } = seedRunningTeam(o); const d = { ...deps, orca: cachedOrca(o) }
+  await Promise.all([ps(d, { team: 'duo' }), attention(d, 'duo'), listTasks(d, { team: 'duo' })])
   expect(o.calls.filter((c) => c === 'taskList')).toHaveLength(1)
   expect(o.calls.filter((c) => c === 'terminalList')).toHaveLength(1)
 })
-test('after ttl or invalidate the next read calls Orca again', async () => { /* clock() 推进 5001ms；invalidate('duo') */ })
+test('after ttl, or after any write method, the next read calls Orca again', async () => {})
 test('a failed read is not cached', async () => {})
 test('plainText strips colors, cursor moves and OSC titles but keeps newlines', () => {
   expect(plainText('\x1b[31mred\x1b[0m\n\x1b]0;t\x07ok\x1b[2K')).toBe('red\nok')
@@ -180,14 +182,15 @@ test('write without a session is unauthenticated', () => {})
 - Test: `packages/core/test/server/api-read.test.ts`
 
 **Interfaces:**
-- Consumes: `OrcaSnapshot`（Task 2）、`ps`、`dispatcherHealth`、`dispatcherStatus`、`attention`、`listTasks`、`listStale`、`showTask`、`readTimeline`（3A）、`registry.listPatrolState`、`getFrozen`、`hushedUntil`
+- Consumes: `cachedOrca`（Task 2；`ctx.deps.orca` 已是装饰后的客户端）、`ps`、`dispatcherHealth`、`dispatcherStatus`、`attention`、`listTasks`、`listStale`、`showTask`、`readTimeline`（3A）、`registry.listPatrolState`、`getFrozen`、`hushedUntil`
 - Produces:
-  - `type Handler = (ctx: { deps: CommandDeps; snap: OrcaSnapshot; params: Record<string, string>; query: URLSearchParams; body: unknown }) => Promise<unknown>`
+  - `type Handler = (ctx: { deps: CommandDeps & { orca: CachedOrca }; params: Record<string, string>; query: URLSearchParams; body: unknown }) => Promise<unknown>`
   - `class Router { get(pattern: string, h: Handler): void; post(pattern: string, h: Handler): void; match(method: string, path: string): { h: Handler; params: Record<string, string> } | null }` — 模式形如 `/api/teams/:team/tasks/:id`
   - `const PARAM_RULES: Record<string, RegExp>` — `team`/`post`：`/^[a-z0-9-]+$/`；`id`/`gateId`/`messageId`：`/^[A-Za-z0-9_-]{1,80}$/`；不符 → `WinglineError('input', 'invalid_param', …)`
   - `statusOf(err: unknown): number` 与 `writeEnvelope(res, status, body)`（错误类别 → 状态码见 Global Constraints）
-  - `registerReadRoutes(r: Router): void` — spec 第 6.2 节的 8 个 GET（`/api/session` 由 Task 8 注册）；岗位详情的终端预览经 `snap.preview` 取最后 40 行
-  - `interface PostDetail { address: string; row: PsRow; currentTask: TaskRow | null; queued: TaskRow[]; signals: PatrolStateRow[]; frozen: FrozenRow | null; hushedUntil: string | null; events: TimelineEvent[]; preview: string[] }`
+  - `registerReadRoutes(r: Router): void` — spec 第 6.2 节的 8 个 GET（`/api/session` 由 Task 8 注册）；岗位详情的终端预览经 `deps.orca.terminalShow(...).preview` → `plainText` 取最后 40 行
+  - 岗位与团队的返回结果只含会话 ID，不含会话标记（3A 第 4.3 节）
+  - `interface PostDetail { address: string; row: PsRow; sessionId: string | null; currentTask: TaskRow | null; queued: TaskRow[]; signals: PatrolStateRow[]; frozen: FrozenRow | null; hushedUntil: string | null; events: TimelineEvent[]; preview: string[] }`
 
 - [ ] **Step 1: 写失败测试**（直接调用 `router.match(...).h(ctx)`，不起服务）
 
@@ -199,6 +202,7 @@ test('GET /api/teams/:team/posts/:post returns the last 40 preview lines as plai
 })
 test('GET /api/teams/:team/log returns TimelineEvent[] with filters', async () => {})
 test.each(['Duo', '..', 'a/b'])('team param %s is rejected with invalid_param', async (bad) => {})
+test('no response contains a session marker', async () => { /* 遍历 8 个 GET 的 JSON，断言不含 'WLS-' */ })
 test('statusOf maps input/orca/uncertain/internal to 400/502/504/500', () => {})
 ```
 
@@ -216,9 +220,9 @@ test('statusOf maps input/orca/uncertain/internal to 400/502/504/500', () => {})
 - Test: `packages/core/test/server/api-write.test.ts`
 
 **Interfaces:**
-- Consumes: `auditedCommands`（3A，`prefix: 'console:'`）、`send`、`createTask`、`escalateTask`、`reassignTask`、`recoverTask`、`resolveGate`、`freezePostCmd`、`unfreezePostCmd`、`hushCmd`、`unhushCmd`、`dispatcherReply`、`OrcaSnapshot.invalidate`
+- Consumes: `auditedCommands`（3A，`prefix: 'console:'`）、`send`、`createTask`、`escalateTask`、`reassignTask`、`recoverTask`、`resolveGate`、`freezePostCmd`、`unfreezePostCmd`、`hushCmd`、`unhushCmd`、`dispatcherReply`；写方法经 `cachedOrca` 透传时自动作废缓存
 - Produces:
-  - `registerWriteRoutes(r: Router, cmds: WriteCommands): void` — spec 第 6.3 节的 11 个 POST；每个路由声明允许的字段（`fields: readonly string[]`），多余字段 → `unknown_field`；成功后 `snap.invalidate(team)`
+  - `registerWriteRoutes(r: Router, cmds: WriteCommands): void` — spec 第 6.3 节的 11 个 POST；每个路由声明允许的字段（`fields: readonly string[]`），多余字段 → `unknown_field`；完成后（成功或失败）调用 `deps.orca.invalidate()`
   - `type WriteCommands = Pick<CoreCommands, 'send' | 'createTask' | 'escalateTask' | 'reassignTask' | 'recoverTask' | 'resolveGate' | 'freezePostCmd' | 'unfreezePostCmd' | 'hushCmd' | 'unhushCmd' | 'dispatcherReply'>`（`CoreCommands` 为这些 core 函数的类型集合，在 `api-write.ts` 中声明）
   - `consoleCommands(deps: CommandDeps): WriteCommands` — 用 `auditedCommands(rawWrite, CONSOLE_AUDIT, { prefix: 'console:', actor: 'human' })` 生成
   - 不确定错误的响应体附 `retry`（CLI 提示）与 `retryRequest`（来自 `WinglineError` 的 `detail.retryRequest`，没有则省略）
@@ -250,9 +254,9 @@ test('an uncertain send returns 504 with retry and retryRequest', async () => {}
 - Test: `packages/core/test/server/sse.test.ts`
 
 **Interfaces:**
-- Consumes: `readTimelineAfter`、`LogCursor`（3A）、`OrcaSnapshot`、`ps`、`attention`
+- Consumes: `readTimelineAfter`、`LogCursor`（3A）、`cachedOrca`、`ps`、`attention`
 - Produces:
-  - `class TeamFeeds { constructor(deps: CommandDeps, snap: OrcaSnapshot, o?: { timelineMs?: number; snapshotMs?: number; pingMs?: number; setTimer?: typeof setInterval; clearTimer?: typeof clearInterval }); subscribe(team: string, write: (chunk: string) => void, lastEventId?: string): () => void; closeAll(): void }` — 每个团队一个循环，订阅者为 0 时停止；`timeline` 事件 `id: <source>:<id>`、`event: timeline`、`data: <TimelineEvent JSON>`；`snapshot` 在 `ps`+`attention` 结果的 sha256 变化时推送 `{ team, posts, dispatcher, attentionCounts }`；心跳 `: ping\n\n`
+  - `class TeamFeeds { constructor(deps: CommandDeps & { orca: CachedOrca }, o?: { timelineMs?: number; snapshotMs?: number; pingMs?: number; setTimer?: typeof setInterval; clearTimer?: typeof clearInterval }); subscribe(team: string, write: (chunk: string) => void, lastEventId?: string): () => void; closeAll(): void }` — 每个团队一个循环，订阅者为 0 时停止；`timeline` 事件 `id: <source>:<id>`、`event: timeline`、`data: <TimelineEvent JSON>`；`snapshot` 在 `ps`+`attention` 结果的 sha256 变化时推送 `{ team, posts, dispatcher, attentionCounts }`；心跳 `: ping\n\n`
   - `cursorFrom(lastEventId: string | undefined, start: LogCursor): LogCursor` — 只前移对应来源，其余取 `start`（连接建立时刻的游标）
 
 - [ ] **Step 1: 写失败测试**（注入假的定时器，手动触发 tick）
@@ -282,20 +286,23 @@ test('a failing read in a tick is logged and the next tick runs', () => {})
 - Test: `packages/core/test/server/server.test.ts`、`packages/core/test/server/control.test.ts`、`packages/cli/test/console.test.ts`
 
 **Interfaces:**
-- Consumes: Task 3–7；2B 调度员启动参数的构造函数（`dispatcher/lifecycle.ts` 中拼 `--home`/`--orca` 的部分，抽成 `launchArgs(deps): string[]` 后共用）
+- Consumes: Task 3–7；2B 调度员启动命令的构造（`dispatcher/lifecycle.ts` 的 `dispatcherLaunchCommand`），抽出通用部分 `selfCommand(deps: CommandDeps, args: string[], o?: { platform?: NodeJS.Platform }): { file: string; args: string[] }` 后由调度员、控制台与 3D 的 autostart 共用（复审 M-2）
 - Produces:
   - `createConsoleServer(deps: CommandDeps, o: { port?: number; webRoot: string; now?: () => number }): Promise<{ port: number; loginUrl(): string; close(): Promise<void> }>` — 组装路由、`/auth`、`/_control/link`、`/api/session`（`{ csrfToken, version, teams }`）、`/api/teams/:team/events`、静态资源；每个请求先 `checkHost`，`/api/*` 需会话，POST 需 `checkWrite`
   - `readConsoleFile(home: string): ConsoleFile | null`；`writeConsoleFile(home: string, f: ConsoleFile): void`（0600，先写临时文件再改名）；`removeConsoleFileIfMine(home: string, pid: number): void`；`interface ConsoleFile { pid: number; port: number; startedAt: string; controlKey: string }`
   - `requestLink(f: ConsoleFile, fetchImpl?: typeof fetch): Promise<string | null>` — 连接失败、非 200、密钥被拒都返回 `null`
   - `openTab(deps: CommandDeps, url: string): Promise<'opened' | 'unsupported'>` — 按 Task 1 的结论调用 Orca；未定前恒返回 `'unsupported'`
-  - CLI：`wl console [--port <n>] [--open] [--link] [--json]`，行为见 spec 第 4 节；`Commands` 增加 `console` 字段以便测试注入
+  - `consoleWorktree(deps: CommandDeps, override?: string): string` — `override` → 第一个 `up` 团队的牵头岗 worktree → 抛 `console_no_worktree`（复审 I-5）
+  - `/auth` 成功时返回 200 页面，内容含 `<meta http-equiv="refresh" content="0;url=/">`，不用 302（复审 I-3）
+  - CLI：`wl console [--port <n>] [--open] [--worktree <选择器>] [--link] [--json]`，行为见 spec 第 4 节；`Commands` 增加 `console` 字段以便测试注入
 
 - [ ] **Step 1: 写失败测试**
 
 `server.test.ts`（起真实服务于随机端口、FakeOrca 后端、`webRoot` 为临时目录里的最小 `index.html`）：
 
 ```ts
-test('login link sets the cookie and redirects; second use shows the expired page with 401', async () => {})
+test('login link sets the cookie and answers 200 with a meta refresh to / (no 302); second use shows the expired page with 401', async () => {})
+test('--open without --worktree and without any running team → console_no_worktree', async () => {})
 test('a request with a foreign Host gets 421 before anything else', async () => {})
 test('GET /api without a session is 401; POST with a session but no csrf is 403', async () => {})
 test('a POST body over 64 KB is 413 body_too_large', async () => {})
@@ -339,10 +346,11 @@ test('api.post sends X-Wingline-Token from /api/session and JSON content type', 
 test('a 504 response becomes ApiError with retry and retryRequest', async () => {})
 test('ActionDialog requires the reason field, then shows a retry button on uncertain and resends the same body', async () => {})
 test('Layout shows reconnecting when the stream reports it', () => {})
+test('the built index.html has no inline style or script attributes', () => { /* 读 packages/cli/dist/web/index.html（构建后）断言不含 'style=' 与 '<script>' 内联代码 */ })
 ```
 
 - [ ] **Step 2: 运行确认失败。**
-- [ ] **Step 3: 实现** 工程与上述模块；`pnpm install` 更新锁文件。
+- [ ] **Step 3: 实现** 工程与上述模块；`pnpm install` 更新锁文件。样式只用 class 与对象形式的 `style`（Preact 经 `el.style` 设置，不受 CSP 的 `style-src 'self'` 限制），不写字符串形式的 `style="…"`（复审 M-5）。
 - [ ] **Step 4: 运行确认通过** — `pnpm vitest run packages/web`；`pnpm build` 后 `packages/cli/dist/web/index.html` 存在。
 - [ ] **Step 5: 提交** — `git commit -m "feat(web): console app scaffold, api client and layout"`
 
@@ -377,7 +385,7 @@ test('Layout shows reconnecting when the stream reports it', () => {})
 - Produces: `Inbox({ team })`、`PostDetail({ team, post })`；`CommandHint({ command })`（可复制的命令）
 - 收件箱条目 → 操作的映射：提问 → `reply`（必填回答）；gate → `resolve`（必填说明，可选改派）；`dead_assignee` → `recover`；冻结 → `unfreeze`；巡查信号 → `hush`（可选时长）/ `send`；其余条目只显示 `CommandHint`。
 
-- [ ] **Step 1: 写失败测试**：每类条目渲染出对应按钮，提交时 POST 到正确路径与请求体；`done_unfinished` 等无写接口的条目只显示命令；调度员失联一节在最前；岗位详情显示会话标记、排队任务、信号等级、40 行预览（预览中的 `<script>` 文本按字面显示，不生成元素）。
+- [ ] **Step 1: 写失败测试**：每类条目渲染出对应按钮，提交时 POST 到正确路径与请求体；`done_unfinished` 等无写接口的条目只显示命令；调度员失联一节在最前；岗位详情显示会话 ID（不显示会话标记）、排队任务、信号等级、40 行预览（预览中的 `<script>` 文本按字面显示，不生成元素）。
 - [ ] **Step 2: 运行确认失败。**
 - [ ] **Step 3: 实现。**
 - [ ] **Step 4: 运行确认通过。**
@@ -415,6 +423,6 @@ test('Layout shows reconnecting when the stream reports it', () => {})
 - [ ] **Step 1: 写冒烟用例**：`server-fixture.ts` 用 FakeOrca 与临时 `WINGLINE_HOME` 起服务、写入一个待回答的提问；Playwright 打开登录链接 → 进入收件箱 → 回答提问 → 打开时间线页，断言出现 `console:dispatcher reply` 的命令事件。
 - [ ] **Step 2: 运行** — `pnpm build && pnpm test:e2e`（使用预装的 Chromium，`PLAYWRIGHT_BROWSERS_PATH` 已配置）→ PASS。
 - [ ] **Step 3: CI**：新增 job `e2e`（仅 `ubuntu-latest`、Node 24）：`pnpm install --frozen-lockfile` → `pnpm exec playwright install --with-deps chromium` → `pnpm build` → `pnpm test:e2e`。
-- [ ] **Step 4: 文档与真机用例**：README 增加“控制台：`wl console`”一节（中文；说明登录链接、`--link`、`--open` 的退路、只服务本机）；`test/live/duo.live.test.ts` 增加默认跳过、需人工确认的 `wl console --open` 用例。
+- [ ] **Step 4: 文档与真机用例**：README 增加“控制台：`wl console`”一节（中文；说明登录链接等同凭据、5 分钟内有效且只能用一次、`--link`、`--open` 的 worktree 规则与退路、只服务本机）；`test/live/duo.live.test.ts` 增加默认跳过、需人工确认的 `wl console --open` 用例。
 - [ ] **Step 5: 全量验证** — `pnpm typecheck && pnpm test`（已知的两例沙箱僵尸进程失败除外）→ PASS。
 - [ ] **Step 6: 提交** — `git commit -m "test(e2e): console smoke; ci job; docs"`
