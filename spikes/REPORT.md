@@ -469,4 +469,8 @@ macOS 真机（Orca 1.4.224）以**本机 claude × 2**（builder 与 checker �
 2. **对照实验自我污染（方法论错误，已记录）。** 对照组用的 `QZX-9f31aa` / `WLS-7c0ffee1` 两条查询整串高亮命中了助手自己的消息——因为告诉用户对照标记的那条回复本身已进入本会话 transcript，而 Orca 对 transcript 是增量索引的（命中证据的时间戳即助手消息发出的时刻）。所以"整串在索引里 → 整串高亮命中"这半边只是佐证，未得到干净对照；干净对照需由 shell 现场随机生成标记（`m="WLS-$(openssl rand -hex 4)"`）再查，标记不落 transcript。
 3. **Codex 会话恢复未成立，也无反证。** codex 侧 `orca search` 回执为空 `hits: []`——但探针以 `agent_prompt_blocked` 拦下了 prompt，标记从未进入 codex 会话，空结果是**构造出来的**，不构成"Orca 不索引 codex 会话"的证据。`search-codex.json` 保留该真实回执仅作空命中形态样本；`codex resume` 的恢复命令形式仍未验证，3A 的 codex 岗位接回走 `fresh` 路径或 `--session` 手工指定。
 
+**3A 探针收尾（2026-10-17 下午手工再跑）**：去掉 `WINGLINE_SPIKE_SKIP_SEND=1` 后从 Claude Code 沙箱外再跑 codex 探针，**两次都撞 `agent_prompt_blocked`**——第一次 `orchestrationRequestId=53fb42ad-...` 拦下首次 `terminalSend`；原样带 ID 重试，**同一 ID 又被拦**（Orca 1.4.227 在 codex 这一侧"被叫醒但还没到能接 prompt"是稳定状态，不是偶发）。`spikes/out/codex-resume/darwin/search.json` 是该次 `search` 的真回执（`hits: []`，`durationMs=132`），`after-1---resume.json` 是更早一轮遗留（`agentIdentity: "claude"`，与本次 codex 路径不符，已交用户手工清出）。
+
+**最终判读**：codex 接回在本任务范围不可验证——不是 3A 该解决的问题。3A 的接回逻辑只对 claude 验证通过；codex 侧要么走 `fresh`（上下文丢失，3B 接管）要么走 `--session` 手工指定（保留 3A spec §5.3 的逃生口），Phase 3A 不依赖 codex 路径成立。`codex resume` 形式与 `Orca 是否索引 codex 会话` 留作 3D 阶段用 e2e 实测或在 sandbox 外直跑 codex CLI 验证。
+
 判据的代价：Orca 每条命中只给一条最佳证据 snippet。若某会话确实包含标记整串，但最佳证据落在别处的部分匹配上，该命中会被误丢 → 结果 `fresh`（上下文丢失，但绝不会接错会话；可用 `--session` 手工接回）。方向上宁可少接、不可错接。
