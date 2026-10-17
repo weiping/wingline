@@ -83,12 +83,13 @@ export interface WorkerView {
   liveness: string | null
 }
 
-/** 会话搜索命中：search 回执缺字段时映射为 null。 */
+/** 会话搜索命中：search 回执缺字段时映射为 null。snippet 是 evidence.snippet 的原文（含 [[高亮]] 标记）。 */
 export interface SearchHit {
   sessionId: string
   cwd: string | null
   updatedAt: string | null
   messageCount: number | null
+  snippet: string | null
 }
 
 export interface OrcaClient {

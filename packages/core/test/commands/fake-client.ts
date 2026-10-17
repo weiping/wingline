@@ -71,8 +71,8 @@ export class FakeOrca implements OrcaClient {
   connectionLostOnce = false
   workerListError?: Error
 
-  /** 会话搜索模型（3A）：按去引号后的 query 精确匹配 marker，agent/environment 须一致。 */
-  sessions: Array<{ marker: string; agent: string; sessionId: string; cwd: string | null; updatedAt?: string; messageCount?: number; environment?: string }> = []
+  /** 会话搜索模型（3A）：按去引号后的 query 精确匹配 marker，agent/environment 须一致；snippet 缺省为整串高亮的标记。 */
+  sessions: Array<{ marker: string; agent: string; sessionId: string; cwd: string | null; updatedAt?: string; messageCount?: number; environment?: string; snippet?: string | null }> = []
   searchError?: Error
 
   postMessage(m: Partial<CheckMessage> & { type: string }): CheckMessage {
@@ -331,7 +331,7 @@ export class FakeOrca implements OrcaClient {
     const marker = a.query.startsWith('"') && a.query.endsWith('"') ? a.query.slice(1, -1) : a.query
     return this.sessions
       .filter((s) => s.marker === marker && s.agent === a.agent && s.environment === a.environment)
-      .map((s) => ({ sessionId: s.sessionId, cwd: s.cwd, updatedAt: s.updatedAt ?? null, messageCount: s.messageCount ?? null }))
+      .map((s) => ({ sessionId: s.sessionId, cwd: s.cwd, updatedAt: s.updatedAt ?? null, messageCount: s.messageCount ?? null, snippet: s.snippet === undefined ? `[[${s.marker}]]` : s.snippet }))
   }
   async terminalList() { this.read('terminalList'); return this.terminals.map((t) => ({ ...t })) }
   async terminalCreate(a: { worktree: string; title: string; command: string }) {

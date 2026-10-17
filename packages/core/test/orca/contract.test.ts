@@ -105,11 +105,33 @@ test('R6 worker-list: attention categories and liveness come through', async () 
   expect(w.map((x) => [x.attention, x.liveness])).toEqual([[[], 'live'], [['unverifiable'], 'unverifiable'], [['root_completion'], 'unverifiable']])
 })
 
-// provisional：Task 1 真机回执落地前的手写最小回执（spec 第 2 节第 1 条字段）；落地后直接替换文件，测试不变。
-test('search maps the real claude receipt (provisional)', async () => {
-  const receipt = fixture<{ ok: boolean; result: { hits: Array<{ sessionId?: string; cwd?: string | null; updatedAt?: string | null; messageCount?: number | null }> } }>('search-claude')
-  const { client } = clientOver({ 'search "WLS-provisional"': receipt.result })
-  const hits = await client.search({ query: '"WLS-provisional"', agent: 'claude' })
-  expect(hits.length).toBeGreaterThanOrEqual(1)
-  expect(hits.every((h) => typeof h.sessionId === 'string' && (typeof h.cwd === 'string' || h.cwd === null))).toBe(true)
+// 真机回执（Task 1，Orca 1.4.227）：`orca search '"<标记>"' --agent <agent> --fresh --json` 原样存档。
+// codex 这条为空：探针运行时 Orca 以 agent_prompt_blocked 拦下了 prompt，会话里没有标记文本。
+test('search maps the real codex receipt: an empty hit list yields no session', async () => {
+  const receipt = fixture<{ ok: boolean; result: { hits: Array<unknown> } }>('search-codex')
+  expect(receipt.result.hits).toEqual([])
+  const { client, calls } = clientOver({ 'search "WLS-1d14cc3f"': receipt.result })
+  expect(await client.search({ query: '"WLS-1d14cc3f"', agent: 'codex' })).toEqual([])
+  expect(calls[0]).toEqual(['search', '"WLS-1d14cc3f"', '--agent', 'codex', '--fresh'])
+})
+
+// claude 这条命中一个会话，但命中证据里没有本次查询的标记（见 REPORT"3A 探针"一节）——
+// 只把真机确实给出的字段透传，其余一律不流进 SearchHit。snippet 原样保留：findSession 靠它的高亮区间判整串。
+test('search maps the real claude receipt to the five spec fields and drops the rest', async () => {
+  const receipt = fixture<{ ok: boolean; result: { hits: Array<Record<string, unknown>> } }>('search-claude')
+  const { client } = clientOver({ 'search "WLS-f4ce035e"': receipt.result })
+  expect(await client.search({ query: '"WLS-f4ce035e"', agent: 'claude' })).toEqual([
+    { sessionId: 'sess-redacted-1', cwd: '/repo/wingline', updatedAt: '2026-10-17T05:39:03.838Z', messageCount: 1941, snippet: 'usr local bin orca [[wls]] 1d14cc3f agent fresh json dev null' },
+  ])
+})
+
+// 命中时的字段映射（spec 第 2 节第 1 条）：缺字段的一律 null，不留 undefined。
+test('search maps hit fields and defaults missing cwd/updatedAt/messageCount/snippet to null', async () => {
+  const { client } = clientOver({
+    'search "WLS-shape"': { hits: [{ sessionId: 'sess-1', cwd: '/repo', updatedAt: '2026-10-17T00:00:00Z', messageCount: 12, evidence: { snippet: '会话标记：[[WLS-shape]]' } }, { sessionId: 'sess-2' }] },
+  })
+  expect(await client.search({ query: '"WLS-shape"', agent: 'codex' })).toEqual([
+    { sessionId: 'sess-1', cwd: '/repo', updatedAt: '2026-10-17T00:00:00Z', messageCount: 12, snippet: '会话标记：[[WLS-shape]]' },
+    { sessionId: 'sess-2', cwd: null, updatedAt: null, messageCount: null, snippet: null },
+  ])
 })

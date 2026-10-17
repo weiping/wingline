@@ -23,7 +23,7 @@ Orca 完整重启（或机器重启）后，所有岗位终端随进程销毁，
 ## 2. 关键事实（实测）
 
 1. **会话 ID 的来源是 `orca search`。** `terminal show` 只给 `agentIdentity`；`orca search '"<词>"' --agent claude --fresh --json` 的每条命中含 `sessionId`、`cwd`、`updatedAt`、`source.filePath`，本机环境还给出现成的 `resumeCommand`（macOS 1.4.224、Linux 1.4.222 实测）。
-2. **必须加引号精确搜索。** 裸搜索会分词，两个岗位各命中 2 条；加引号后各恰好 1 条且 `sessionId` 不同（待验证项 A，macOS 实测）。即便加引号，运行探针的会话自己也可能因为命令行里含有标记而被搜中（Linux 补充验证），所以命中结果还要按 `cwd` 过滤。
+2. **引号减少召回但不保证整串精确。** 裸搜索会分词，两个岗位各命中 2 条；加引号后通常各恰好 1 条。但 macOS 1.4.227 实测（3A 探针，`spikes/REPORT.md`）：查询串整串不在索引里时，Orca 退化成部分 token 召回——查询 `"WLS-f4ce035e"` 命中了只含 `wls` token 的会话，`evidence.snippet` 只高亮了 `[[wls]]`。而每个岗位会话的启动包都含 `会话标记：WLS-…`，`wls` token 无处不在。所以命中除了按 `cwd` 过滤，还必须满足"标记整串处于证据高亮区间"（第 5.2 节第三道闸）；运行探针的会话也可能因为命令行里含有标记而被搜中（Linux 补充验证），同样被这道闸挡下。
 3. **`claude --resume <id>` 在 Orca 终端里能接回原会话。** 恢复后屏幕显示原对话、空闲等待输入，不会自行继续干活（macOS、Linux 真机重启验证）。
 4. **Run 跨重启保留，终端不保留。** 重启后 Run 与 `coordinator_handle` 仍在，旧终端 handle 变成 `terminal_handle_stale`；需要重新认领协调者（`wl up` 已实现 `reclaimed` 分支）。
 5. **配对 / 远端环境会扣留 `resumeCommand`。** 例如 agent 跑在 Lima VM 里时，宿主机的 `orca search` 搜不到 VM 内会话；`--environment` 能搜到但只给 `sessionId`。3A 不处理这种情形（第 11 节）。
@@ -60,7 +60,7 @@ Orca 完整重启（或机器重启）后，所有岗位终端随进程销毁，
 
 ### 4.3 标记不外泄
 
-标记只要出现在任何一个 agent 的会话记录里，就会被引号精确搜索命中；duo 的两个岗位共用一个 worktree，`cwd` 过滤分不开它们（复审 I-2）。因此：
+标记只要整串出现在任何一个 agent 的会话记录里，就会被搜索命中并通过整串高亮判据（第 5.2 节）；duo 的两个岗位共用一个 worktree，`cwd` 过滤分不开它们（复审 I-2）。因此：
 
 - 标记只写进启动包。`wl ps`、`wl attention`、`wl log`、`wl restore` 的人读输出与 `--json` 结果、审计事件的摘要、控制台与 TUI 都不包含标记；需要展示时只给会话 ID。
 - 注册表里的 `session_marker` 只供 `restore` 内部使用。
@@ -92,7 +92,10 @@ wl restore <team> [--dry-run] [--no-tasks] [--session <post>=<sessionId> ...] [-
    - **终端已失效** → 确定会话 ID：
      - 有 `--session` → 用它。
      - 否则 `posts.session_id` 非空 → 用它（上一次接回时记下的）。
-     - 否则 `posts.session_marker` 非空 → `orca search '"<标记>"' --agent <agent> --fresh --json`，只保留 `cwd` 等于该岗位 worktree 绝对路径的命中（两边先解析真实路径，例如 macOS 的 `/tmp` 与 `/private/tmp`），再排除已被本团队其他岗位登记为 `session_id` 的会话：
+     - 否则 `posts.session_marker` 非空 → `orca search '"<标记>"' --agent <agent> --fresh --json`，只保留同时满足以下三道闸的命中：
+       1. `cwd` 等于该岗位 worktree 绝对路径（两边先解析真实路径，例如 macOS 的 `/tmp` 与 `/private/tmp`；`cwd` 为 null 的命中本阶段排除，3D 放宽）；
+       2. `evidence.snippet` 的高亮区间（`[[…]]`）覆盖标记整串——小写化、去非字母数字后比较，相邻区间可拼接；evidence 被扣留（`--environment` 命中）一律不认（第 2 节第 2 条）；
+       3. 未被本团队其他岗位登记为 `session_id`：
        - 恰好 1 条 → 用它的 `sessionId`。
        - 0 条 → 结果 `fresh`，原因“未找到原会话”。
        - 多于 1 条 → 结果 `ambiguous`，列出候选（`sessionId`、`updatedAt`、消息数），提示用 `--session <post>=<id>` 指定后重跑。**不猜、不新开。**

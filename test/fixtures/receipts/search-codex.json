@@ -1,0 +1,19 @@
+{
+  "ok": true,
+  "result": {
+    "kind": "results",
+    "hits": [],
+    "page": {
+      "cursor": null,
+      "hasMore": false
+    },
+    "generation": 1717369,
+    "truncated": {
+      "candidates": false,
+      "snippets": 0,
+      "query": false,
+      "freshness": false
+    },
+    "durationMs": 132.18520899116993
+  }
+}

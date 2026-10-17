@@ -1,13 +1,40 @@
 {
   "ok": true,
   "result": {
+    "kind": "results",
     "hits": [
       {
-        "sessionId": "sess-provisional-1",
-        "cwd": "/Users/liuweiping/workspace/dev/wingline",
-        "updatedAt": "2026-10-16T00:00:00Z",
-        "messageCount": 12
+        "agent": "claude",
+        "sessionId": "sess-redacted-1",
+        "title": "<会话标题已脱敏>",
+        "cwd": "/repo/wingline",
+        "branch": "main",
+        "updatedAt": "2026-10-17T05:39:03.838Z",
+        "messageCount": 1941,
+        "score": 8.238112556967234,
+        "evidence": {
+          "snippet": "usr local bin orca [[wls]] 1d14cc3f agent fresh json dev null",
+          "role": "tool",
+          "timestamp": "2026-10-17T05:38:02.368Z"
+        },
+        "source": {
+          "presence": "present",
+          "filePath": "/repo/.claude/projects/repo-wingline/sess-redacted-1.jsonl"
+        },
+        "resumeCommand": "cd '/repo/wingline' && claude --resume 'sess-redacted-1'"
       }
-    ]
+    ],
+    "page": {
+      "cursor": null,
+      "hasMore": false
+    },
+    "generation": 1717411,
+    "truncated": {
+      "candidates": false,
+      "snippets": 0,
+      "query": false,
+      "freshness": false
+    },
+    "durationMs": 140.84166599810123
   }
 }

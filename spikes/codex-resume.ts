@@ -1,6 +1,9 @@
 // 假设：Codex 的会话能被 `orca search '"<标记>"' --fresh` 找到，且 `codex resume <sessionId>` 能接回原对话。
 // 用法：WINGLINE_SPIKE_WORKTREE=<测试仓库专用 worktree 选择器> pnpm tsx spikes/codex-resume.ts
 // 抓 Claude 回执：WINGLINE_SPIKE_AGENT=claude（同法，只多试一条已实测的 --resume 形式）。
+// 重发：Orca 偶发以 agent_prompt_blocked 拦下首次 terminalSend（tui-idle 与"真正能接 prompt"之间有窗口），
+// 把上一次报错的 orchestrationRequestId 写到 WINGLINE_SPIKE_RETRY 即可，探针会原样带 --retry-request 重发。
+// 跳过发送：WINGLINE_SPIKE_SKIP_SEND=1 直接 create→wait tui-idle→search（不真发消息）。
 // 只在测试仓库的专用 worktree 里运行；不杀任何进程。
 import crypto from 'node:crypto'
 import { finish, record, setup } from './lib.js'
@@ -8,6 +11,8 @@ import { finish, record, setup } from './lib.js'
 const { runner, client, worktree } = setup()
 const agent = process.env.WINGLINE_SPIKE_AGENT ?? 'codex'
 const probe = 'codex-resume'
+const retryRequest = process.env.WINGLINE_SPIKE_RETRY || undefined
+const skipSend = process.env.WINGLINE_SPIKE_SKIP_SEND === '1'
 
 // 两种恢复形式：`codex resume <id> <原参数>`（前置）与 `codex <原参数> resume <id>`（后置）。
 // 本探针的启动命令是裸 `codex`（原参数为空），两形式合一，只试一次；结论里注明。
@@ -15,8 +20,13 @@ const marker = `WLS-${crypto.randomBytes(4).toString('hex')}`
 const created = await client.terminalCreate({ worktree, title: 'spike-codex', command: agent })
 try {
   await client.terminalWait({ handle: created.handle, forState: 'tui-idle', timeoutMs: 60_000 })
-  await client.terminalSend({ handle: created.handle, text: `只回复收到。标记 ${marker}`, enter: true, waitSubmitSec: 30 })
-  await client.terminalWait({ handle: created.handle, forState: 'tui-idle', timeoutMs: 120_000 })
+  if (!skipSend) {
+    await client.terminalSend({
+      handle: created.handle, text: `只回复收到。标记 ${marker}`, enter: true, waitSubmitSec: 30,
+      ...(retryRequest ? { retryRequest } : {}),
+    })
+    await client.terminalWait({ handle: created.handle, forState: 'tui-idle', timeoutMs: 120_000 })
+  }
 } finally {
   await client.terminalClose({ handle: created.handle })
 }

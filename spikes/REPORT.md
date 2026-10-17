@@ -458,3 +458,15 @@ macOS 真机（Orca 1.4.224）以**本机 claude × 2**（builder 与 checker �
 `spikes/contract-capture.ts` 在真实 Orca 1.4.226（Linux）上跑了两次，产出 `test/fixtures/receipts/orchestration-2a.json`。每次会留下一个 Run（CLI 无法删除）：`run_74ee7e4f4a41`、`run_caa90732d2c1`（objective `wingline:contract-capture`）。终端在脚本结束时已关闭。
 
 实测结论：`task-list` 带 `parent_id`；终态/blocked 任务没有 `assignee_handle`/`dispatch_id`；`request-show` 的 `completed`/`absent` 如预期；对已完成派发重发 `worker_done` 会被**接受**；`worker_done` 引用不存在的派发时 Orca 报 `unknown_dispatch`，同一请求的 `request-show` 返回 `completed`，回执是主题为 "Rejected worker_done: …" 的消息。
+
+## 3A 探针：orca search 召回语义与 Codex 会话恢复（2026-10-17，macOS Orca 1.4.227）
+
+探针 `spikes/codex-resume.ts` 带 `WINGLINE_SPIKE_SKIP_SEND=1` 跑了 codex 与 claude 两次，随后做了两次对照搜索。回执原件在 `spikes/out/codex-resume/darwin/`（`search.json`、`search-claude.json`），脱敏件入 `test/fixtures/receipts/`。
+
+**实测结论：**
+
+1. **引号不保证整串精确匹配。** 查询 `"WLS-f4ce035e"`（SKIP_SEND 之下该标记从未写进任何会话）命中了 1 条会话，证据 snippet 只高亮了 `[[wls]]`：Orca 把 `WLS-xxxx` 拆成 token，整串不在索引里时按部分 token 召回任何含 `wls` 的会话。由于雁阵每个岗位会话的启动包都含 `会话标记：WLS-…`，`wls` token 无处不在，**只靠引号 + cwd 过滤不足以判定"这条会话包含本岗位标记"**。规避同一 worktree 旧一代会话被误接回（cwd 相同、未被占用、唯一命中 → 直接 `found`）的场景，`findSession` 增加第三道闸：命中必须 `evidence.snippet` 的高亮区间（`[[…]]`）覆盖标记整串（`markerHighlighted`，小写化去非字母数字后比较，相邻区间可拼接；evidence 被扣留的 `--environment` 命中一律不认）。`SearchHit` 相应增加 `snippet` 字段。
+2. **对照实验自我污染（方法论错误，已记录）。** 对照组用的 `QZX-9f31aa` / `WLS-7c0ffee1` 两条查询整串高亮命中了助手自己的消息——因为告诉用户对照标记的那条回复本身已进入本会话 transcript，而 Orca 对 transcript 是增量索引的（命中证据的时间戳即助手消息发出的时刻）。所以"整串在索引里 → 整串高亮命中"这半边只是佐证，未得到干净对照；干净对照需由 shell 现场随机生成标记（`m="WLS-$(openssl rand -hex 4)"`）再查，标记不落 transcript。
+3. **Codex 会话恢复未成立，也无反证。** codex 侧 `orca search` 回执为空 `hits: []`——但探针以 `agent_prompt_blocked` 拦下了 prompt，标记从未进入 codex 会话，空结果是**构造出来的**，不构成"Orca 不索引 codex 会话"的证据。`search-codex.json` 保留该真实回执仅作空命中形态样本；`codex resume` 的恢复命令形式仍未验证，3A 的 codex 岗位接回走 `fresh` 路径或 `--session` 手工指定。
+
+判据的代价：Orca 每条命中只给一条最佳证据 snippet。若某会话确实包含标记整串，但最佳证据落在别处的部分匹配上，该命中会被误丢 → 结果 `fresh`（上下文丢失，但绝不会接错会话；可用 `--session` 手工接回）。方向上宁可少接、不可错接。

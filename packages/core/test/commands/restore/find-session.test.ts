@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import { expect, test } from 'vitest'
-import { findSession, samePath } from '../../../src/commands/restore/find-session.js'
+import { findSession, markerHighlighted, samePath } from '../../../src/commands/restore/find-session.js'
 import type { PostRow } from '../../../src/registry/registry.js'
 import { WinglineError } from '../../../src/errors.js'
 import { FakeOrca, mkDeps } from '../fake-client.js'
@@ -104,6 +104,33 @@ test('a session reserved by an earlier post in the same batch is excluded', asyn
   o.sessions.push({ marker: 'WLS-aaaa1111', agent: 'claude', sessionId: 's1', cwd: '/wt' })
   // 复审 I-4：前一个岗位刚接回 s1（dry-run 尚未落库），后一个岗位不得再接同一个会话
   expect(await findSession(deps, postRow(), '/wt', undefined, ['s1'])).toEqual({ kind: 'none', reason: '未找到原会话' })
+})
+
+test('markerHighlighted: only the whole marker highlighted counts, case-insensitively and across split tokens', () => {
+  expect(markerHighlighted('会话标记：[[WLS-aaaa1111]]', 'WLS-aaaa1111')).toBe(true)
+  expect(markerHighlighted('marker [[wls]] [[aaaa1111]] here', 'WLS-aaaa1111')).toBe(true)
+  expect(markerHighlighted('usr local bin orca [[wls]] 1d14cc3f agent fresh json dev null', 'WLS-f4ce035e')).toBe(false)
+  expect(markerHighlighted('[[wls]] aaaa1111', 'WLS-aaaa1111')).toBe(false)
+  expect(markerHighlighted('[[WLS-bbbb2222]]', 'WLS-aaaa1111')).toBe(false)
+  expect(markerHighlighted(null, 'WLS-aaaa1111')).toBe(false)
+})
+
+// 真机回执（search-claude.json）：标记从未写进任何会话，Orca 仍按部分 token `wls` 召回了一个同 cwd 的会话。
+test('a hit whose evidence highlights only part of the marker is dropped', async () => {
+  const o = new FakeOrca()
+  const { deps } = mkDeps(o)
+  o.sessions.push({ marker: 'WLS-aaaa1111', agent: 'claude', sessionId: 's-old', cwd: '/wt', snippet: 'usr local bin orca [[wls]] 1d14cc3f agent fresh json dev null' })
+  expect(await findSession(deps, postRow(), '/wt')).toEqual({ kind: 'none', reason: '未找到原会话' })
+})
+
+test('previous-generation session with a partial hit does not make the current one ambiguous', async () => {
+  const o = new FakeOrca()
+  const { deps } = mkDeps(o)
+  o.sessions.push(
+    { marker: 'WLS-aaaa1111', agent: 'claude', sessionId: 's-old', cwd: '/wt', snippet: '会话标记：[[wls]] 9999eeee' },
+    { marker: 'WLS-aaaa1111', agent: 'claude', sessionId: 's-new', cwd: '/wt', snippet: '会话标记：[[WLS-aaaa1111]]' },
+  )
+  expect(await findSession(deps, postRow(), '/wt')).toEqual({ kind: 'found', sessionId: 's-new', via: 'search' })
 })
 
 test('search failure → uncertain, never none', async () => {

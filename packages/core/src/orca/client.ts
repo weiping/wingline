@@ -309,10 +309,10 @@ export function createOrcaClient(runner: OrcaRunner): OrcaClient {
     },
 
     async search(a): Promise<SearchHit[]> {
-      const r = await runner.json<{ hits: Array<{ sessionId: string; cwd?: string | null; updatedAt?: string | null; messageCount?: number | null }> }>([
+      const r = await runner.json<{ hits: Array<{ sessionId: string; cwd?: string | null; updatedAt?: string | null; messageCount?: number | null; evidence?: { snippet?: string } | null }> }>([
         'search', a.query, '--agent', a.agent, '--fresh', ...(a.environment ? ['--environment', a.environment] : []),
       ])
-      return r.hits.map((h) => ({ sessionId: h.sessionId, cwd: h.cwd ?? null, updatedAt: h.updatedAt ?? null, messageCount: h.messageCount ?? null }))
+      return r.hits.map((h) => ({ sessionId: h.sessionId, cwd: h.cwd ?? null, updatedAt: h.updatedAt ?? null, messageCount: h.messageCount ?? null, snippet: h.evidence?.snippet ?? null }))
     },
   }
 }

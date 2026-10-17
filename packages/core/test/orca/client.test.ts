@@ -278,15 +278,15 @@ test('terminalList maps lastOutputAt (a number), defaulting to null', async () =
 })
 
 test('search passes the quoted query as one argument with --fresh and maps hits', async () => {
-  const { client, calls } = clientWith({ 'search "WLS-0a1b2c3d"': { hits: [{ sessionId: 's1', cwd: '/r', updatedAt: 't', messageCount: 2 }] } })
-  expect(await client.search({ query: '"WLS-0a1b2c3d"', agent: 'claude' })).toEqual([{ sessionId: 's1', cwd: '/r', updatedAt: 't', messageCount: 2 }])
+  const { client, calls } = clientWith({ 'search "WLS-0a1b2c3d"': { hits: [{ sessionId: 's1', cwd: '/r', updatedAt: 't', messageCount: 2, evidence: { snippet: 'x [[WLS-0a1b2c3d]] y' } }] } })
+  expect(await client.search({ query: '"WLS-0a1b2c3d"', agent: 'claude' })).toEqual([{ sessionId: 's1', cwd: '/r', updatedAt: 't', messageCount: 2, snippet: 'x [[WLS-0a1b2c3d]] y' }])
   expect(calls[0]).toEqual(['search', '"WLS-0a1b2c3d"', '--agent', 'claude', '--fresh'])
 })
 
 test('search adds --environment when given and maps missing fields to null', async () => {
   const { client, calls } = clientWith({ 'search "WLS-x"': { hits: [{ sessionId: 's2' }] } })
   expect(await client.search({ query: '"WLS-x"', agent: 'claude', environment: 'lima-agent' })).toEqual([
-    { sessionId: 's2', cwd: null, updatedAt: null, messageCount: null },
+    { sessionId: 's2', cwd: null, updatedAt: null, messageCount: null, snippet: null },
   ])
   expect(calls[0]!.slice(-2)).toEqual(['--environment', 'lima-agent'])
 })
