@@ -483,8 +483,8 @@ macOS 真机（Orca 1.4.224）以**本机 claude × 2**（builder 与 checker �
 - 命令形式：`orca tab create --url <url> --worktree <worktree>`（带 `--json` 输出 `{ browserPageId: "..." }`）。
 - Cookie 支持：`HttpOnly; SameSite=Strict; Path=/` 重定向到 `/check` 正常携带并回显（`cookie=ok`）。
 - SSE 支持：页面中 `new EventSource('/events')` 正常接收服务端事件流（`sse=ok`）。
-- 标签页关闭：`orca tab close --page <browserPageId>` 正常关闭，无残留。
-- 脱敏回执存入 `test/fixtures/receipts/tab-create.json`。
+- 标签页关闭：首次运行时探针的取值有误（`res.result?.browserPageId` 恒为 undefined，`runner.json` 已经解包），`tab close` 没有执行，标签页残留。已修正取值，并手工 `orca tab close --page <id>` 关掉残留标签页，`orca tab list` 确认为空。
+- 回执：`spikes/out/console-tab/darwin/tab-create.json` 只有 `browserPageId`（UUID）；`test/fixtures/receipts/tab-create.json` 按同样结构手写，ID 已替换为占位值。
 
 ## 3A 真机验证：`wl restore` 接回 claude 会话（2026-10-18，Linux VM，Orca 1.4.226）
 

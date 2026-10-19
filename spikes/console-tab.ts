@@ -96,12 +96,13 @@ let createReceipt: unknown = null
 let pageId: string | null = null
 
 try {
-  const res = await runner.json<{ ok: boolean; result?: { browserPageId?: string; tabIndex?: number } }>([
+  // runner.json 直接返回 result 本体（与 client.ts 的其他方法一致）
+  const res = await runner.json<{ browserPageId?: string }>([
     'tab', 'create', '--url', startUrl, '--worktree', worktree,
   ])
   createReceipt = res
   record(probe, 'tab-create', res)
-  pageId = res.result?.browserPageId ?? null
+  pageId = res.browserPageId ?? null
 
   const deadline = Date.now() + 15_000
   while (Date.now() < deadline && !postReceived) {
