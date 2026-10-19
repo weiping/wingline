@@ -5,3 +5,5 @@ spikes/out
 *.tsbuildinfo
 .pi/
 .claude/
+test-results/
+playwright-report/
