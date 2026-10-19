@@ -319,6 +319,7 @@ export async function run(
     .option('--link', '获取一次性登录链接')
     .option('--home <path>', '数据目录（等价 WINGLINE_HOME）')
     .option('--orca <path>', 'Orca 可执行文件（等价 WINGLINE_ORCA）')
+    .option('--json', '输出 JSON')
     .action((o: { port?: number; open?: boolean; worktree?: string; link?: boolean; home?: string; orca?: string }) =>
       execute(
         json,
