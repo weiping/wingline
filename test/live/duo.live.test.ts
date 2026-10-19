@@ -2,6 +2,7 @@
 // 运行：WINGLINE_LIVE_WORKTREE=<Orca worktree 选择器> [WINGLINE_LIVE_BUILDER_LAUNCH=<命令>] [WINGLINE_LIVE_CHECKER_LAUNCH=<命令>] pnpm test:live
 // 两个 LAUNCH 都换成非 agent 命令时，同时设 WINGLINE_LIVE_EXPECT_SEND=unconfirmed（非 agent 观察不到“开始处理”，send 只能是 send_unconfirmed）
 import fs from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import os from 'node:os'
 import path from 'node:path'
 import { PassThrough } from 'node:stream'
@@ -73,6 +74,11 @@ test('spec 7.10 acceptance 1–5: up → up again → ps → send → down --clo
 // 重启 orca-serve 杀不掉岗位终端（pty 由独立 daemon 持有），所以用关闭 builder 终端来模拟终端丢失。
 // 运行：WL_LIVE_RESTART=1 并保证 builder 用真 claude（不要设 WINGLINE_LIVE_BUILDER_LAUNCH）；本机无 codex 时设 WINGLINE_LIVE_CHECKER_LAUNCH=claude
 const liveRestart = process.env.WL_LIVE_RESTART === '1'
+// 读渲染后的屏幕：接回的会话头部会画出它的会话文件路径（含会话 ID），接回提示也会出现在输入框里
+const screenOf = (handle: string): string => {
+  const out = execFileSync(process.env.WINGLINE_ORCA ?? 'orca', ['terminal', 'read', '--terminal', handle, '--screen', '--json'], { encoding: 'utf8' })
+  return (JSON.parse(out).result.terminal.tail as string[]).join('\n')
+}
 test.skipIf(!liveRestart)('restore resumes builder session after its terminal is closed', async () => {
   const { yaml, env } = sandbox()
   const marker = `WLS-LIVE-${Date.now().toString(16)}`
@@ -94,7 +100,15 @@ test.skipIf(!liveRestart)('restore resumes builder session after its terminal is
     const builder = restored.json.result.posts.find((p: { address: string }) => p.address === 'builder@duo')
     expect(builder).toMatchObject({ outcome: 'resumed' })
     expect(builder.sessionId).toMatch(/^[0-9a-f-]{36}$/)
-    expect(await handleOf()).not.toBe(first)
+    const second = await handleOf()
+    expect(second).not.toBe(first)
+    let screen = ''
+    for (let i = 0; i < 30 && !(screen.includes(builder.sessionId) && screen.includes('重启后已接回本会话')); i++) {
+      await new Promise((r) => setTimeout(r, 3_000))
+      screen = screenOf(second)
+    }
+    expect(screen).toContain(builder.sessionId)
+    expect(screen).toContain('重启后已接回本会话')
   } finally {
     await wl(['down', 'duo', '--close', '--json'], env).catch(() => {})
   }
