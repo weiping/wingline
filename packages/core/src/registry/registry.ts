@@ -773,8 +773,12 @@ export class Registry {
     return rows.reverse().map(auditRow)
   }
 
-  pruneAudit(before: string): number {
-    return Number(this.db.prepare('DELETE FROM audit_events WHERE at < ?').run(before).changes)
+  /** 删除 before 之前的审计行；给 team 时只清该团队（wl log / 调度员循环都按团队触发）。 */
+  pruneAudit(before: string, team?: string): number {
+    const sql = team === undefined
+      ? 'DELETE FROM audit_events WHERE at < ?'
+      : 'DELETE FROM audit_events WHERE at < ? AND team = ?'
+    return Number(this.db.prepare(sql).run(before, ...(team === undefined ? [] : [team])).changes)
   }
 
   listTeamTaskLog(team: string, o: { afterId?: number; since?: string; limit?: number } = {}): TaskLogRow[] {

@@ -138,6 +138,8 @@ test('a new day prunes call logs, gate outputs and old patrol events', async () 
   w.registry.appendAudit({ team: 'duo', actor: 'human', command: 'send', target: 'a@duo', outcome: 'ok', at: oldAuditAt })
   w.registry.appendAudit({ team: 'duo', actor: 'human', command: 'send', target: 'a@duo', outcome: 'ok', at: oldAuditAt })
   w.registry.appendAudit({ team: 'duo', actor: 'human', command: 'send', target: 'a@duo', outcome: 'ok', at: freshAt })
+  // 别的团队的旧行不动：清理只作用于本团队（调度员循环按团队触发）
+  w.registry.appendAudit({ team: 'solo', actor: 'human', command: 'send', target: 'a@solo', outcome: 'ok', at: oldAuditAt })
   const beforeIds = w.registry.listAudit('duo', { limit: 100 }).map((a) => a.id)
   const oldIds = beforeIds.slice(0, 2)
   const freshId = beforeIds[2]
@@ -147,6 +149,7 @@ test('a new day prunes call logs, gate outputs and old patrol events', async () 
   expect(remaining.map((a) => a.id)).toContain(freshId)
   for (const id of oldIds) expect(remaining.map((a) => a.id)).not.toContain(id)
   expect(remaining.every((a) => Date.parse(a.at) >= Date.parse(new Date(now.getTime() - 30 * 24 * 3_600_000).toISOString()))).toBe(true)
+  expect(w.registry.listAudit('solo', { limit: 100 })).toHaveLength(1)
 })
 test.each([
   ['unreadable spec file', (p: string) => fs.writeFileSync(p, 'posts: [')],

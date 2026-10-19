@@ -86,10 +86,10 @@ async function claimRun(deps: CommandDeps, team: string, handle: string): Promis
   return mustTeamReady(deps, team)
 }
 
-/** 审计事件清理（3A spec §6.4）。失败只警告，不影响循环。 */
-function pruneAuditBestEffort(deps: CommandDeps, before: string): void {
+/** 审计事件清理（3A spec §6.4），只清本团队。失败只警告，不影响循环。 */
+function pruneAuditBestEffort(deps: CommandDeps, team: string, before: string): void {
   try {
-    deps.registry.pruneAudit(before)
+    deps.registry.pruneAudit(before, team)
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err)
     deps.warn(`审计清理失败（${codeOf(err)}）：${detail}`)
@@ -187,7 +187,7 @@ function maintain(deps: CommandDeps, st: LoopState): void {
     pruneGateOutputs(deps.home, st.team.name, now)
     deps.registry.prunePatrolEvents(new Date(now.getTime() - EVENT_KEEP_MS).toISOString())
     // 审计事件同保留 30 天（3A spec §6.4）；调度员循环 + wl log 各清理一次。
-    pruneAuditBestEffort(deps, new Date(now.getTime() - EVENT_KEEP_MS).toISOString())
+    pruneAuditBestEffort(deps, st.team.name, new Date(now.getTime() - EVENT_KEEP_MS).toISOString())
     st.logDay = dayOf(now)
   }
   const target = mustTeamReady(deps, st.team.name)
