@@ -130,8 +130,23 @@ test('a new day prunes call logs, gate outputs and old patrol events', async () 
   const logs = path.join(w.deps.home, 'logs'); fs.mkdirSync(path.join(logs, 'duo'), { recursive: true })
   fs.writeFileSync(path.join(logs, '2026-10-01.jsonl'), '')
   const old = path.join(logs, 'duo', 'gate-t-0-1.txt'); fs.writeFileSync(old, 'x'); fs.utimesSync(old, new Date('2026-10-01'), new Date('2026-10-01'))
+  // 3A spec §6.4：审计事件同保留 30 天，调度员循环每日也清理一次。
+  // fake clock 起点 2026-10-15T10:00:00Z；造一条早于 now-30 天的 audit，跨天后应当被删。
+  const now = w.c.now()
+  const oldAuditAt = new Date(now.getTime() - 31 * 24 * 3_600_000).toISOString()
+  const freshAt = new Date(now.getTime() - 1 * 3_600_000).toISOString()
+  w.registry.appendAudit({ team: 'duo', actor: 'human', command: 'send', target: 'a@duo', outcome: 'ok', at: oldAuditAt })
+  w.registry.appendAudit({ team: 'duo', actor: 'human', command: 'send', target: 'a@duo', outcome: 'ok', at: oldAuditAt })
+  w.registry.appendAudit({ team: 'duo', actor: 'human', command: 'send', target: 'a@duo', outcome: 'ok', at: freshAt })
+  const beforeIds = w.registry.listAudit('duo', { limit: 100 }).map((a) => a.id)
+  const oldIds = beforeIds.slice(0, 2)
+  const freshId = beforeIds[2]
   w.c.advance(24 * 3_600_000); await w.once(st)
   expect(fs.existsSync(path.join(logs, '2026-10-01.jsonl'))).toBe(false); expect(fs.existsSync(old)).toBe(false)
+  const remaining = w.registry.listAudit('duo', { limit: 100 })
+  expect(remaining.map((a) => a.id)).toContain(freshId)
+  for (const id of oldIds) expect(remaining.map((a) => a.id)).not.toContain(id)
+  expect(remaining.every((a) => Date.parse(a.at) >= Date.parse(new Date(now.getTime() - 30 * 24 * 3_600_000).toISOString()))).toBe(true)
 })
 test.each([
   ['unreadable spec file', (p: string) => fs.writeFileSync(p, 'posts: [')],

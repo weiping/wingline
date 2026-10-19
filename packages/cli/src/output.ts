@@ -291,7 +291,7 @@ export function renderRestore(r: RestoreResult): string {
   ].join('\n') + '\n'
 }
 
-const TASK_OUTCOME = { recovered: '已恢复', queued: '已排队', skipped: '未恢复', failed: '恢复失败' } as const
+const TASK_OUTCOME = { recovered: '已恢复', queued: '已排队', ready: '本就不该重派', skipped: '未恢复', failed: '恢复失败' } as const
 
 const TIMELINE_SOURCE = { task: '任务', patrol: '巡查', command: '命令' } as const
 const SUMMARY_MAX = 120

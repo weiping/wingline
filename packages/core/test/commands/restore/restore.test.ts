@@ -6,7 +6,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { expect, test } from 'vitest'
 import { DUO_YAML } from '../../spec/helpers.js'
 import { FakeOrca, mkDeps, seedRunningTeam } from '../fake-client.js'
-import { restore, restoreExitCode, type RestorePostOutcome } from '../../../src/commands/restore/index.js'
+import { restore, restoreExitCode, type RestorePostOutcome, type RestoreResult } from '../../../src/commands/restore/index.js'
 
 /** 岗位带着标记 WLS-aaaa1111（claude/builder）时的搜索命中。 */
 const hit = (sessionId: string) => ({ marker: 'WLS-aaaa1111', agent: 'claude', sessionId, cwd: os.tmpdir() })
@@ -136,4 +136,33 @@ test('exit code: all good 0, any ambiguous/uncertain 3, orca failure without unc
   expect(restoreExitCode({ ...base, posts: posts('kept'), run: { outcome: 'lost', runId: 'run-1' } })).toBe(2)
   expect(restoreExitCode({ ...base, posts: posts('kept'), run: { outcome: 'kept', runId: 'run-1' }, tasks: [{ taskId: 't', owner: 'a@duo', outcome: 'failed' }] })).toBe(2)
   expect(restoreExitCode({ ...base, posts: posts('kept'), run: { outcome: 'kept', runId: 'run-1' }, tasks: [{ taskId: 't', owner: 'a@duo', outcome: 'skipped', reason: '主人未接回' }] })).toBe(3)
+})
+
+test('task outcome ready is a success, not an uncertain signal', () => {
+  // recoverTask 本身成功（无 owner / 岗位被冻结 / 离线），任务本来就不该被重派。
+  // spec §5.2 第 6 步「主人未接回时跳过它名下的任务」之外，'ready' 也是合法成功路径；退出码 0。
+  const base = { team: 'duo', dryRun: false, dispatcher: { action: 'left' as const, state: 'running' }, tasks: [] as RestoreResult['tasks'] }
+  const ok = { team: 'duo', dryRun: false, dispatcher: { action: 'left' as const, state: 'running' },
+               posts: [{ address: 'builder@duo', outcome: 'kept' as RestorePostOutcome }],
+               run: { outcome: 'kept' as const, runId: 'run-1' },
+               tasks: [{ taskId: 't-1', owner: 'builder@duo', outcome: 'ready' as const, reason: 'skipped_frozen' }] }
+  expect(restoreExitCode(ok)).toBe(0)
+})
+
+test('dry-run skipped tasks do not make the exit code uncertain', () => {
+  // --dry-run 下死任务全部以 'skipped' 报告（reason=dry-run），是设计上的「报告」语义，
+  // 不应让脚本误判需要人工介入。
+  const dryBase = { team: 'duo', dryRun: true, dispatcher: { action: 'skipped' as const, state: 'stale', reason: 'dry-run：将重启调度员' }, tasks: [] as RestoreResult['tasks'] }
+  const dryOk: RestoreResult = {
+    team: 'duo',
+    dryRun: true,
+    dispatcher: { action: 'skipped', state: 'never' },
+    posts: [{ address: 'builder@duo', outcome: 'kept' }],
+    run: { outcome: 'kept', runId: 'run-1' },
+    tasks: [{ taskId: 't-1', owner: 'builder@duo', outcome: 'skipped', reason: 'dry-run：未执行恢复' }],
+  }
+  expect(restoreExitCode(dryOk)).toBe(0)
+  // 反向断言：同样一组数据，非 dry-run 应当是 3
+  const nondry: RestoreResult = { ...dryOk, dryRun: false, tasks: [{ taskId: 't-1', owner: 'builder@duo', outcome: 'skipped', reason: '主人未接回' }] }
+  expect(restoreExitCode(nondry)).toBe(3)
 })
