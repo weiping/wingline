@@ -179,8 +179,9 @@ export function registerWriteRoutes(r: Router, cmds: WriteCommands): void {
     checkParam('id', id)
     assertExactFields(ctx.body, ['to'])
     const { to } = ctx.body
+    const target = to && !to.includes('@') ? postAddress(to, team) : to
     try {
-      return await cmds.reassignTask(ctx.deps, { id, to })
+      return await cmds.reassignTask(ctx.deps, { id, to: target })
     } finally {
       ctx.deps.orca.invalidate()
     }
@@ -208,8 +209,9 @@ export function registerWriteRoutes(r: Router, cmds: WriteCommands): void {
     checkParam('gateId', gateId)
     assertExactFields(ctx.body, ['resolution', 'reassign'])
     const { resolution, reassign } = ctx.body
+    const target = reassign ? (reassign.includes('@') ? reassign : postAddress(reassign, team)) : undefined
     try {
-      return await cmds.resolveGate(ctx.deps, { gateId, resolution, reassign })
+      return await cmds.resolveGate(ctx.deps, { gateId, resolution, reassign: target })
     } finally {
       ctx.deps.orca.invalidate()
     }

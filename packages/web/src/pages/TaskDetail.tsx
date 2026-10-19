@@ -74,7 +74,26 @@ export function TaskDetail({ team, id }: { team: string; id: string }) {
             onDone={reload}
           />
         )}
-        {t.status === 'blocked' && <CommandHint note="闸门在收件箱里处理；也可在终端运行：" command={`wl task resolve <gate-id> --resolution "…"`} />}
+        {t.status === 'blocked' && t.gateId ? (
+          <ActionDialog
+            label="处理闸门"
+            title="处理闸门"
+            fields={[
+              { name: 'resolution', label: '处理说明', kind: 'textarea', required: true },
+              { name: 'reassign', label: '改派新主人（岗位名，可选）' },
+            ]}
+            onSubmit={(v, rr) =>
+              api.post(`/api/teams/${enc}/gates/${encodeURIComponent(t.gateId!)}/resolve`, {
+                resolution: v.resolution,
+                ...(v.reassign?.trim() ? { reassign: v.reassign.trim() } : {}),
+                ...(rr ? { retryRequest: rr } : {}),
+              })
+            }
+            onDone={reload}
+          />
+        ) : t.status === 'blocked' ? (
+          <CommandHint note="可在终端运行：" command={`wl task resolve <gate-id> --resolution "…"`} />
+        ) : null}
       </div>
 
       {t.plan && (

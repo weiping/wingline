@@ -90,6 +90,33 @@ test('inbox answers a question with POST to the reply endpoint', async () => {
   expect(calls.find((c) => c.method === 'POST')!.body).toEqual({ body: 'A' })
 })
 
+test('inbox lists pending gates and resolves gate with resolution and optional reassign', async () => {
+  stubEventSource()
+  const calls = mockApi({
+    'GET /api/session': () => ({ csrfToken: 'tok', version: '1', teams: ['duo'] }),
+    'GET /api/teams/duo/attention': () =>
+      attentionOf({
+        stale: [
+          { taskId: 't1', title: 'Task with Gate', reason: 'blocked_waiting', owner: 'builder@duo', since: null, command: 'cmd', gateId: 'gate-1' },
+        ],
+      }),
+    'POST /api/teams/duo/gates/gate-1/resolve': () => ({ taskId: 't1', status: 'ready', claimedBy: 'checker@duo' }),
+  })
+  const { getByText, findByText, container } = render(withStream('duo', <Inbox team="duo" />))
+  expect(await findByText('Task with Gate')).toBeTruthy()
+  expect(getByText('等待决策的 gate')).toBeTruthy()
+  fireEvent.click(getByText('处理闸门', { selector: 'button' }))
+  fireEvent.input(container.querySelector('textarea')!, { target: { value: '继续推进' } })
+  const inputs = container.querySelectorAll('input')
+  fireEvent.input(inputs[0]!, { target: { value: 'checker' } })
+  fireEvent.click(getByText('确认', { selector: 'button' }))
+  await waitFor(() => expect(calls.some((c) => c.path === '/api/teams/duo/gates/gate-1/resolve')).toBe(true))
+  expect(calls.find((c) => c.path === '/api/teams/duo/gates/gate-1/resolve')!.body).toEqual({
+    resolution: '继续推进',
+    reassign: 'checker',
+  })
+})
+
 test('task board groups tasks by status', async () => {
   stubEventSource()
   mockApi({
@@ -125,6 +152,25 @@ test('task detail offers 恢复派发 for a dispatched task and posts recover', 
   fireEvent.click(getByText('恢复派发', { selector: 'button' }))
   fireEvent.click(getByText('恢复', { selector: 'button' }))
   await waitFor(() => expect(calls.some((c) => c.path === '/api/teams/duo/tasks/t1/recover')).toBe(true))
+})
+
+test('task detail offers 处理闸门 for a blocked task with gateId', async () => {
+  stubEventSource()
+  const calls = mockApi({
+    'GET /api/session': () => ({ csrfToken: 'tok', version: '1', teams: ['duo'] }),
+    'GET /api/teams/duo/tasks/t1': () => ({
+      id: 't1', status: 'blocked', title: 'Blocked Task', parentId: null, tags: [], kind: 'work', plan: null, claimedBy: 'builder@duo',
+      assigneeHandle: null, dispatchId: null, epoch: 1, gateFailures: 1, readySince: null, dispatchedAt: null, result: null,
+      outcome: null, reportedBy: null, closure: null, gateId: 'gate-99', history: [],
+    }),
+    'POST /api/teams/duo/gates/gate-99/resolve': () => ({ taskId: 't1', status: 'ready', claimedBy: 'builder@duo' }),
+  })
+  const { getByText, findByText, container } = render(withStream('duo', <TaskDetail team="duo" id="t1" />))
+  await findByText('Blocked Task')
+  fireEvent.click(getByText('处理闸门', { selector: 'button' }))
+  fireEvent.input(container.querySelector('textarea')!, { target: { value: '通过' } })
+  fireEvent.click(getByText('确认', { selector: 'button' }))
+  await waitFor(() => expect(calls.some((c) => c.path === '/api/teams/duo/gates/gate-99/resolve')).toBe(true))
 })
 
 test('post detail shows the terminal preview as plain text, never as markup', async () => {

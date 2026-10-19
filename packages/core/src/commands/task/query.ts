@@ -104,6 +104,7 @@ export interface ShownTask extends TaskRow {
   outcome: string | null
   reportedBy: string | null
   closure: DoneClosure | null
+  gateId?: string | null
   history?: TaskLogRow[]
 }
 
@@ -122,11 +123,14 @@ export async function showTask(deps: CommandDeps, a: { id: string; team?: string
   const finished = deps.registry.listVerdictsOf(a.id).filter((v) => v.result !== null)
   const latest = finished[finished.length - 1]
   const closure = (parseJson(latest?.result ?? null).closure as DoneClosure | undefined) ?? null
+  const team = a.team ?? deps.registry.getTaskExt(a.id)?.team
+  const gateId = task.status === 'blocked' && team ? deps.registry.listGates(team).filter((g) => g.taskId === a.id).at(-1)?.gateId ?? null : null
   return {
     ...task,
     outcome: (report.outcome as string | undefined) ?? null,
     reportedBy: (report.reportedBy as string | undefined) ?? null,
     closure,
+    ...(gateId ? { gateId } : {}),
     ...(a.history ? { history: deps.registry.listTaskLog(a.id) } : {}),
   }
 }

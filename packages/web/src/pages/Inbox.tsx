@@ -29,6 +29,8 @@ export function Inbox({ team }: { team: string }) {
   const a = attn.data
   const reload = () => attn.reload()
   const tasks = `/api/teams/${enc}/tasks`
+  const gates = a.stale.filter((s) => s.reason === 'blocked_waiting')
+  const hung = a.stale.filter((s) => s.reason !== 'blocked_waiting')
 
   return (
     <div class="page">
@@ -64,32 +66,28 @@ export function Inbox({ team }: { team: string }) {
         )}
       </Section>
 
-      <Section title="卡住的任务" count={a.stale.length}>
-        {a.stale.length === 0 ? (
+      <Section title="等待决策的 gate" count={gates.length}>
+        {gates.length === 0 ? (
           <Empty />
         ) : (
-          a.stale.map((s) => (
-            <div class="row" key={`${s.taskId}:${s.reason}`}>
+          gates.map((s) => (
+            <div class="row" key={`${s.taskId}:${s.gateId ?? s.reason}`}>
               <div>
-                <Link href={taskPath(team, s.taskId)}>{s.title}</Link> <Pill tone="warn">{REASON[s.reason]}</Pill>{' '}
-                <span class="muted small">主人 {s.owner ?? '—'}</span>
+                <Link href={taskPath(team, s.taskId)}>{s.title}</Link> <Pill tone="bad">等待决策</Pill>{' '}
+                <span class="muted small">归属 {s.owner ? postOf(s.owner) : '—'}</span>
               </div>
-              {s.reason === 'dead_assignee' ? (
-                <ActionDialog
-                  label="恢复派发"
-                  title="恢复派发"
-                  submitLabel="恢复"
-                  onSubmit={(_v, rr) => api.post(`${tasks}/${encodeURIComponent(s.taskId)}/recover`, rr ? { retryRequest: rr } : {})}
-                  onDone={reload}
-                />
-              ) : s.gateId ? (
+              {s.gateId ? (
                 <ActionDialog
                   label="处理闸门"
-                  title="处理闸门"
-                  fields={[{ name: 'resolution', label: '处理说明', kind: 'textarea', required: true }]}
+                  title={`处理闸门 ${s.gateId}`}
+                  fields={[
+                    { name: 'resolution', label: '处理说明', kind: 'textarea', required: true },
+                    { name: 'reassign', label: '改派新主人（岗位名，可选）' },
+                  ]}
                   onSubmit={(v, rr) =>
                     api.post(`/api/teams/${enc}/gates/${encodeURIComponent(s.gateId!)}/resolve`, {
                       resolution: v.resolution,
+                      ...(v.reassign?.trim() ? { reassign: v.reassign.trim() } : {}),
                       ...(rr ? { retryRequest: rr } : {}),
                     })
                   }
@@ -123,6 +121,32 @@ export function Inbox({ team }: { team: string }) {
         )}
       </Section>
 
+      <Section title="卡住的任务" count={hung.length}>
+        {hung.length === 0 ? (
+          <Empty />
+        ) : (
+          hung.map((s) => (
+            <div class="row" key={`${s.taskId}:${s.reason}`}>
+              <div>
+                <Link href={taskPath(team, s.taskId)}>{s.title}</Link> <Pill tone="warn">{REASON[s.reason]}</Pill>{' '}
+                <span class="muted small">主人 {s.owner ? postOf(s.owner) : '—'}</span>
+              </div>
+              {s.reason === 'dead_assignee' ? (
+                <ActionDialog
+                  label="恢复派发"
+                  title="恢复派发"
+                  submitLabel="恢复"
+                  onSubmit={(_v, rr) => api.post(`${tasks}/${encodeURIComponent(s.taskId)}/recover`, rr ? { retryRequest: rr } : {})}
+                  onDone={reload}
+                />
+              ) : (
+                <CommandHint command={s.command} />
+              )}
+            </div>
+          ))
+        )}
+      </Section>
+
       <Section title="巡查信号" count={a.signals.length}>
         {a.signals.length === 0 ? (
           <Empty />
@@ -132,6 +156,17 @@ export function Inbox({ team }: { team: string }) {
               <div>
                 <strong>{postOf(s.post)}</strong> <span class="muted small">{s.signal} · L{s.level}</span>
               </div>
+              <div class="actions">
+                <ActionDialog
+                  label="发消息"
+                  title={`发给 ${postOf(s.post)}`}
+                  submitLabel="发送"
+                  fields={[{ name: 'message', label: '消息', kind: 'textarea', required: true }]}
+                  onSubmit={(v, rr) =>
+                    api.post(`/api/teams/${enc}/send`, { post: postOf(s.post), message: v.message, ...(rr ? { retryRequest: rr } : {}) })
+                  }
+                  onDone={reload}
+                />
               <ActionDialog
                 label="静音"
                 title={`静音 ${postOf(s.post)}`}
@@ -146,6 +181,7 @@ export function Inbox({ team }: { team: string }) {
                 }}
                 onDone={reload}
               />
+              </div>
             </div>
           ))
         )}
