@@ -70,26 +70,31 @@ test('spec 7.10 acceptance 1–5: up → up again → ps → send → down --clo
   }
 }, 300_000)
 
-// 需要人工重启 Orca：先 up → send 唯一标记 → 重启 Orca → restore → 画面 preview 仍含标记
+// 重启 orca-serve 杀不掉岗位终端（pty 由独立 daemon 持有），所以用关闭 builder 终端来模拟终端丢失。
+// 运行：WL_LIVE_RESTART=1 并保证 builder 用真 claude（不要设 WINGLINE_LIVE_BUILDER_LAUNCH）；本机无 codex 时设 WINGLINE_LIVE_CHECKER_LAUNCH=claude
 const liveRestart = process.env.WL_LIVE_RESTART === '1'
-test.skipIf(!liveRestart)('restore after Orca restart keeps builder session preview', async () => {
+test.skipIf(!liveRestart)('restore resumes builder session after its terminal is closed', async () => {
   const { yaml, env } = sandbox()
-  const marker = `WINGLINE_LIVE_RESTORE_${Date.now()}`
+  const marker = `WLS-LIVE-${Date.now().toString(16)}`
   try {
+    const deps = defaultMakeDeps(env, () => {})
     const up = await wl(['up', yaml, '--json'], env)
     expect(up.json.ok).toBe(true)
-    await wl(['send', 'builder@duo', marker, '--json'], env)
-    // eslint-disable-next-line no-console
-    console.log('\n>>> 请在另一个终端重启 Orca（orca 进程），完成后在本测试继续等待 120s 内执行 restore…\n')
-    await new Promise((r) => setTimeout(r, 120_000))
+    const handleOf = async () =>
+      (await wl(['ps', 'duo', '--json'], env)).json.result.find((r: { address: string }) => r.address === 'builder@duo').handle as string
+    const first = await handleOf()
+    await deps.orca.terminalWait({ handle: first, forState: 'tui-idle', timeoutMs: 60_000 })
+    await wl(['send', 'builder@duo', `只回复收到。${marker}`, '--json'], env)
+    await deps.orca.terminalWait({ handle: first, forState: 'tui-idle', timeoutMs: 60_000 })
+    await new Promise((r) => setTimeout(r, 10_000)) // 等 Orca 把会话写进索引
+    await deps.orca.terminalClose({ handle: first })
+
     const restored = await wl(['restore', 'duo', '--json'], env)
     expect(restored.json.ok).toBe(true)
-    const deps = defaultMakeDeps(env, () => {})
-    const ps = await wl(['ps', 'duo', '--json'], env)
-    const builder = ps.json.result.find((r: { address: string }) => r.address === 'builder@duo')
-    expect(builder?.handle).toBeTruthy()
-    const show = await deps.orca.terminalShow({ handle: builder!.handle! })
-    expect(show.preview ?? '').toContain(marker)
+    const builder = restored.json.result.posts.find((p: { address: string }) => p.address === 'builder@duo')
+    expect(builder).toMatchObject({ outcome: 'resumed' })
+    expect(builder.sessionId).toMatch(/^[0-9a-f-]{36}$/)
+    expect(await handleOf()).not.toBe(first)
   } finally {
     await wl(['down', 'duo', '--close', '--json'], env).catch(() => {})
   }

@@ -474,3 +474,12 @@ macOS 真机（Orca 1.4.224）以**本机 claude × 2**（builder 与 checker �
 **最终判读**：codex 接回在本任务范围不可验证——不是 3A 该解决的问题。3A 的接回逻辑只对 claude 验证通过；codex 侧要么走 `fresh`（上下文丢失，3B 接管）要么走 `--session` 手工指定（保留 3A spec §5.3 的逃生口），Phase 3A 不依赖 codex 路径成立。`codex resume` 形式与 `Orca 是否索引 codex 会话` 留作 3D 阶段用 e2e 实测或在 sandbox 外直跑 codex CLI 验证。
 
 判据的代价：Orca 每条命中只给一条最佳证据 snippet。若某会话确实包含标记整串，但最佳证据落在别处的部分匹配上，该命中会被误丢 → 结果 `fresh`（上下文丢失，但绝不会接错会话；可用 `--session` 手工接回）。方向上宁可少接、不可错接。
+
+## 3A 真机验证：`wl restore` 接回 claude 会话（2026-10-18，Linux VM，Orca 1.4.226）
+
+- **重启 `orca-serve` 杀不掉岗位终端**：pty 由独立的 `orca-daemon-*.scope` 持有，重启后 `restore` 两个岗位都判 `kept`，没有走到 search/resume。`test/live/duo.live.test.ts` 的 `WL_LIVE_RESTART` 用例因此无效（且 `terminal show` 的 preview 只是屏幕末几行，不能拿来断言标记）。
+- **改为关闭 builder 终端模拟终端丢失**：`wl up` → 给 builder 发 `只回复收到。WLS-LIVE-<随机>` → `orca terminal close` → `wl restore duo`。dry-run 与真跑都给出 builder `resumed`（`sessionId` 与 `orca search` 命中的会话一致）、checker `kept`、Run `reclaimed`。
+- 新终端执行 `claude --model opus --resume <sessionId>`，`terminal read` 显示原对话（包括标记那一轮）仍在，并收到 `[雁阵] 重启后已接回本会话，你的地址仍是 builder@duo`，agent 回答“上下文都还在”。
+- `orca search` 在 Linux 上对 claude 会话可用，整串标记被 `[[…]]` 高亮，`findSession` 的整串判据成立。
+- **未覆盖**：macOS 的 `/private` cwd 前缀（Linux 触发不了）；codex 接回（本机无 codex，仍留 3D）；真正整机/Orca 桌面端重启。
+- **live 用例已改**：`WL_LIVE_RESTART=1` 先关掉 builder 终端，再断言 `restore` 里 builder 为 `resumed` 且 `sessionId` 为 UUID、终端 handle 已更换；真机运行通过。
