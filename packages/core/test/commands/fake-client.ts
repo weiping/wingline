@@ -70,6 +70,7 @@ export class FakeOrca implements OrcaClient {
   /** 为真时下一次 check 返回 connectionLost: true 的空批并复位。 */
   connectionLostOnce = false
   workerListError?: Error
+  failListOnce = false
 
   /** 会话搜索模型（3A）：按去引号后的 query 精确匹配 marker，agent/environment 须一致；snippet 缺省为整串高亮的标记。 */
   sessions: Array<{ marker: string; agent: string; sessionId: string; cwd: string | null; updatedAt?: string; messageCount?: number; environment?: string; snippet?: string | null }> = []
@@ -195,6 +196,10 @@ export class FakeOrca implements OrcaClient {
 
   async taskList(_a: { run: string }): Promise<OrchestrationTask[]> {
     this.read('taskList', _a)
+    if (this.failListOnce) {
+      this.failListOnce = false
+      throw new Error('orca task-list error')
+    }
     return this.tasks.map((t) => {
       const visible = t.status === 'ready' || t.status === 'dispatched'
       return { ...t, assigneeHandle: visible ? t.assigneeHandle : null, dispatchId: visible ? t.dispatchId : null }
