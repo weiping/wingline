@@ -483,3 +483,10 @@ macOS 真机（Orca 1.4.224）以**本机 claude × 2**（builder 与 checker �
 - `orca search` 在 Linux 上对 claude 会话可用，整串标记被 `[[…]]` 高亮，`findSession` 的整串判据成立。
 - **未覆盖**：macOS 的 `/private` cwd 前缀（Linux 触发不了）；codex 接回（本机无 codex，仍留 3D）；真正整机/Orca 桌面端重启。
 - **live 用例已改**：`WL_LIVE_RESTART=1` 先关掉 builder 终端，再断言 `restore` 里 builder 为 `resumed` 且 `sessionId` 为 UUID、终端 handle 已更换；真机运行通过。
+
+## 3A 真机验证：`wl restore` 接回 claude 会话（2026-10-19，macOS，Orca 1.4.227）
+
+- 运行：`WL_LIVE_RESTART=1`，builder / checker 的 launch 都显式指向本机 `~/.local/bin/claude --dangerously-skip-permissions`（避开 Orca 启动偏好把 `claude` 转到 `claude-lima`，见实测发现第 12 条），worktree 为 `path:/Users/liuweiping/workspace/dev/wingline`。
+- 结果通过：关闭 builder 终端后 `wl restore duo`，builder 为 `resumed`（`sessionId` 为 UUID、终端 handle 已更换），屏幕里出现重启前发的标记 `WLS-LIVE-…` 和 `[雁阵] 重启后已接回本会话`，agent 确认仍是 builder@duo。测试后无残留 duo 终端。
+- 本机 claude 不在屏幕上画会话 ID（Linux 的会话头部会画会话文件路径），第一次跑因断言“屏幕含 sessionId”失败；live 用例改为断言标记在屏幕上（标记只存在于原会话，比会话 ID 更能证明接回的是原会话）。
+- **仍未覆盖**：`/private` cwd 前缀（本次 worktree 在 `/Users/...`，不经过 `/private`，仍只有单测）；codex 接回（留 3D）；整机或 Orca 桌面端真重启。

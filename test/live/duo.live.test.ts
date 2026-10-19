@@ -103,11 +103,12 @@ test.skipIf(!liveRestart)('restore resumes builder session after its terminal is
     const second = await handleOf()
     expect(second).not.toBe(first)
     let screen = ''
-    for (let i = 0; i < 30 && !(screen.includes(builder.sessionId) && screen.includes('重启后已接回本会话')); i++) {
+    for (let i = 0; i < 30 && !(screen.includes(marker) && screen.includes('重启后已接回本会话')); i++) {
       await new Promise((r) => setTimeout(r, 3_000))
       screen = screenOf(second)
     }
-    expect(screen).toContain(builder.sessionId)
+    // 重启前发的标记只会出现在原会话里（新开会话的启动包不含它）；会话 ID 不一定画在屏幕上（因 claude 版本而异）
+    expect(screen).toContain(marker)
     expect(screen).toContain('重启后已接回本会话')
   } finally {
     await wl(['down', 'duo', '--close', '--json'], env).catch(() => {})
