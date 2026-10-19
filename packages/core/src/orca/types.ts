@@ -120,4 +120,6 @@ export interface OrcaClient {
   worktreeSet(a: { worktree: string; comment: string }): Promise<void>
   /** query 原样作为一个参数（调用方负责加引号实现精确搜索）。 */
   search(a: { query: string; agent: string; environment?: string }): Promise<SearchHit[]>
+  /** 在 Orca 内置浏览器里打开一个页面（3B 控制台的 --open）。 */
+  tabCreate(a: { url: string; worktree: string }): Promise<{ browserPageId: string }>
 }
