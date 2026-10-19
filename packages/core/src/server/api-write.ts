@@ -149,7 +149,8 @@ export function registerWriteRoutes(r: Router, cmds: WriteCommands): void {
     if (post) checkParam('post', post)
     if (parent) checkParam('id', parent)
     try {
-      return await cmds.createTask(ctx.deps, { team, title, post, tags, parent, retryRequest })
+      // 请求体里的 post 是岗位名（与 send 一致），core 的 createTask 要的是地址
+      return await cmds.createTask(ctx.deps, { team, title, post: post ? postAddress(post, team) : undefined, tags, parent, retryRequest })
     } finally {
       ctx.deps.orca.invalidate()
     }
