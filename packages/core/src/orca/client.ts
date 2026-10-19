@@ -52,7 +52,7 @@ const toTask = (t: RawTask): OrchestrationTask => ({
   result: t.result ?? null,
 })
 
-type OrchestrationMethods = Omit<OrcaClient, 'version' | 'status' | 'search' | 'terminalList' | 'terminalCreate' | 'terminalWait' | 'terminalSend' | 'terminalClose'>
+type OrchestrationMethods = Omit<OrcaClient, 'version' | 'status' | 'search' | 'tabCreate' | 'terminalList' | 'terminalCreate' | 'terminalWait' | 'terminalSend' | 'terminalClose'>
 
 function runMethods(runner: OrcaRunner): Pick<OrcaClient, 'runCreate' | 'runUse' | 'runShow' | 'runList' | 'requestShow'> {
   type RunReply = { run: { id: string; coordinator_handle: string } }
@@ -313,6 +313,10 @@ export function createOrcaClient(runner: OrcaRunner): OrcaClient {
         'search', a.query, '--agent', a.agent, '--fresh', ...(a.environment ? ['--environment', a.environment] : []),
       ])
       return r.hits.map((h) => ({ sessionId: h.sessionId, cwd: h.cwd ?? null, updatedAt: h.updatedAt ?? null, messageCount: h.messageCount ?? null, snippet: h.evidence?.snippet ?? null }))
+    },
+
+    async tabCreate(a) {
+      return runner.json<{ browserPageId: string }>(['tab', 'create', '--url', a.url, '--worktree', a.worktree])
     },
   }
 }

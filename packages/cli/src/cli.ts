@@ -8,6 +8,7 @@ import {
   up, winglineHome, dispatcherUp, dispatcherDown, dispatcherStatus, dispatcherReply, freezePostCmd, unfreezePostCmd, hushCmd, unhushCmd, runDispatcherLoop, type CommandDeps,
   type TimelineEvent, type TimelineSource,
 } from '@wingline/core'
+import { consoleCmd, renderConsole, renderReady } from './console.js'
 import { AUDIT } from './audit-table.js'
 import verified from './verified.json' with { type: 'json' }
 import {
@@ -30,6 +31,7 @@ export interface Commands {
   restore: typeof restore
   log: typeof readTimeline
   followLog: typeof followTimeline
+  console: typeof consoleCmd
   createTask: typeof createTask
   listTasks: typeof listTasks
   listStale: typeof listStale
@@ -59,6 +61,7 @@ const rawCommands: Commands = {
   up, ps, send, down, restore, log: readTimeline, followLog: followTimeline, createTask, listTasks, listStale, showTask, claimTask, releaseTask, reassignTask, startTask, planTask, doneTask,
   escalateTask, resolveGate, recoverTask, dispatcherUp, dispatcherDown, runDispatcherLoop, dispatcherStatus, freezePostCmd, unfreezePostCmd,
   hushCmd, unhushCmd, dispatcherReply, attention,
+  console: consoleCmd,
 }
 /** 表里登记过的写命令每执行一次写一行审计（spec 6.2）。 */
 const realCommands: Commands = auditedCommands(rawCommands, AUDIT)
@@ -306,6 +309,29 @@ export async function run(
   registerBaseCommands(program, commands, execute, io)
   registerTaskCommands(program, commands, execute)
   registerDispatcherCommands(program, commands, execute, io)
+
+  program
+    .command('console')
+    .description('本地控制台服务')
+    .option('--port <n>', '监听端口', (v) => parseInt(v, 10))
+    .option('--open', '在 Orca 内置浏览器中打开')
+    .option('--worktree <selector>', '工作区选择器')
+    .option('--link', '获取一次性登录链接')
+    .option('--home <path>', '数据目录（等价 WINGLINE_HOME）')
+    .option('--orca <path>', 'Orca 可执行文件（等价 WINGLINE_ORCA）')
+    .option('--json', '输出 JSON')
+    .action((o: { port?: number; open?: boolean; worktree?: string; link?: boolean; home?: string; orca?: string }) =>
+      execute(
+        json,
+        (deps) => commands.console(deps, {
+          port: o.port, open: o.open, worktree: o.worktree, link: o.link,
+          onReady: json ? undefined : (r) => io.stdout.write(renderReady(r)),
+        }),
+        renderConsole,
+        undefined,
+        { home: o.home, orca: o.orca },
+      ),
+    )
 
   try {
     await program.parseAsync(argv, { from: 'user' })

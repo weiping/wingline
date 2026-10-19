@@ -29,7 +29,7 @@ export interface RestoreResult {
   posts: RestorePost[]
   run?: UpResult['run']
   dispatcher: { action: 'restarted' | 'left' | 'skipped'; state: string; reason?: string }
-  tasks: Array<{ taskId: string; owner: string; outcome: 'recovered' | 'queued' | 'skipped' | 'failed'; reason?: string; retry?: string }>
+  tasks: Array<{ taskId: string; owner: string; outcome: 'recovered' | 'queued' | 'ready' | 'skipped' | 'failed'; reason?: string; retry?: string }>
 }
 
 /** 岗位恢复结果映回 wl up 的 lead outcome，Run 步骤原样复用 ensureRun（spec 第 5.2 节第 4 步）。 */
@@ -124,7 +124,13 @@ export async function restore(deps: CommandDeps, a: RestoreArgs): Promise<Restor
           }
           try {
             const rec = await recoverTask(deps, { id: s.taskId })
-            const outcome = rec.status === 'queued' ? 'queued' : rec.status === 'ready' ? 'skipped' : 'recovered'
+            // rec.status 取值见 task/escalate.ts:122；'ready' = 本次无 owner / owner 岗位被冻结 / 离线，
+            //   任务本来就不该被重派，spec §5.2 第 6 步「跳过它名下的任务」。
+            const outcome = rec.status === 'queued'
+              ? 'queued'
+              : rec.status === 'ready'
+                ? 'ready'
+                : 'recovered'
             tasks.push({ taskId: s.taskId, owner: s.owner ?? '', outcome, ...(rec.reason !== undefined ? { reason: rec.reason } : {}) })
           } catch (err) {
             if (!(err instanceof WinglineError) || err.kind === 'input' || err.kind === 'internal') throw err
@@ -138,12 +144,16 @@ export async function restore(deps: CommandDeps, a: RestoreArgs): Promise<Restor
   })
 }
 
-/** spec 第 5.5 节：全 kept/resumed/fresh 且其余成功 → 0；任何不确定 → 3；明确失败 → 1/2（输入错误在上游抛）。 */
+/** spec 第 5.5 节：全 kept/resumed/fresh 且其余成功 → 0；任何不确定 → 3；明确失败 → 1/2（输入错误在上游抛）。
+ *  注：任务的 `outcome: 'ready'` 是成功语义（无 owner / 岗位被冻结 / 离线，任务本来就不该被重派，
+ *  spec §5.2 第 6 步「跳过它名下的任务」），不计入不确定；dry-run 的 `outcome: 'skipped'` 是设计上的报告语义，
+ *  也不算不确定。两者均归属「由人决定下一步」但本命令本身没有失败、没有不确定。
+ */
 export function restoreExitCode(r: RestoreResult): 0 | 2 | 3 {
   const unclear = r.posts.some((p) => p.outcome === 'ambiguous' || p.outcome === 'uncertain')
     || r.run?.outcome === 'ambiguous' || r.run?.outcome === 'uncertain'
     || (r.dispatcher.state === 'stale' && r.dispatcher.action !== 'restarted')
-    || r.tasks.some((t) => t.outcome === 'skipped')
+    || r.tasks.some((t) => t.outcome === 'skipped' && !r.dryRun)
   if (unclear) return 3
   const failed = r.posts.some((p) => p.outcome === 'failed')
     || r.run?.outcome === 'failed' || r.run?.outcome === 'lost'

@@ -94,10 +94,10 @@ function matches(e: TimelineEvent, f: TimelineFilter, since: string | undefined)
   return true
 }
 
-/** 每次读时间线顺手清掉 30 天前的审计；清不掉只警告，不影响这一次读到什么。 */
-function pruneOldAudit(deps: CommandDeps, now: Date): void {
+/** 每次读时间线顺手清掉本团队 30 天前的审计；清不掉只警告，不影响这一次读到什么。 */
+function pruneOldAudit(deps: CommandDeps, team: string, now: Date): void {
   try {
-    deps.registry.pruneAudit(new Date(now.getTime() - PRUNE_DAYS * DAY_MS).toISOString())
+    deps.registry.pruneAudit(new Date(now.getTime() - PRUNE_DAYS * DAY_MS).toISOString(), team)
   } catch (err) {
     deps.warn(`审计清理失败：${err instanceof Error ? err.message : String(err)}`)
   }
@@ -124,7 +124,7 @@ export async function readTimeline(deps: CommandDeps, a: TimelineFilter): Promis
   knownTeam(deps, a.team)
   const now = deps.now()
   const since = a.since === undefined ? undefined : parseSince(a.since, now)
-  pruneOldAudit(deps, now)
+  pruneOldAudit(deps, a.team, now)
   const o = since === undefined ? {} : { since }
   const all = sortEvents([
     ...fromTaskLog(deps.registry.listTeamTaskLog(a.team, o)),

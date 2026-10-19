@@ -70,10 +70,13 @@ export class FakeOrca implements OrcaClient {
   /** 为真时下一次 check 返回 connectionLost: true 的空批并复位。 */
   connectionLostOnce = false
   workerListError?: Error
+  failListOnce = false
 
   /** 会话搜索模型（3A）：按去引号后的 query 精确匹配 marker，agent/environment 须一致；snippet 缺省为整串高亮的标记。 */
   sessions: Array<{ marker: string; agent: string; sessionId: string; cwd: string | null; updatedAt?: string; messageCount?: number; environment?: string; snippet?: string | null }> = []
   searchError?: Error
+  tabCreateCalls: Array<{ url: string; worktree: string }> = []
+  tabCreateSupported = true
 
   postMessage(m: Partial<CheckMessage> & { type: string }): CheckMessage {
     const msg: CheckMessage = { id: `msg-${++this.ids.msg}`, fromHandle: null, subject: null, body: null, payload: null, threadId: null, createdAt: null, ...m }
@@ -195,6 +198,10 @@ export class FakeOrca implements OrcaClient {
 
   async taskList(_a: { run: string }): Promise<OrchestrationTask[]> {
     this.read('taskList', _a)
+    if (this.failListOnce) {
+      this.failListOnce = false
+      throw new Error('orca task-list error')
+    }
     return this.tasks.map((t) => {
       const visible = t.status === 'ready' || t.status === 'dispatched'
       return { ...t, assigneeHandle: visible ? t.assigneeHandle : null, dispatchId: visible ? t.dispatchId : null }
@@ -325,6 +332,13 @@ export class FakeOrca implements OrcaClient {
 
   async version() { this.calls.push('version'); return this.versionText }
   async status() { this.calls.push('status'); return { reachable: this.reachable } }
+  async tabCreate(a: { url: string; worktree: string }): Promise<{ browserPageId: string }> {
+    this.read('tabCreate', a)
+    this.tabCreateCalls.push(a)
+    if (!this.tabCreateSupported) throw new Error('tab create unsupported')
+    return { browserPageId: 'fake-page-1' }
+  }
+
   async search(a: { query: string; agent: string; environment?: string }) {
     this.read('search', a)
     if (this.searchError) throw this.searchError

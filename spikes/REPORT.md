@@ -475,6 +475,17 @@ macOS 真机（Orca 1.4.224）以**本机 claude × 2**（builder 与 checker �
 
 判据的代价：Orca 每条命中只给一条最佳证据 snippet。若某会话确实包含标记整串，但最佳证据落在别处的部分匹配上，该命中会被误丢 → 结果 `fresh`（上下文丢失，但绝不会接错会话；可用 `--session` 手工接回）。方向上宁可少接、不可错接。
 
+## 3B 探针：控制台标签页（2026-10-19，macOS Orca 1.4.229）
+
+探针 `spikes/console-tab.ts` 验证在 Orca 内置浏览器中打开本地控制台页面。
+
+**实测结论：成立**
+- 命令形式：`orca tab create --url <url> --worktree <worktree>`（带 `--json` 输出 `{ browserPageId: "..." }`）。
+- Cookie 支持：`HttpOnly; SameSite=Strict; Path=/` 重定向到 `/check` 正常携带并回显（`cookie=ok`）。
+- SSE 支持：页面中 `new EventSource('/events')` 正常接收服务端事件流（`sse=ok`）。
+- 标签页关闭：首次运行时探针的取值有误（`res.result?.browserPageId` 恒为 undefined，`runner.json` 已经解包），`tab close` 没有执行，标签页残留。已修正取值，并手工 `orca tab close --page <id>` 关掉残留标签页，`orca tab list` 确认为空。
+- 回执：`spikes/out/console-tab/darwin/tab-create.json` 只有 `browserPageId`（UUID）；`test/fixtures/receipts/tab-create.json` 按同样结构手写，ID 已替换为占位值。
+
 ## 3A 真机验证：`wl restore` 接回 claude 会话（2026-10-18，Linux VM，Orca 1.4.226）
 
 - **重启 `orca-serve` 杀不掉岗位终端**：pty 由独立的 `orca-daemon-*.scope` 持有，重启后 `restore` 两个岗位都判 `kept`，没有走到 search/resume。`test/live/duo.live.test.ts` 的 `WL_LIVE_RESTART` 用例因此无效（且 `terminal show` 的 preview 只是屏幕末几行，不能拿来断言标记）。

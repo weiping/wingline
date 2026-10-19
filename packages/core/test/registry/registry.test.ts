@@ -425,6 +425,18 @@ test('pruneAudit deletes rows older than the cutoff', () => {
   r.close()
 })
 
+test('pruneAudit with a team only deletes that team rows; without it deletes every team', () => {
+  const r = seededRegistry()
+  r.appendAudit({ team: 'duo', at: '2026-09-01T00:00:00.000Z', actor: 'human', command: 'send', target: null, outcome: 'ok' })
+  r.appendAudit({ team: 'solo', at: '2026-09-01T00:00:00.000Z', actor: 'human', command: 'send', target: null, outcome: 'ok' })
+  expect(r.pruneAudit('2026-09-15T00:00:00.000Z', 'duo')).toBe(1)
+  expect(r.listAudit('solo')).toHaveLength(1)
+  expect(r.listAudit('duo')).toHaveLength(0)
+  expect(r.pruneAudit('2026-09-15T00:00:00.000Z', 'solo')).toBe(1)
+  expect(r.listAudit('solo')).toHaveLength(0)
+  r.close()
+})
+
 test('listTeamTaskLog and listPatrolEvents accept afterId', () => {
   const r = seededRegistry()
   for (let i = 0; i < 3; i++) r.appendTaskLog({ team: 'duo', taskId: 't1', epoch: 0, actor: 'human', actorSource: 'human', action: 'create' })

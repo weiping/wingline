@@ -114,3 +114,19 @@ test.skipIf(!liveRestart)('restore resumes builder session after its terminal is
     await wl(['down', 'duo', '--close', '--json'], env).catch(() => {})
   }
 }, 600_000)
+// 控制台真机用例：需人工看一眼 Orca 内置浏览器里是否打开了控制台；默认跳过。
+// 运行：WL_LIVE_CONSOLE=1 WINGLINE_LIVE_WORKTREE=<Orca worktree 选择器> pnpm test:live -t "console --open"
+test.skipIf(process.env.WL_LIVE_CONSOLE !== '1')('console --open opens the console tab in Orca (manual check)', async () => {
+  const { env } = sandbox()
+  // 不自动关闭 console@wingline 终端：关了服务就停，人还没看就没了。看完请手动关掉它和标签页。
+  // 用构建后的入口子进程执行：Orca 里新开的 console@wingline 终端要靠 process.argv[1] 找到 wl 入口，vitest 里不成立
+  const out = execFileSync(process.execPath, ['packages/cli/dist/main.js', 'console', '--open', '--worktree', process.env.WINGLINE_LIVE_WORKTREE ?? '', '--json'], {
+    cwd: ROOT,
+    env,
+    encoding: 'utf8',
+  })
+  const res = JSON.parse(out) as { ok: boolean; result: { outcome: string; url: string } }
+  expect(res.ok).toBe(true)
+  expect(res.result.outcome).toBe('opened')
+  console.log(`\n>>> 请在 Orca 里确认控制台标签页已打开，看完后手动关闭 console@wingline 终端：${res.result.url}\n`)
+}, 300_000)

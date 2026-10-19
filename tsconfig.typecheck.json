@@ -5,6 +5,8 @@
     "composite": false,
     "declaration": false,
     "allowImportingTsExtensions": false,
+    "jsx": "react-jsx",
+    "jsxImportSource": "preact",
     "paths": {
       "@wingline/core": [
         "./packages/core/src/index.ts"

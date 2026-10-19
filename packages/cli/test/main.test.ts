@@ -23,6 +23,7 @@ const cmds = (over: Partial<Commands> = {}): Commands => ({
   send: async (_d, a) => ({ address: a.address, outcome: 'delivered', handle: 'h1' }),
   down: async (_d, a) => ({ team: a.team, posts: [{ address: 'builder@duo', outcome: a.close ? 'closed' : 'stopped' }] }),
   restore: async () => { throw new Error('未注入：restore') },
+  console: async () => ({ outcome: 'link' as const, url: 'http://127.0.0.1:1/auth?token=x' }),
   log: async () => { throw new Error('未注入：log') },
   followLog: async () => { throw new Error('未注入：followLog') },
   createTask: async () => { throw new Error('未注入：createTask') },
@@ -56,7 +57,8 @@ const exec = (argv: string[], c: Commands = cmds()) => {
 }
 
 /** Commands 里允许只读、不进审计表的字段（新增命令忘了登记时下面那条测试会失败）。 */
-const READ_COMMANDS = ['ps', 'listTasks', 'listStale', 'showTask', 'runDispatcherLoop', 'dispatcherStatus', 'attention', 'log', 'followLog']
+// console 只起本地服务、开标签页，不改团队状态，所以不进审计表
+const READ_COMMANDS = ['ps', 'listTasks', 'listStale', 'showTask', 'runDispatcherLoop', 'dispatcherStatus', 'attention', 'log', 'followLog', 'console']
 
 test('every write command is in the audit table and no read command is', () => {
   expect(Object.keys(AUDIT).sort()).toEqual([...WRITE_COMMANDS].sort())
