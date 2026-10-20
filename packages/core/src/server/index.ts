@@ -5,7 +5,7 @@ import type { CommandDeps } from '../commands/deps.js'
 import { cachedOrca, type CachedOrca } from '../view/snapshot.js'
 import { WinglineError } from '../errors.js'
 import { Auth, checkHost, checkWrite, safeEqual, sessionCookie } from './auth.js'
-import { assertWebBuilt, serveStatic } from './static.js'
+import { assertWebBuilt, SECURITY_HEADERS, serveStatic } from './static.js'
 import { checkParam, type Handler, Router, statusOf, writeEnvelope } from './http.js'
 import { registerReadRoutes } from './api-read.js'
 import { consoleCommands, registerWriteRoutes } from './api-write.js'
@@ -109,11 +109,15 @@ function handleAuth(req: http.IncomingMessage, res: http.ServerResponse, auth: A
   const token = url.searchParams.get('token') ?? ''
   const sessionRes = auth.redeem(token)
   if (!sessionRes) {
-    res.writeHead(401, { 'Content-Type': 'text/html; charset=utf-8' })
+    res.writeHead(401, {
+      ...SECURITY_HEADERS,
+      'Content-Type': 'text/html; charset=utf-8',
+    })
     res.end('<!DOCTYPE html><html><body><h1>链接已失效，请运行 wl console --link</h1></body></html>')
     return true
   }
   res.writeHead(200, {
+    ...SECURITY_HEADERS,
     'Set-Cookie': sessionCookie(sessionRes.sid),
     'Content-Type': 'text/html; charset=utf-8',
   })
@@ -132,13 +136,16 @@ function handleControl(
   if (url.pathname !== '/_control/link' || req.method !== 'POST') return false
   const key = req.headers['x-control-key']
   if (typeof key !== 'string' || !safeEqual(key, controlKey)) {
-    res.writeHead(403)
+    res.writeHead(403, SECURITY_HEADERS)
     res.end()
     return true
   }
   const loginToken = auth.issueLoginToken()
   const link = `http://127.0.0.1:${serverPort}/auth?token=${loginToken}`
-  res.writeHead(200, { 'Content-Type': 'application/json' })
+  res.writeHead(200, {
+    ...SECURITY_HEADERS,
+    'Content-Type': 'application/json',
+  })
   res.end(JSON.stringify({ url: link }))
   return true
 }
@@ -172,7 +179,7 @@ async function handleSse(
   sseClients: Set<http.ServerResponse>,
 ): Promise<void> {
   if (!sess) {
-    res.writeHead(401)
+    res.writeHead(401, SECURITY_HEADERS)
     res.end()
     return
   }
@@ -183,10 +190,11 @@ async function handleSse(
     const unsub = await feeds.subscribe(team, (chunk) => res.write(chunk), lastEventId)
 
     res.writeHead(200, {
+      ...SECURITY_HEADERS,
       'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
       Connection: 'keep-alive',
     })
+    res.flushHeaders()
     sseClients.add(res)
 
     req.on('close', () => {
@@ -261,7 +269,7 @@ interface ServerContext {
 
 async function handle(req: http.IncomingMessage, res: http.ServerResponse, ctx: ServerContext): Promise<void> {
   if (!checkHost(req.headers.host, ctx.serverPort)) {
-    res.writeHead(421)
+    res.writeHead(421, SECURITY_HEADERS)
     res.end('Misdirected Request')
     return
   }

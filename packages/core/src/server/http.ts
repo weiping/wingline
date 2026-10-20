@@ -2,6 +2,7 @@ import type { ServerResponse } from 'node:http'
 import type { CommandDeps } from '../commands/deps.js'
 import type { CachedOrca } from '../view/snapshot.js'
 import { WinglineError } from '../errors.js'
+import { SECURITY_HEADERS } from './static.js'
 
 export const PARAM_RULES: Record<string, RegExp> = {
   team: /^[a-z0-9-]+$/,
@@ -84,6 +85,7 @@ export function statusOf(err: unknown): number {
 
 export function writeEnvelope(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, {
+    ...SECURITY_HEADERS,
     'Content-Type': 'application/json; charset=utf-8',
   })
   res.end(JSON.stringify(body))

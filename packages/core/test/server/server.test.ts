@@ -3,7 +3,7 @@ import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
 import { expect, test } from 'vitest'
-import { consoleWorktree, createConsoleServer, openTab } from '../../src/server/index.js'
+import { consoleWorktree, createConsoleServer, openTab, SECURITY_HEADERS } from '../../src/server/index.js'
 import { Registry } from '../../src/registry/registry.js'
 import { FakeOrca, seedRunningTeam } from '../commands/fake-client.js'
 import { requestLink } from '../../src/server/control.js'
@@ -462,3 +462,136 @@ test('有 SSE 连接挂起时 close() 也能在 1 秒内完成', async () => {
     fs.rmSync(webDir, { recursive: true })
   }
 })
+
+test.each([
+  ['GET /api/session（登录后）'],
+  ['GET /auth?token=<失效token>'],
+  ['GET /（静态 index.html）'],
+  ['GET /api/teams/duo/events（登录后，SSE 头）'],
+])('%s 响应带齐 CSP/nosniff/no-referrer/no-store', async (name) => {
+  const o = new FakeOrca()
+  const { deps } = seedRunningTeam(o)
+  const webDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wl-web-'))
+  fs.writeFileSync(path.join(webDir, 'index.html'), '<html>INDEX</html>')
+
+  const srv = await createConsoleServer(deps, { port: 0, webRoot: webDir })
+  try {
+    if (name.includes('/api/session')) {
+      const loginRes = await fetch(srv.loginUrl())
+      const cookie = loginRes.headers.get('set-cookie')!.split(';')[0]!
+      const res = await fetch(`http://127.0.0.1:${srv.port}/api/session`, {
+        headers: { Cookie: cookie },
+      })
+      expect(res.status).toBe(200)
+      for (const [k, v] of Object.entries(SECURITY_HEADERS)) {
+        expect(res.headers.get(k)).toBe(v)
+      }
+    } else if (name.includes('/auth?token=<失效token>')) {
+      const res = await fetch(`http://127.0.0.1:${srv.port}/auth?token=invalid-token`)
+      expect(res.status).toBe(401)
+      for (const [k, v] of Object.entries(SECURITY_HEADERS)) {
+        expect(res.headers.get(k)).toBe(v)
+      }
+    } else if (name.includes('GET /（静态 index.html）')) {
+      const res = await fetch(`http://127.0.0.1:${srv.port}/`)
+      expect(res.status).toBe(200)
+      for (const [k, v] of Object.entries(SECURITY_HEADERS)) {
+        expect(res.headers.get(k)).toBe(v)
+      }
+    } else if (name.includes('/api/teams/duo/events')) {
+      const loginRes = await fetch(srv.loginUrl())
+      const cookie = loginRes.headers.get('set-cookie')!.split(';')[0]!
+      const clientReq = http.request({
+        hostname: '127.0.0.1',
+        port: srv.port,
+        path: '/api/teams/duo/events',
+        headers: { Cookie: cookie },
+      })
+      const headers = await new Promise<http.IncomingHttpHeaders>((resolve, reject) => {
+        clientReq.on('response', (res) => {
+          resolve(res.headers)
+          res.destroy()
+        })
+        clientReq.on('error', reject)
+        clientReq.end()
+      })
+      expect(headers['content-type']).toBe('text/event-stream')
+      expect(headers['connection']).toBe('keep-alive')
+      for (const [k, v] of Object.entries(SECURITY_HEADERS)) {
+        expect(headers[k.toLowerCase()]).toBe(v)
+      }
+    }
+  } finally {
+    await srv.close()
+    fs.rmSync(webDir, { recursive: true })
+  }
+})
+
+test('421 响应也带安全头', async () => {
+  const o = new FakeOrca()
+  const { deps } = seedRunningTeam(o)
+  const webDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wl-web-'))
+  fs.writeFileSync(path.join(webDir, 'index.html'), '<html>INDEX</html>')
+
+  const srv = await createConsoleServer(deps, { port: 0, webRoot: webDir })
+  try {
+    const res = await new Promise<http.IncomingMessage>((resolve, reject) => {
+      const req = http.request(
+        {
+          hostname: '127.0.0.1',
+          port: srv.port,
+          path: '/api/teams',
+          headers: { Host: 'evil.com' },
+        },
+        resolve,
+      )
+      req.on('error', reject)
+      req.end()
+    })
+    expect(res.statusCode).toBe(421)
+    for (const [k, v] of Object.entries(SECURITY_HEADERS)) {
+      expect(res.headers[k.toLowerCase()]).toBe(v)
+    }
+  } finally {
+    await srv.close()
+    fs.rmSync(webDir, { recursive: true })
+  }
+})
+
+test('GET /auth 有效 token 与 POST /_control/link 均带安全头', async () => {
+  const o = new FakeOrca()
+  const { deps } = seedRunningTeam(o)
+  const webDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wl-web-'))
+  fs.writeFileSync(path.join(webDir, 'index.html'), '<html>INDEX</html>')
+
+  const srv = await createConsoleServer(deps, { port: 0, webRoot: webDir })
+  try {
+    const loginRes = await fetch(srv.loginUrl(), { redirect: 'manual' })
+    expect(loginRes.status).toBe(200)
+    for (const [k, v] of Object.entries(SECURITY_HEADERS)) {
+      expect(loginRes.headers.get(k)).toBe(v)
+    }
+
+    const ctrlRes = await fetch(`http://127.0.0.1:${srv.port}/_control/link`, {
+      method: 'POST',
+      headers: { 'X-Control-Key': srv.controlKey },
+    })
+    expect(ctrlRes.status).toBe(200)
+    for (const [k, v] of Object.entries(SECURITY_HEADERS)) {
+      expect(ctrlRes.headers.get(k)).toBe(v)
+    }
+
+    const badCtrlRes = await fetch(`http://127.0.0.1:${srv.port}/_control/link`, {
+      method: 'POST',
+      headers: { 'X-Control-Key': 'wrong-key' },
+    })
+    expect(badCtrlRes.status).toBe(403)
+    for (const [k, v] of Object.entries(SECURITY_HEADERS)) {
+      expect(badCtrlRes.headers.get(k)).toBe(v)
+    }
+  } finally {
+    await srv.close()
+    fs.rmSync(webDir, { recursive: true })
+  }
+})
+
