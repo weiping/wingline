@@ -1,3 +1,4 @@
+import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
@@ -7,7 +8,12 @@ import {
 
 /** 构建后前端位于 dist/web，与本文件编译出的 dist/console.js 同级。 */
 const WEB_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), 'web')
+/** 与 cli.ts 读的是同一份：/api/session 回给前端的版本号。 */
+const PACKAGE_VERSION = (JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }).version
 const SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP'] as const
+/** 新起服务的就绪确认：每 200ms 轮询一次 console.json，最多 10 秒。 */
+const READY_POLL_MS = 200
+const READY_CONFIRM_MS = 10_000
 
 export interface ConsoleArgs {
   port?: number
@@ -15,6 +21,10 @@ export interface ConsoleArgs {
   worktree?: string
   link?: boolean
   webRoot?: string
+  /** 新起服务的就绪确认窗口；缺省 10_000。 */
+  confirmMs?: number
+  /** 确认窗口里的等待；缺省真的是 setTimeout。 */
+  sleep?: (ms: number) => Promise<void>
   /** 前台服务就绪后调用一次，用来先打印登录链接（服务随后阻塞到收到信号）。 */
   onReady?: (r: ConsoleResult) => void
 }
@@ -53,24 +63,27 @@ function launchLine(deps: CommandDeps): string {
   )
 }
 
-/** --open 且没有服务：在 Orca 里新开 console@wingline 终端，轮询 console.json 直到服务可连（最多 10 秒）。 */
+/** --open 且没有服务：在 Orca 里新开 console@wingline 终端，轮询 console.json 直到服务可连（默认最多 10 秒）。 */
 async function startInOrca(deps: CommandDeps, a: ConsoleArgs): Promise<string> {
   const worktree = consoleWorktree(deps, a.worktree)
   await deps.orca.terminalCreate({ worktree, title: 'console@wingline', command: launchLine(deps) })
-  const deadline = Date.now() + 10_000
-  while (Date.now() < deadline) {
-    await sleep(200)
+  const confirmMs = a.confirmMs ?? READY_CONFIRM_MS
+  const nap = a.sleep ?? sleep
+  for (let waited = 0; waited < confirmMs; waited += READY_POLL_MS) {
     const live = await liveServer(deps.home)
     if (live) return live.link
+    await nap(READY_POLL_MS)
   }
-  throw new WinglineError('uncertain', 'console_start_unconfirmed', '已在 Orca 中启动控制台，但 10 秒内没有就绪', {
+  throw new WinglineError('uncertain', 'console_start_unconfirmed', `已在 Orca 中启动控制台，但 ${confirmMs / 1000} 秒内没有就绪`, {
     hint: '到 console@wingline 终端里查看输出',
   })
 }
 
 /** 前台运行：起服务、写 console.json，阻塞到收到 SIGINT/SIGTERM/SIGHUP 后关闭并删除自己的 console.json。 */
 async function foreground(deps: CommandDeps, a: ConsoleArgs): Promise<ConsoleResult> {
-  const srv = await createConsoleServer(deps, { port: a.port, webRoot: a.webRoot ?? WEB_ROOT }).catch((err: NodeJS.ErrnoException) => {
+  const srv = await createConsoleServer(deps, {
+    port: a.port, webRoot: a.webRoot ?? WEB_ROOT, version: PACKAGE_VERSION,
+  }).catch((err: NodeJS.ErrnoException) => {
     if (err.code === 'EADDRINUSE') {
       throw new WinglineError('input', 'console_port_in_use', `端口 ${a.port} 已被占用`, { hint: '用 --port 换一个端口' })
     }

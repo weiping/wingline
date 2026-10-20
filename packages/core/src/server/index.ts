@@ -154,6 +154,7 @@ function handleSession(
   res: http.ServerResponse,
   deps: CommandDeps,
   sess: Session | null,
+  version: string,
 ): void {
   if (!sess) {
     writeEnvelope(res, 401, { ok: false, error: { kind: 'auth', code: 'unauthenticated', message: '未登录' } })
@@ -164,7 +165,7 @@ function handleSession(
     ok: true,
     result: {
       csrfToken: sess.csrf,
-      version: '1.0.0',
+      version,
       teams,
     },
   })
@@ -265,6 +266,7 @@ interface ServerContext {
   feeds: TeamFeeds
   sseClients: Set<http.ServerResponse>
   webRoot: string
+  version: string
 }
 
 async function handle(req: http.IncomingMessage, res: http.ServerResponse, ctx: ServerContext): Promise<void> {
@@ -282,7 +284,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, ctx: 
   const sess = ctx.auth.session(req.headers.cookie)
 
   if (url.pathname === '/api/session') {
-    handleSession(res, ctx.deps, sess)
+    handleSession(res, ctx.deps, sess, ctx.version)
     return
   }
 
@@ -338,6 +340,8 @@ export async function createConsoleServer(
   o: {
     port?: number
     webRoot: string
+    /** /api/session 回给前端的 CLI 版本号；不传就是 'dev'。 */
+    version?: string
     now?: () => number
     sse?: { timelineMs?: number; snapshotMs?: number; pingMs?: number }
   },
@@ -366,6 +370,7 @@ export async function createConsoleServer(
       feeds,
       sseClients,
       webRoot: o.webRoot,
+      version: o.version ?? 'dev',
     }).catch((err) => respondError(res, err))
   })
 

@@ -3,7 +3,7 @@ import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, expect, test } from 'vitest'
-import { createConsoleServer, writeConsoleFile, type CommandDeps } from '@wingline/core'
+import { createConsoleServer, exitCodeOf, writeConsoleFile, type CommandDeps } from '@wingline/core'
 import { consoleCmd, renderConsole } from '../src/console.js'
 import { FakeOrca, mkDeps, seedRunningTeam } from '../../core/test/commands/fake-client.js'
 
@@ -97,4 +97,30 @@ test('a port that is already taken is console_port_in_use', async () => {
   const port = (blocker.address() as net.AddressInfo).port
   await expect(consoleCmd(deps, { port, webRoot: webRoot() })).rejects.toMatchObject({ code: 'console_port_in_use' })
   expect(fs.existsSync(path.join(deps.home, 'console.json'))).toBe(false)
+})
+
+test('--open 新服务 confirmMs 内未就绪 → console_start_unconfirmed（kind uncertain，CLI 映射退出码 3）', async () => {
+  const o = new FakeOrca()
+  const { deps } = mkDeps(o)
+  // 无运行中的服务、无团队：用 --worktree 跳过工作区推导，confirmMs: 0 表示一轮都不等
+  const err = await consoleCmd(deps, {
+    open: true, worktree: `path:${os.tmpdir()}`, confirmMs: 0, sleep: async () => {},
+  }).then(() => null, (e: unknown) => e)
+  expect(err).toMatchObject({ kind: 'uncertain', code: 'console_start_unconfirmed' })
+  expect(exitCodeOf(err)).toBe(3)
+  // 新开的终端确实发出去了，只是不确定它有没有跑起来
+  expect(o.created).toHaveLength(1)
+  expect(o.created[0]).toMatchObject({ title: 'console@wingline' })
+})
+
+test('缺省 confirmMs 仍是 10 秒窗口：每 200ms 轮询一次，共 50 次', async () => {
+  const o = new FakeOrca()
+  const { deps } = mkDeps(o)
+  const naps: number[] = []
+  await expect(consoleCmd(deps, {
+    open: true, worktree: `path:${os.tmpdir()}`,
+    sleep: async (ms) => { naps.push(ms) },
+  })).rejects.toMatchObject({ code: 'console_start_unconfirmed' })
+  expect(naps).toHaveLength(50)
+  expect(new Set(naps)).toEqual(new Set([200]))
 })
