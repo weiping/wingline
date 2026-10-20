@@ -1,6 +1,5 @@
 import type { HandlerContext, Router } from './http.js'
 import { checkParam } from './http.js'
-import type { CommandDeps } from '../commands/deps.js'
 import { postAddress } from '../commands/deps.js'
 import { WinglineError } from '../errors.js'
 import { auditedCommands, type AuditCtx, type AuditTable } from '../audit.js'
@@ -24,6 +23,105 @@ export interface WriteCommands {
   unhushCmd: typeof unhushCmd
   dispatcherReply: typeof dispatcherReply
 }
+
+export interface WriteRouteSpec {
+  pattern: string
+  check: readonly ('team' | 'post' | 'id' | 'gateId' | 'messageId')[]
+  fields: readonly string[]
+  call: (cmds: WriteCommands, ctx: HandlerContext) => Promise<unknown>
+}
+
+export const WRITE_ROUTES: WriteRouteSpec[] = [
+  {
+    pattern: '/api/teams/:team/send',
+    check: ['team'],
+    fields: ['post', 'message', 'retryRequest'],
+    call: async (cmds, ctx) => {
+      checkParam('post', ctx.body.post)
+      const address = postAddress(ctx.body.post, ctx.params.team!)
+      return cmds.send(ctx.deps, { address, message: ctx.body.message, retryRequest: ctx.body.retryRequest })
+    },
+  },
+  {
+    pattern: '/api/teams/:team/tasks',
+    check: ['team'],
+    fields: ['title', 'post', 'tags', 'parent', 'retryRequest'],
+    call: async (cmds, ctx) => {
+      const { title, post, tags, parent, retryRequest } = ctx.body
+      if (post) checkParam('post', post)
+      if (parent) checkParam('id', parent)
+      return cmds.createTask(ctx.deps, { team: ctx.params.team!, title, post: post ? postAddress(post, ctx.params.team!) : undefined, tags, parent, retryRequest })
+    },
+  },
+  {
+    pattern: '/api/teams/:team/tasks/:id/escalate',
+    check: ['team', 'id'],
+    fields: ['reason', 'reopen', 'retryRequest'],
+    call: async (cmds, ctx) => {
+      const { reason, reopen, retryRequest } = ctx.body
+      return cmds.escalateTask(ctx.deps, { id: ctx.params.id!, reason, reopen, retryRequest })
+    },
+  },
+  {
+    pattern: '/api/teams/:team/tasks/:id/reassign',
+    check: ['team', 'id'],
+    fields: ['to', 'retryRequest'],
+    call: async (cmds, ctx) => {
+      const { to } = ctx.body
+      const target = to && !to.includes('@') ? (checkParam('post', to), postAddress(to, ctx.params.team!)) : to
+      return cmds.reassignTask(ctx.deps, { id: ctx.params.id!, to: target })
+    },
+  },
+  {
+    pattern: '/api/teams/:team/tasks/:id/recover',
+    check: ['team', 'id'],
+    fields: ['retryRequest'],
+    call: async (cmds, ctx) => cmds.recoverTask(ctx.deps, { id: ctx.params.id! }),
+  },
+  {
+    pattern: '/api/teams/:team/gates/:gateId/resolve',
+    check: ['team', 'gateId'],
+    fields: ['resolution', 'reassign', 'retryRequest'],
+    call: async (cmds, ctx) => {
+      const { resolution, reassign } = ctx.body
+      const target = reassign ? (reassign.includes('@') ? reassign : (checkParam('post', reassign), postAddress(reassign, ctx.params.team!))) : undefined
+      return cmds.resolveGate(ctx.deps, { gateId: ctx.params.gateId!, resolution, reassign: target })
+    },
+  },
+  {
+    pattern: '/api/teams/:team/posts/:post/freeze',
+    check: ['team', 'post'],
+    fields: ['reason', 'retryRequest'],
+    call: async (cmds, ctx) => cmds.freezePostCmd(ctx.deps, { address: postAddress(ctx.params.post!, ctx.params.team!), reason: ctx.body.reason }),
+  },
+  {
+    pattern: '/api/teams/:team/posts/:post/unfreeze',
+    check: ['team', 'post'],
+    fields: ['retryRequest'],
+    call: async (cmds, ctx) => cmds.unfreezePostCmd(ctx.deps, { address: postAddress(ctx.params.post!, ctx.params.team!) }),
+  },
+  {
+    pattern: '/api/teams/:team/posts/:post/hush',
+    check: ['team', 'post'],
+    fields: ['forMs', 'retryRequest'],
+    call: async (cmds, ctx) => cmds.hushCmd(ctx.deps, { address: postAddress(ctx.params.post!, ctx.params.team!), forMs: ctx.body.forMs }),
+  },
+  {
+    pattern: '/api/teams/:team/posts/:post/unhush',
+    check: ['team', 'post'],
+    fields: ['retryRequest'],
+    call: async (cmds, ctx) => cmds.unhushCmd(ctx.deps, { address: postAddress(ctx.params.post!, ctx.params.team!) }),
+  },
+  {
+    pattern: '/api/teams/:team/questions/:messageId/reply',
+    check: ['team', 'messageId'],
+    fields: ['body', 'again', 'retryRequest'],
+    call: async (cmds, ctx) => {
+      const { body, again } = ctx.body
+      return cmds.dispatcherReply(ctx.deps, { team: ctx.params.team!, messageId: ctx.params.messageId!, body, again })
+    },
+  },
+]
 
 const ofAddress = (a: { address: string }) => a.address.split('@')[1] ?? '-'
 const byTask = (idOf: (a: any) => string) => (_a: unknown, ctx: AuditCtx) => ctx.deps.registry.getTaskExt(idOf(_a))?.team ?? '-'
@@ -95,7 +193,7 @@ export const CONSOLE_AUDIT: AuditTable<WriteCommands> = {
   },
 }
 
-export function consoleCommands(_deps: CommandDeps): WriteCommands {
+export function consoleCommands(): WriteCommands {
   const raw: WriteCommands = {
     send,
     createTask,
@@ -125,170 +223,13 @@ function assertExactFields(body: any, allowed: readonly string[]): void {
 }
 
 export function registerWriteRoutes(r: Router, cmds: WriteCommands): void {
-  // 1. send
-  r.post('/api/teams/:team/send', async (ctx: HandlerContext) => {
-    const team = ctx.params.team!
-    checkParam('team', team)
-    assertExactFields(ctx.body, ['post', 'message', 'retryRequest'])
-    const { post, message, retryRequest } = ctx.body
-    checkParam('post', post)
-    const address = postAddress(post, team)
-    try {
-      return await cmds.send(ctx.deps, { address, message, retryRequest })
-    } finally {
-      ctx.deps.orca.invalidate()
-    }
-  })
-
-  // 2. tasks create
-  r.post('/api/teams/:team/tasks', async (ctx: HandlerContext) => {
-    const team = ctx.params.team!
-    checkParam('team', team)
-    assertExactFields(ctx.body, ['title', 'post', 'tags', 'parent', 'retryRequest'])
-    const { title, post, tags, parent, retryRequest } = ctx.body
-    if (post) checkParam('post', post)
-    if (parent) checkParam('id', parent)
-    try {
-      // 请求体里的 post 是岗位名（与 send 一致），core 的 createTask 要的是地址
-      return await cmds.createTask(ctx.deps, { team, title, post: post ? postAddress(post, team) : undefined, tags, parent, retryRequest })
-    } finally {
-      ctx.deps.orca.invalidate()
-    }
-  })
-
-  // 3. tasks escalate
-  r.post('/api/teams/:team/tasks/:id/escalate', async (ctx: HandlerContext) => {
-    const team = ctx.params.team!
-    const id = ctx.params.id!
-    checkParam('team', team)
-    checkParam('id', id)
-    assertExactFields(ctx.body, ['reason', 'reopen', 'retryRequest'])
-    const { reason, reopen, retryRequest } = ctx.body
-    try {
-      return await cmds.escalateTask(ctx.deps, { id, reason, reopen, retryRequest })
-    } finally {
-      ctx.deps.orca.invalidate()
-    }
-  })
-
-  // 4. tasks reassign
-  r.post('/api/teams/:team/tasks/:id/reassign', async (ctx: HandlerContext) => {
-    const team = ctx.params.team!
-    const id = ctx.params.id!
-    checkParam('team', team)
-    checkParam('id', id)
-    assertExactFields(ctx.body, ['to'])
-    const { to } = ctx.body
-    const target = to && !to.includes('@') ? postAddress(to, team) : to
-    try {
-      return await cmds.reassignTask(ctx.deps, { id, to: target })
-    } finally {
-      ctx.deps.orca.invalidate()
-    }
-  })
-
-  // 5. tasks recover
-  r.post('/api/teams/:team/tasks/:id/recover', async (ctx: HandlerContext) => {
-    const team = ctx.params.team!
-    const id = ctx.params.id!
-    checkParam('team', team)
-    checkParam('id', id)
-    assertExactFields(ctx.body, [])
-    try {
-      return await cmds.recoverTask(ctx.deps, { id })
-    } finally {
-      ctx.deps.orca.invalidate()
-    }
-  })
-
-  // 6. gates resolve
-  r.post('/api/teams/:team/gates/:gateId/resolve', async (ctx: HandlerContext) => {
-    const team = ctx.params.team!
-    const gateId = ctx.params.gateId!
-    checkParam('team', team)
-    checkParam('gateId', gateId)
-    assertExactFields(ctx.body, ['resolution', 'reassign'])
-    const { resolution, reassign } = ctx.body
-    const target = reassign ? (reassign.includes('@') ? reassign : postAddress(reassign, team)) : undefined
-    try {
-      return await cmds.resolveGate(ctx.deps, { gateId, resolution, reassign: target })
-    } finally {
-      ctx.deps.orca.invalidate()
-    }
-  })
-
-  // 7. posts freeze
-  r.post('/api/teams/:team/posts/:post/freeze', async (ctx: HandlerContext) => {
-    const team = ctx.params.team!
-    const post = ctx.params.post!
-    checkParam('team', team)
-    checkParam('post', post)
-    assertExactFields(ctx.body, ['reason'])
-    const address = postAddress(post, team)
-    try {
-      return await cmds.freezePostCmd(ctx.deps, { address, reason: ctx.body.reason })
-    } finally {
-      ctx.deps.orca.invalidate()
-    }
-  })
-
-  // 8. posts unfreeze
-  r.post('/api/teams/:team/posts/:post/unfreeze', async (ctx: HandlerContext) => {
-    const team = ctx.params.team!
-    const post = ctx.params.post!
-    checkParam('team', team)
-    checkParam('post', post)
-    assertExactFields(ctx.body, [])
-    const address = postAddress(post, team)
-    try {
-      return await cmds.unfreezePostCmd(ctx.deps, { address })
-    } finally {
-      ctx.deps.orca.invalidate()
-    }
-  })
-
-  // 9. posts hush
-  r.post('/api/teams/:team/posts/:post/hush', async (ctx: HandlerContext) => {
-    const team = ctx.params.team!
-    const post = ctx.params.post!
-    checkParam('team', team)
-    checkParam('post', post)
-    assertExactFields(ctx.body, ['forMs'])
-    const address = postAddress(post, team)
-    try {
-      return await cmds.hushCmd(ctx.deps, { address, forMs: ctx.body.forMs })
-    } finally {
-      ctx.deps.orca.invalidate()
-    }
-  })
-
-  // 10. posts unhush
-  r.post('/api/teams/:team/posts/:post/unhush', async (ctx: HandlerContext) => {
-    const team = ctx.params.team!
-    const post = ctx.params.post!
-    checkParam('team', team)
-    checkParam('post', post)
-    assertExactFields(ctx.body, [])
-    const address = postAddress(post, team)
-    try {
-      return await cmds.unhushCmd(ctx.deps, { address })
-    } finally {
-      ctx.deps.orca.invalidate()
-    }
-  })
-
-  // 11. questions reply
-  r.post('/api/teams/:team/questions/:messageId/reply', async (ctx: HandlerContext) => {
-    const team = ctx.params.team!
-    const messageId = ctx.params.messageId!
-    checkParam('team', team)
-    checkParam('messageId', messageId)
-    assertExactFields(ctx.body, ['body', 'again'])
-    const { body, again } = ctx.body
-    try {
-      return await cmds.dispatcherReply(ctx.deps, { team, messageId, body, again })
-    } finally {
-      ctx.deps.orca.invalidate()
-    }
-  })
+  for (const spec of WRITE_ROUTES) {
+    r.post(spec.pattern, async (ctx: HandlerContext) => {
+      for (const key of spec.check) {
+        checkParam(key, ctx.params[key])
+      }
+      assertExactFields(ctx.body, spec.fields)
+      return spec.call(cmds, ctx)
+    })
+  }
 }

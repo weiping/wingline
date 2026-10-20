@@ -12,7 +12,10 @@ export const PARAM_RULES: Record<string, RegExp> = {
   messageId: /^[A-Za-z0-9_-]{1,80}$/,
 }
 
-export function checkParam(key: string, val: string): void {
+export function checkParam(key: string, val: unknown): void {
+  if (typeof val !== 'string') {
+    throw new WinglineError('input', 'invalid_param', `参数 ${key}=${val} 不合法`)
+  }
   const rule = PARAM_RULES[key]
   if (rule && !rule.test(val)) {
     throw new WinglineError('input', 'invalid_param', `参数 ${key}=${val} 不合法`)

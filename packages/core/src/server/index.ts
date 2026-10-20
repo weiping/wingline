@@ -301,10 +301,10 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, ctx: 
   serveStatic(ctx.webRoot, url.pathname, res)
 }
 
-function buildRouter(serverDeps: CommandDeps & { orca: CachedOrca }): Router {
+function buildRouter(_serverDeps: CommandDeps & { orca: CachedOrca }): Router {
   const router = new Router()
   registerReadRoutes(router)
-  registerWriteRoutes(router, consoleCommands(serverDeps))
+  registerWriteRoutes(router, consoleCommands())
   return router
 }
 
