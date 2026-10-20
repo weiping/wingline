@@ -1,8 +1,8 @@
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
-  WinglineError, consoleWorktree, createConsoleServer, openTab, pidAlive, readConsoleFile, removeConsoleFileIfMine,
-  requestLink, writeConsoleFile, type CommandDeps,
+  WinglineError, commandLine, consoleWorktree, createConsoleServer, nodeOnPath, openTab, pidAlive, readConsoleFile, removeConsoleFileIfMine,
+  requestLink, selfCommand, writeConsoleFile, type CommandDeps,
 } from '@wingline/core'
 
 /** 构建后前端位于 dist/web，与本文件编译出的 dist/console.js 同级。 */
@@ -38,10 +38,18 @@ async function liveServer(home: string): Promise<{ port: number; link: string } 
 
 /** 在 Orca 里起的控制台终端要能重新执行本 CLI：POSIX 用单引号，Windows 用双引号 + PATH 上的 node。 */
 function launchLine(deps: CommandDeps): string {
-  const win = process.platform === 'win32'
-  const q = (s: string) => (win ? `"${s}"` : `'${s.replace(/'/g, "'\\''")}'`)
-  const node = win ? 'node' : q(process.execPath)
-  return `${node} ${q(process.argv[1] ?? '')} console --home ${q(deps.home)} --orca ${q(deps.orcaPath)}`
+  return commandLine(
+    selfCommand({
+      platform: process.platform,
+      node: process.execPath,
+      script: process.argv[1] ?? '',
+      args: ['console'],
+      home: deps.home,
+      orca: deps.orcaPath,
+      nodeOnPath: process.platform === 'win32' ? nodeOnPath(deps) : undefined,
+    }),
+    process.platform,
+  )
 }
 
 /** --open 且没有服务：在 Orca 里新开 console@wingline 终端，轮询 console.json 直到服务可连（最多 10 秒）。 */

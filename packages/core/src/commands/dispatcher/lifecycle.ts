@@ -1,9 +1,8 @@
-import fs from 'node:fs'
-import path from 'node:path'
 import { WinglineError } from '../../errors.js'
 import { pidAlive } from '../../registry/registry.js'
 import type { CommandDeps } from '../deps.js'
 import { locatePost } from '../locate.js'
+import { commandLine, nodeOnPath, selfCommand } from '../self.js'
 import { mustTeamReady } from '../task/query.js'
 
 export const HEARTBEAT_STALE_MS = 180_000
@@ -33,9 +32,6 @@ export function dispatcherHealth(deps: CommandDeps, team: string): DispatcherHea
   return { state, pid: lock.pid, heartbeatAt: lock.heartbeatAt, ageMs }
 }
 
-const posixQuote = (s: string) => `'${s.replace(/'/g, "'\\''")}'`
-const WINDOWS_UNSAFE = /["%$`]/
-
 function unsupported(team: string, why: string): WinglineError {
   return new WinglineError('input', 'dispatcher_launch_unsupported', `无法自动拼出调度员的启动命令：${why}`, {
     hint: `Windows 上无法自动启动调度员：在 Orca 里手动开一个终端、标题设为 ${addressOf(team)}，在里面运行 wl dispatcher run ${team}`,
@@ -51,16 +47,21 @@ export function dispatcherLaunchCommand(a: {
   orca: string
   nodeOnPath?: boolean
 }): string {
-  const tail = (q: (s: string) => string) => `${q(a.script)} dispatcher run ${a.team} --home ${q(a.home)} --orca ${q(a.orca)}`
-  if (a.platform !== 'win32') return `${posixQuote(a.node)} ${tail(posixQuote)}`
-  if (!a.nodeOnPath) throw unsupported(a.team, 'PATH 上找不到 node')
-  if ([a.script, a.home, a.orca].some((p) => WINDOWS_UNSAFE.test(p))) throw unsupported(a.team, '路径含有 " % $ ` 之一')
-  return `node ${tail((s) => `"${s}"`)}`
-}
-
-function nodeOnPath(deps: CommandDeps): boolean {
-  const dirs = (deps.env.PATH ?? deps.env.Path ?? '').split(path.delimiter).filter(Boolean)
-  return dirs.some((d) => fs.existsSync(path.join(d, 'node.exe')))
+  return commandLine(
+    selfCommand(
+      {
+        platform: a.platform,
+        node: a.node,
+        script: a.script,
+        args: ['dispatcher', 'run', a.team],
+        home: a.home,
+        orca: a.orca,
+        nodeOnPath: a.nodeOnPath,
+      },
+      { unsupported: (why) => unsupported(a.team, why) },
+    ),
+    a.platform,
+  )
 }
 
 export interface UpArgs {
