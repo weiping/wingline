@@ -24,28 +24,28 @@ export interface PostDetail {
   preview: string[]
 }
 
-export function registerReadRoutes(r: Router): void {
+async function teamSummary(ctx: HandlerContext, name: string) {
+  const posts = await ps(ctx.deps, { team: name })
+  const disp = dispatcherHealth(ctx.deps, name).state
+  const att = await attention(ctx.deps, name)
+  const attentionCount = (disp === 'stale' ? 1 : 0) +
+    att.frozen.length +
+    att.signals.length +
+    att.questions.length +
+    att.stale.length
+  return {
+    name,
+    postsCount: posts.length,
+    dispatcher: disp,
+    attentionCount,
+  }
+}
+
+function registerTeamRoutes(r: Router): void {
   // GET /api/teams
   r.get('/api/teams', async (ctx: HandlerContext) => {
     const teams = ctx.deps.registry.listTeams().map((t) => t.name)
-    const result = await Promise.all(
-      teams.map(async (name) => {
-        const posts = await ps(ctx.deps, { team: name })
-        const disp = dispatcherHealth(ctx.deps, name).state
-        const att = await attention(ctx.deps, name)
-        const attentionCount = (disp === 'stale' ? 1 : 0) +
-          att.frozen.length +
-          att.signals.length +
-          att.questions.length +
-          att.stale.length
-        return {
-          name,
-          postsCount: posts.length,
-          dispatcher: disp,
-          attentionCount,
-        }
-      })
-    )
+    const result = await Promise.all(teams.map((name) => teamSummary(ctx, name)))
     return { teams: result }
   })
 
@@ -78,7 +78,9 @@ export function registerReadRoutes(r: Router): void {
     checkParam('team', team)
     return await attention(ctx.deps, team)
   })
+}
 
+function registerTaskRoutes(r: Router): void {
   // GET /api/teams/:team/tasks
   r.get('/api/teams/:team/tasks', async (ctx: HandlerContext) => {
     const team = ctx.params.team!
@@ -101,7 +103,61 @@ export function registerReadRoutes(r: Router): void {
     checkParam('id', id)
     return await showTask(ctx.deps, { id, history: true })
   })
+}
 
+// 终端 preview：失败或无 handle 时静默降级为空数组
+async function loadPostPreview(ctx: HandlerContext, pRow: PsRow): Promise<string[]> {
+  let preview: string[] = []
+  if (pRow.handle) {
+    try {
+      const view = await ctx.deps.orca.terminalShow({ handle: pRow.handle })
+      if (view.preview) {
+        const cleaned = plainText(view.preview).split('\n')
+        preview = cleaned.slice(-40)
+      }
+    } catch {}
+  }
+  return preview
+}
+
+async function buildPostDetail(
+  ctx: HandlerContext,
+  team: string,
+  address: string,
+  pRow: PsRow,
+): Promise<PostDetail> {
+  const dbRow = ctx.deps.registry.getPost(address)
+  const sessionId = dbRow?.sessionId ?? null
+
+  // 当前任务与排队任务
+  const allTasks = await listTasks(ctx.deps, { team })
+  const currentTask = allTasks.find((t) => t.claimedBy === address && t.status === 'dispatched') ?? null
+  const queued = allTasks.filter((t) => t.claimedBy === address && t.status === 'ready')
+
+  const signals = ctx.deps.registry.listPatrolState(address)
+  const frozen = ctx.deps.registry.getFrozen(address)
+  const hushedUntil = ctx.deps.registry.hushedUntil(address)
+  const logRes = await readTimeline(ctx.deps, { team, post: address, limit: 50 })
+
+  // 终端 preview
+  const preview = await loadPostPreview(ctx, pRow)
+
+  const detail: PostDetail = {
+    address,
+    row: pRow,
+    sessionId,
+    currentTask,
+    queued,
+    signals,
+    frozen,
+    hushedUntil,
+    events: logRes.events,
+    preview,
+  }
+  return detail
+}
+
+function registerPostRoutes(r: Router): void {
   // GET /api/teams/:team/posts/:post
   r.get('/api/teams/:team/posts/:post', async (ctx: HandlerContext) => {
     const team = ctx.params.team!
@@ -115,46 +171,11 @@ export function registerReadRoutes(r: Router): void {
     if (!pRow) {
       throw new (await import('../errors.js')).WinglineError('input', 'invalid_param', `岗位 ${address} 不存在`)
     }
-    const dbRow = ctx.deps.registry.getPost(address)
-    const sessionId = dbRow?.sessionId ?? null
-
-    // 当前任务与排队任务
-    const allTasks = await listTasks(ctx.deps, { team })
-    const currentTask = allTasks.find((t) => t.claimedBy === address && t.status === 'dispatched') ?? null
-    const queued = allTasks.filter((t) => t.claimedBy === address && t.status === 'ready')
-
-    const signals = ctx.deps.registry.listPatrolState(address)
-    const frozen = ctx.deps.registry.getFrozen(address)
-    const hushedUntil = ctx.deps.registry.hushedUntil(address)
-    const logRes = await readTimeline(ctx.deps, { team, post: address, limit: 50 })
-
-    // 终端 preview
-    let preview: string[] = []
-    if (pRow.handle) {
-      try {
-        const view = await ctx.deps.orca.terminalShow({ handle: pRow.handle })
-        if (view.preview) {
-          const cleaned = plainText(view.preview).split('\n')
-          preview = cleaned.slice(-40)
-        }
-      } catch {}
-    }
-
-    const detail: PostDetail = {
-      address,
-      row: pRow,
-      sessionId,
-      currentTask,
-      queued,
-      signals,
-      frozen,
-      hushedUntil,
-      events: logRes.events,
-      preview,
-    }
-    return detail
+    return await buildPostDetail(ctx, team, address, pRow)
   })
+}
 
+function registerLogRoute(r: Router): void {
   // GET /api/teams/:team/log
   r.get('/api/teams/:team/log', async (ctx: HandlerContext) => {
     const team = ctx.params.team!
@@ -168,4 +189,11 @@ export function registerReadRoutes(r: Router): void {
 
     return await readTimeline(ctx.deps, { team, task, post, since, source, limit })
   })
+}
+
+export function registerReadRoutes(r: Router): void {
+  registerTeamRoutes(r)
+  registerTaskRoutes(r)
+  registerPostRoutes(r)
+  registerLogRoute(r)
 }
