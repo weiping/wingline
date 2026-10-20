@@ -69,7 +69,9 @@ async function startInOrca(deps: CommandDeps, a: ConsoleArgs): Promise<string> {
   await deps.orca.terminalCreate({ worktree, title: 'console@wingline', command: launchLine(deps) })
   const confirmMs = a.confirmMs ?? READY_CONFIRM_MS
   const nap = a.sleep ?? sleep
-  for (let waited = 0; waited < confirmMs; waited += READY_POLL_MS) {
+  // 轮次计数给测试一条快路，墙钟兜住真实上界：某次 poll+sleep 变慢（慢盘、忙机器）时不会把 10 秒拖成 50 秒。
+  const deadline = Date.now() + confirmMs
+  for (let waited = 0; waited < confirmMs && Date.now() < deadline; waited += READY_POLL_MS) {
     const live = await liveServer(deps.home)
     if (live) return live.link
     await nap(READY_POLL_MS)

@@ -124,3 +124,16 @@ test('缺省 confirmMs 仍是 10 秒窗口：每 200ms 轮询一次，共 50 次
   expect(naps).toHaveLength(50)
   expect(new Set(naps)).toEqual(new Set([200]))
 })
+
+test('某次轮询变慢时按墙钟提前退出，不会把 confirmMs 上界拖穿', async () => {
+  const o = new FakeOrca()
+  const { deps } = mkDeps(o)
+  let naps = 0
+  await expect(consoleCmd(deps, {
+    open: true, worktree: `path:${os.tmpdir()}`,
+    confirmMs: 400,
+    // 单拍睡 500ms > 400ms 窗口：第一拍睡完就已过截止时间
+    sleep: async () => { naps += 1; await new Promise((r) => setTimeout(r, 500)) },
+  })).rejects.toMatchObject({ code: 'console_start_unconfirmed' })
+  expect(naps).toBe(1)
+})
