@@ -171,3 +171,294 @@ test('openTab returns opened on successful tab create', async () => {
   const res = await openTab(deps, 'http://127.0.0.1:4100', 'wt-1')
   expect(res).toBe('opened')
 })
+
+test('GET /api/teams/ghost/events 回 400 team_unknown，且服务不崩（后续请求仍被应答）', async () => {
+  const o = new FakeOrca()
+  const { deps } = seedRunningTeam(o)
+  const webDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wl-web-'))
+  fs.writeFileSync(path.join(webDir, 'index.html'), '<html>INDEX</html>')
+
+  const srv = await createConsoleServer(deps, { port: 0, webRoot: webDir })
+  try {
+    const loginRes = await fetch(srv.loginUrl())
+    const cookie = loginRes.headers.get('set-cookie')!.split(';')[0]!
+
+    const res = await fetch(`http://127.0.0.1:${srv.port}/api/teams/ghost/events`, {
+      headers: { Cookie: cookie },
+    })
+    expect(res.status).toBe(400)
+    const json = (await res.json()) as any
+    expect(json.ok).toBe(false)
+    expect(json.error.code).toBe('team_unknown')
+
+    const sessRes = await fetch(`http://127.0.0.1:${srv.port}/api/session`, {
+      headers: { Cookie: cookie },
+    })
+    expect(sessRes.status).toBe(200)
+  } finally {
+    await srv.close()
+    fs.rmSync(webDir, { recursive: true })
+  }
+})
+
+test('GET /api/teams/Duo/events 回 400 invalid_param（SSE 路由也过参数校验）', async () => {
+  const o = new FakeOrca()
+  const { deps } = seedRunningTeam(o)
+  const webDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wl-web-'))
+  fs.writeFileSync(path.join(webDir, 'index.html'), '<html>INDEX</html>')
+
+  const srv = await createConsoleServer(deps, { port: 0, webRoot: webDir })
+  try {
+    const loginRes = await fetch(srv.loginUrl())
+    const cookie = loginRes.headers.get('set-cookie')!.split(';')[0]!
+
+    const res = await fetch(`http://127.0.0.1:${srv.port}/api/teams/Duo/events`, {
+      headers: { Cookie: cookie },
+    })
+    expect(res.status).toBe(400)
+    const json = (await res.json()) as any
+    expect(json.ok).toBe(false)
+    expect(json.error.code).toBe('invalid_param')
+  } finally {
+    await srv.close()
+    fs.rmSync(webDir, { recursive: true })
+  }
+})
+
+test('SSE 未登录回 401', async () => {
+  const o = new FakeOrca()
+  const { deps } = seedRunningTeam(o)
+  const webDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wl-web-'))
+  fs.writeFileSync(path.join(webDir, 'index.html'), '<html>INDEX</html>')
+
+  const srv = await createConsoleServer(deps, { port: 0, webRoot: webDir })
+  try {
+    const res = await fetch(`http://127.0.0.1:${srv.port}/api/teams/duo/events`)
+    expect(res.status).toBe(401)
+  } finally {
+    await srv.close()
+    fs.rmSync(webDir, { recursive: true })
+  }
+})
+
+test('SSE 端点推送连接后写入的 timeline 事件', async () => {
+  const o = new FakeOrca()
+  const { deps } = seedRunningTeam(o)
+  const webDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wl-web-'))
+  fs.writeFileSync(path.join(webDir, 'index.html'), '<html>INDEX</html>')
+
+  const srv = await createConsoleServer(deps, {
+    port: 0,
+    webRoot: webDir,
+    sse: { timelineMs: 50 },
+  })
+  let clientReq: http.ClientRequest | undefined
+  try {
+    const loginRes = await fetch(srv.loginUrl())
+    const cookie = loginRes.headers.get('set-cookie')!.split(';')[0]!
+
+    let received = ''
+    clientReq = http.request({
+      hostname: '127.0.0.1',
+      port: srv.port,
+      path: '/api/teams/duo/events',
+      headers: { Cookie: cookie },
+    })
+
+    let incomingRes: http.IncomingMessage | undefined
+    const connected = new Promise<void>((resolve) => {
+      clientReq!.on('response', (res) => {
+        incomingRes = res
+        res.on('data', (chunk) => {
+          received += chunk.toString('utf8')
+        })
+        resolve()
+      })
+    })
+    clientReq.end()
+
+    await connected
+
+    deps.registry.appendAudit({
+      team: 'duo',
+      actor: 'user',
+      command: 'send',
+      target: 'builder',
+      outcome: 'ok',
+    })
+
+    const start = Date.now()
+    while (!received.includes('event: timeline') || !received.includes('id: command:')) {
+      if (Date.now() - start > 1000) {
+        throw new Error(`Timeout waiting for timeline event, received: ${received}`)
+      }
+      await new Promise((r) => setTimeout(r, 20))
+    }
+
+    expect(received).toContain('event: timeline')
+    expect(received).toContain('id: command:')
+    incomingRes?.destroy()
+    clientReq.destroy()
+  } finally {
+    clientReq?.destroy()
+    await srv.close()
+    fs.rmSync(webDir, { recursive: true })
+  }
+})
+
+test('Last-Event-ID 只回退对应来源', async () => {
+  const o = new FakeOrca()
+  const { deps } = seedRunningTeam(o)
+  const webDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wl-web-'))
+  fs.writeFileSync(path.join(webDir, 'index.html'), '<html>INDEX</html>')
+
+  deps.registry.appendTaskLog({
+    team: 'duo',
+    taskId: 'task-1',
+    epoch: 1,
+    actor: 'builder',
+    actorSource: 'explicit',
+    action: 'create',
+  })
+  deps.registry.appendTaskLog({
+    team: 'duo',
+    taskId: 'task-1',
+    epoch: 1,
+    actor: 'builder',
+    actorSource: 'explicit',
+    action: 'start',
+  })
+  const initialTasks = deps.registry.listTeamTaskLog('duo')
+  expect(initialTasks.length).toBe(2)
+  const secondTaskId = initialTasks[1]!.id
+
+  const srv = await createConsoleServer(deps, {
+    port: 0,
+    webRoot: webDir,
+    sse: { timelineMs: 50 },
+  })
+  let clientReq: http.ClientRequest | undefined
+  try {
+    const loginRes = await fetch(srv.loginUrl())
+    const cookie = loginRes.headers.get('set-cookie')!.split(';')[0]!
+
+    let received = ''
+    clientReq = http.request({
+      hostname: '127.0.0.1',
+      port: srv.port,
+      path: '/api/teams/duo/events',
+      headers: {
+        Cookie: cookie,
+        'Last-Event-ID': `task:${secondTaskId}`,
+      },
+    })
+
+    const connected = new Promise<void>((resolve) => {
+      clientReq!.on('response', (res) => {
+        res.on('data', (chunk) => {
+          received += chunk.toString('utf8')
+        })
+        resolve()
+      })
+    })
+    clientReq.end()
+
+    await connected
+
+    deps.registry.appendTaskLog({
+      team: 'duo',
+      taskId: 'task-1',
+      epoch: 1,
+      actor: 'builder',
+      actorSource: 'explicit',
+      action: 'done',
+    })
+    deps.registry.appendAudit({
+      team: 'duo',
+      actor: 'user',
+      command: 'test',
+      target: 'builder',
+      outcome: 'ok',
+    })
+
+    const allTasks = deps.registry.listTeamTaskLog('duo')
+    const thirdTaskId = allTasks[2]!.id
+    const audits = deps.registry.listAudit('duo')
+    const firstAuditId = audits[0]!.id
+
+    const start = Date.now()
+    while (
+      !received.includes(`id: task:${thirdTaskId}`) ||
+      !received.includes(`id: command:${firstAuditId}`)
+    ) {
+      if (Date.now() - start > 1000) {
+        throw new Error(`Timeout waiting for expected events, received: ${received}`)
+      }
+      await new Promise((r) => setTimeout(r, 20))
+    }
+
+    expect(received).not.toContain(`id: task:${initialTasks[0]!.id}\n`)
+    expect(received).not.toContain(`id: task:${secondTaskId}\n`)
+    expect(received).toContain(`id: task:${thirdTaskId}\n`)
+    expect(received).toContain(`id: command:${firstAuditId}\n`)
+    clientReq.destroy()
+  } finally {
+    clientReq?.destroy()
+    await srv.close()
+    fs.rmSync(webDir, { recursive: true })
+  }
+})
+
+test('有 SSE 连接挂起时 close() 也能在 1 秒内完成', async () => {
+  const o = new FakeOrca()
+  const { deps } = seedRunningTeam(o)
+  const webDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wl-web-'))
+  fs.writeFileSync(path.join(webDir, 'index.html'), '<html>INDEX</html>')
+
+  const srv = await createConsoleServer(deps, {
+    port: 0,
+    webRoot: webDir,
+    sse: { timelineMs: 50, snapshotMs: 50, pingMs: 50 },
+  })
+  let closed = false
+  let sseReq: http.ClientRequest | undefined
+  let incomingRes: http.IncomingMessage | undefined
+  try {
+    const loginRes = await fetch(srv.loginUrl())
+    const cookie = loginRes.headers.get('set-cookie')!.split(';')[0]!
+
+    sseReq = http.request({
+      hostname: '127.0.0.1',
+      port: srv.port,
+      path: '/api/teams/duo/events',
+      headers: { Cookie: cookie },
+    })
+
+    await new Promise<void>((resolve) => {
+      sseReq!.on('response', (res) => {
+        incomingRes = res
+        resolve()
+      })
+      sseReq!.end()
+    })
+
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('close timed out after 1s')), 1000),
+    )
+
+    await Promise.race([
+      srv.close().then(() => {
+        closed = true
+      }),
+      timeout,
+    ])
+  } finally {
+    incomingRes?.socket?.destroy()
+    incomingRes?.destroy()
+    sseReq?.destroy()
+    if (!closed) {
+      await srv.close().catch(() => {})
+    }
+    fs.rmSync(webDir, { recursive: true })
+  }
+})
