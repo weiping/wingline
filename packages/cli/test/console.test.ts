@@ -19,6 +19,14 @@ function webRoot(): string {
   return dir
 }
 
+/** win32 上 startInOrca 的 nodeOnPath 守卫要求 PATH 里能看见 node.exe；mkDeps 默认 env 为空，拷一份 process.execPath 顶上（只做存在性检查，不会真去执行）。 */
+function fakeNodePath(): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wl-fake-node-'))
+  fs.copyFileSync(process.execPath, path.join(dir, 'node.exe'))
+  cleanups.push(() => fs.rmSync(dir, { recursive: true, force: true }))
+  return dir
+}
+
 /** 起一个真实服务并写下 console.json，模拟“已有控制台在运行”（pid 取本进程，必然存活）。 */
 async function runningConsole(deps: CommandDeps) {
   const srv = await createConsoleServer(deps, { port: 0, webRoot: webRoot() })
@@ -101,7 +109,7 @@ test('a port that is already taken is console_port_in_use', async () => {
 
 test('--open 新服务 confirmMs 内未就绪 → console_start_unconfirmed（kind uncertain，CLI 映射退出码 3）', async () => {
   const o = new FakeOrca()
-  const { deps } = mkDeps(o)
+  const { deps } = mkDeps(o, { env: { PATH: fakeNodePath() } })
   // 无运行中的服务、无团队：用 --worktree 跳过工作区推导，confirmMs: 0 表示一轮都不等
   const err = await consoleCmd(deps, {
     open: true, worktree: `path:${os.tmpdir()}`, confirmMs: 0, sleep: async () => {},
@@ -115,7 +123,7 @@ test('--open 新服务 confirmMs 内未就绪 → console_start_unconfirmed（ki
 
 test('缺省 confirmMs 仍是 10 秒窗口：每 200ms 轮询一次，共 50 次', async () => {
   const o = new FakeOrca()
-  const { deps } = mkDeps(o)
+  const { deps } = mkDeps(o, { env: { PATH: fakeNodePath() } })
   const naps: number[] = []
   await expect(consoleCmd(deps, {
     open: true, worktree: `path:${os.tmpdir()}`,
@@ -127,7 +135,7 @@ test('缺省 confirmMs 仍是 10 秒窗口：每 200ms 轮询一次，共 50 次
 
 test('某次轮询变慢时按墙钟提前退出，不会把 confirmMs 上界拖穿', async () => {
   const o = new FakeOrca()
-  const { deps } = mkDeps(o)
+  const { deps } = mkDeps(o, { env: { PATH: fakeNodePath() } })
   let naps = 0
   await expect(consoleCmd(deps, {
     open: true, worktree: `path:${os.tmpdir()}`,
