@@ -73,6 +73,22 @@ test('--open with no running team and no --worktree is console_no_worktree', asy
   await expect(consoleCmd(deps, { open: true })).rejects.toMatchObject({ code: 'console_no_worktree' })
 })
 
+test('服务在运行但没有任何团队：--open 降级为链接 + worktree 提示，退出不报错', async () => {
+  const { deps } = mkDeps(new FakeOrca())
+  await runningConsole(deps)
+  const res = await consoleCmd(deps, { open: true })
+  expect(res).toMatchObject({
+    outcome: 'opened',
+    tab: 'unsupported',
+    tabReason: 'worktree',
+  })
+  const out = renderConsole(res)
+  expect(out).toContain(res.url)
+  expect(out).toContain('console_no_worktree')
+  expect(out).toContain('wl up')
+  expect(out).toContain('--worktree')
+})
+
 test('a port that is already taken is console_port_in_use', async () => {
   const { deps } = mkDeps(new FakeOrca())
   const blocker = net.createServer()

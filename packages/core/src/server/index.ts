@@ -39,7 +39,7 @@ export async function openTab(deps: CommandDeps, url: string, worktree: string):
 
 export function consoleWorktree(deps: CommandDeps, override?: string): string {
   if (override) return override
-  const teams = deps.registry.listTeams()
+  const teams = deps.registry.listTeams().filter((t) => t.status === 'up')
   for (const t of teams) {
     const posts = deps.registry.listPosts(t.name)
     const lead = posts.find((p) => p.isLead) ?? posts[0]

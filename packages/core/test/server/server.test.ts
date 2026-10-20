@@ -49,6 +49,43 @@ test('--open without --worktree and without any running team → console_no_work
   )
 })
 
+test('consoleWorktree 跳过 stopped 团队，取 up 团队牵头岗 worktree', () => {
+  const o = new FakeOrca()
+  const { deps } = seedRunningTeam(o)
+  deps.registry.setTeamStatus('duo', 'stopped')
+  deps.registry.upsertTeam({
+    name: 'solo',
+    specPath: '/path/to/solo.yaml',
+    specHash: 'hash-solo',
+    runId: 'run-solo',
+    coordinatorHandle: 'coord-solo',
+    status: 'up',
+  })
+  deps.registry.upsertPost({
+    address: 'worker@solo',
+    team: 'solo',
+    agent: 'claude',
+    worktree: 'path:/worktree/solo',
+    handle: 'term-solo',
+    status: 'live',
+    isLead: true,
+    sessionMarker: null,
+    sessionId: null,
+    sessionAt: null,
+  })
+
+  expect(consoleWorktree(deps)).toBe('path:/worktree/solo')
+})
+
+test('只有 stopped 团队时 consoleWorktree 抛 console_no_worktree', () => {
+  const o = new FakeOrca()
+  const { deps } = seedRunningTeam(o)
+  deps.registry.setTeamStatus('duo', 'stopped')
+  expect(() => consoleWorktree(deps)).toThrowError(
+    expect.objectContaining({ code: 'console_no_worktree' }),
+  )
+})
+
 test('a request with a foreign Host gets 421 before anything else', async () => {
   const o = new FakeOrca()
   const { deps } = seedRunningTeam(o)

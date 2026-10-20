@@ -24,6 +24,7 @@ export interface ConsoleResult {
   url: string
   port?: number
   tab?: 'opened' | 'unsupported'
+  tabReason?: 'worktree'
 }
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
@@ -97,7 +98,16 @@ export async function consoleCmd(deps: CommandDeps, a: ConsoleArgs): Promise<Con
   }
   if (a.open) {
     const url = live?.link ?? (await startInOrca(deps, a))
-    const tab = await openTab(deps, url, consoleWorktree(deps, a.worktree))
+    let worktree: string
+    try {
+      worktree = consoleWorktree(deps, a.worktree)
+    } catch (err) {
+      if (err instanceof WinglineError && err.code === 'console_no_worktree') {
+        return { outcome: 'opened', url, tab: 'unsupported', tabReason: 'worktree' }
+      }
+      throw err
+    }
+    const tab = await openTab(deps, url, worktree)
     return { outcome: 'opened', url, tab }
   }
   if (live) return { outcome: 'link', url: live.link, port: live.port }
@@ -114,5 +124,8 @@ export function renderConsole(r: ConsoleResult): string {
   if (r.outcome === 'started') return '控制台服务已停止\n'
   if (r.outcome === 'link') return `控制台登录链接：${r.url}\n`
   if (r.tab === 'opened') return `已在 Orca 中打开控制台：${r.url}\n`
+  if (r.tabReason === 'worktree') {
+    return `控制台链接：${r.url}\n提示：没有运行中的团队，无法确定工作区（console_no_worktree），请运行 wl up 或用 --worktree 指定，也可直接在浏览器打开链接\n`
+  }
   return `控制台链接：${r.url}\n提示：当前 Orca 不支持在内置浏览器中打开标签页（console_tab_unsupported），请在浏览器中打开上面的链接\n`
 }
