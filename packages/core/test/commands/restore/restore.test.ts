@@ -104,25 +104,37 @@ test('--no-tasks skips recovery', async () => {
 })
 
 test('a stale dispatcher is restarted; a never-started one is left alone', async () => {
-  const o = new FakeOrca()
-  const made = restarted(o)
-  forgeDeadDispatcher(made.home)
-  // 调度员终端被创建后模拟它的进程写下了心跳锁，confirmStarted 才能确认
-  o.onCreate = () => {
-    if (o.created.at(-1)!.title !== 'dispatcher@duo') return
-    const db = new DatabaseSync(path.join(made.home, 'state.db'))
-    db.prepare("INSERT OR REPLACE INTO locks(team, pid, at, heartbeat_at) VALUES ('dispatcher:duo', ?, ?, NULL)").run(process.pid, new Date().toISOString())
-    db.close()
-  }
-  const r = await restore(made.deps, { team: 'duo' })
-  expect(r.dispatcher).toMatchObject({ action: 'restarted', state: 'running' })
-  expect(o.created.at(-1)!.title).toBe('dispatcher@duo')
+  // 给 fake deps 一个含 node.exe 的 PATH：phase 3B 引入的 nodeOnPath 守卫在 win32 上
+  // 必须看到 PATH 里真有 node.exe，否则立刻抛 dispatcher_launch_unsupported；这个测试
+  // 在 Windows CI 上之前会因 mkDeps 的空 env.PATH 误触发守卫。用 process.execPath 拷贝一份，
+  // 无论 host 真机哪个平台都通过 fs.existsSync 检查，且生产代码只读 env（不会真去 exec）。
+  const fakeNodeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wl-fake-node-'))
+  fs.copyFileSync(process.execPath, path.join(fakeNodeDir, 'node.exe'))
+  try {
+    const o = new FakeOrca()
+    const made = restarted(o)
+    made.deps.env.PATH = fakeNodeDir
+    forgeDeadDispatcher(made.home)
+    // 调度员终端被创建后模拟它的进程写下了心跳锁，confirmStarted 才能确认
+    o.onCreate = () => {
+      if (o.created.at(-1)!.title !== 'dispatcher@duo') return
+      const db = new DatabaseSync(path.join(made.home, 'state.db'))
+      db.prepare("INSERT OR REPLACE INTO locks(team, pid, at, heartbeat_at) VALUES ('dispatcher:duo', ?, ?, NULL)").run(process.pid, new Date().toISOString())
+      db.close()
+    }
+    const r = await restore(made.deps, { team: 'duo' })
+    expect(r.dispatcher).toMatchObject({ action: 'restarted', state: 'running' })
+    expect(o.created.at(-1)!.title).toBe('dispatcher@duo')
 
-  const o2 = new FakeOrca()
-  const made2 = restarted(o2)
-  const r2 = await restore(made2.deps, { team: 'duo' })
-  expect(r2.dispatcher).toEqual({ action: 'skipped', state: 'never' })
-  expect(o2.created.filter((c) => c.title === 'dispatcher@duo')).toEqual([])
+    const o2 = new FakeOrca()
+    const made2 = restarted(o2)
+    made2.deps.env.PATH = fakeNodeDir
+    const r2 = await restore(made2.deps, { team: 'duo' })
+    expect(r2.dispatcher).toEqual({ action: 'skipped', state: 'never' })
+    expect(o2.created.filter((c) => c.title === 'dispatcher@duo')).toEqual([])
+  } finally {
+    fs.rmSync(fakeNodeDir, { recursive: true, force: true })
+  }
 })
 
 test('exit code: all good 0, any ambiguous/uncertain 3, orca failure without uncertainty 2', () => {

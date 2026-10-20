@@ -56,7 +56,12 @@ function respondEmpty(res: ServerResponse, status: number): void {
 
 /** 归一化并确认目标仍在 root 之下；越界返回 null（调用方回 404）。 */
 function resolveUnder(root: string, decoded: string): { normalized: string; resolved: string } | null {
-  let normalized = path.normalize(decoded)
+  // URL 路径在所有平台上都用 '/' 作为分隔符，所以归一化必须按 POSIX 规则处理；
+  // 用平台默认 path.normalize 在 Windows 上会得到 '\assets\...'（去掉首斜杠、换成反斜杠），
+  // 后续 sendFile / sendIndex 里所有 normalized.startsWith('/...') 的判断都会失效，
+  // 已观察到 static.test.ts 的 /assets/ 缓存头断言在 Windows CI 上挂掉。归一化跟磁盘解耦：
+  // normalized 只参与字符串前缀比较，所以统一走 POSIX；磁盘访问仍交给平台 path.resolve & path.sep。
+  let normalized = path.posix.normalize(decoded)
   if (!normalized.startsWith('/')) normalized = '/' + normalized
   const rootAbs = path.resolve(root)
   const resolved = path.resolve(rootAbs, '.' + normalized)

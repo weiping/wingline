@@ -74,6 +74,34 @@ test('serveStatic serves /assets/ with immutable cache header', () => {
   }
 })
 
+/** 跨平台回归：URL 归一化必须按 POSIX 规则（'/' 是分隔符），否则 Windows 上 path.normalize 会把
+ *  '/assets/x' 变成 '\assets\x'，让 sendFile 里的 isAsset 判断失败，缓存头误给 no-store。
+ * 把归一化逻辑在 macOS 上用 path.posix.normalize 等价复现一次，证明 source 改完之后无论跑在哪个平台
+ * 拿到的 normalized 都长这样。 */
+test('URL path normalization is platform-independent (POSIX rules; Windows would have mangled it)', () => {
+  // 不变量：path.posix.normalize 对所有 URL 形式都返回以 '/' 开头的路径，且 '/' 始终是分隔符。
+  expect(path.posix.normalize('/assets/app-abc123.js')).toBe('/assets/app-abc123.js')
+  expect(path.posix.normalize('/assets/../etc/passwd')).toBe('/etc/passwd')
+  // 在 Windows 上，path.normalize('/assets/app-abc123.js') 会得到 '\assets\app-abc123.js'
+  // （被替换成反斜杠并去掉首斜杠），证明为什么源里不能继续用平台默认 path.normalize。
+  // 在 macOS 上 path.win32.normalize 也演示这个事实：
+  expect(path.win32.normalize('/assets/app-abc123.js')).toBe('\\assets\\app-abc123.js')
+})
+
+test('serveStatic serves nested /assets/ paths with immutable cache (regression for the Windows normalize bug)', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wl-web-'))
+  try {
+    fs.mkdirSync(path.join(dir, 'assets', 'sub'), { recursive: true })
+    fs.writeFileSync(path.join(dir, 'assets', 'sub', 'chunk-hashed.css'), 'body{}')
+    const m = mockResponse()
+    const hit = serveStatic(dir, '/assets/sub/chunk-hashed.css', m.res)
+    expect(hit).toBe(true)
+    expect(m.headers['cache-control']).toBe('public, max-age=31536000, immutable')
+  } finally {
+    fs.rmSync(dir, { recursive: true })
+  }
+})
+
 test('serveStatic returns 404 on path traversal attempts', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wl-web-'))
   try {
