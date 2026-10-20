@@ -68,7 +68,8 @@ export const WRITE_ROUTES: WriteRouteSpec[] = [
     fields: ['to', 'retryRequest'],
     call: async (cmds, ctx) => {
       const { to } = ctx.body
-      const target = to && !to.includes('@') ? (checkParam('post', to), postAddress(to, ctx.params.team!)) : to
+      if (typeof to !== 'string') checkParam('post', to)
+      const target = !to.includes('@') ? (checkParam('post', to), postAddress(to, ctx.params.team!)) : to
       return cmds.reassignTask(ctx.deps, { id: ctx.params.id!, to: target })
     },
   },
@@ -84,6 +85,7 @@ export const WRITE_ROUTES: WriteRouteSpec[] = [
     fields: ['resolution', 'reassign', 'retryRequest'],
     call: async (cmds, ctx) => {
       const { resolution, reassign } = ctx.body
+      if (reassign !== undefined && typeof reassign !== 'string') checkParam('post', reassign)
       const target = reassign ? (reassign.includes('@') ? reassign : (checkParam('post', reassign), postAddress(reassign, ctx.params.team!))) : undefined
       return cmds.resolveGate(ctx.deps, { gateId: ctx.params.gateId!, resolution, reassign: target })
     },

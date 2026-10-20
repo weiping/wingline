@@ -294,6 +294,29 @@ test('reassign 的 to=Duo → invalid_param', async () => {
   })
 })
 
+test('POST reassign 的 to=123（非字符串） → 400 invalid_param', async () => {
+  const o = new FakeOrca()
+  const { deps } = seedRunningTeam(o)
+  deps.registry.insertTaskExt({ taskId: 'task-1', team: 'duo', tags: [], kind: 'work' })
+  const d = { ...deps, orca: cachedOrca(o) }
+  const { cmds } = makeRecordingCmds()
+  const r = new Router()
+  registerWriteRoutes(r, cmds)
+
+  const route = r.match('POST', '/api/teams/duo/tasks/task-1/reassign')!
+  await expect(
+    route.h({
+      deps: d,
+      params: route.params,
+      query: new URLSearchParams(),
+      body: { to: 123 },
+    }),
+  ).rejects.toMatchObject({
+    kind: 'input',
+    code: 'invalid_param',
+  })
+})
+
 test('gates resolve 的 reassign=Duo → invalid_param', async () => {
   const o = new FakeOrca()
   const { deps } = seedRunningTeam(o)
@@ -310,6 +333,29 @@ test('gates resolve 的 reassign=Duo → invalid_param', async () => {
       params: route.params,
       query: new URLSearchParams(),
       body: { resolution: 'proceed', reassign: 'Duo' },
+    }),
+  ).rejects.toMatchObject({
+    kind: 'input',
+    code: 'invalid_param',
+  })
+})
+
+test('gates resolve 的 reassign=123（非字符串） → 400 invalid_param', async () => {
+  const o = new FakeOrca()
+  const { deps } = seedRunningTeam(o)
+  deps.registry.recordGate('gate-1', 'duo', 'task-1')
+  const d = { ...deps, orca: cachedOrca(o) }
+  const { cmds } = makeRecordingCmds()
+  const r = new Router()
+  registerWriteRoutes(r, cmds)
+
+  const route = r.match('POST', '/api/teams/duo/gates/gate-1/resolve')!
+  await expect(
+    route.h({
+      deps: d,
+      params: route.params,
+      query: new URLSearchParams(),
+      body: { resolution: 'proceed', reassign: 123 },
     }),
   ).rejects.toMatchObject({
     kind: 'input',

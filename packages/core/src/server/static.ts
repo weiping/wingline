@@ -66,7 +66,15 @@ function resolveUnder(root: string, decoded: string): { normalized: string; reso
 
 /** 命中实体文件时回 200（含 /assets/ 哈希资源的 immutable 缓存例外）。 */
 function sendFile(res: ServerResponse, normalized: string, resolved: string): boolean {
-  if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) return false
+  let content: Buffer
+  try {
+    const stat = fs.statSync(resolved)
+    if (!stat.isFile()) return false
+    content = fs.readFileSync(resolved)
+  } catch {
+    return false
+  }
+
   const ext = path.extname(resolved).toLowerCase()
   const mime = MIME[ext] ?? 'application/octet-stream'
   const isAsset = normalized.startsWith('/assets/')
@@ -77,7 +85,7 @@ function sendFile(res: ServerResponse, normalized: string, resolved: string): bo
     'Cache-Control': cacheControl,
   })
   res.writeHead(200)
-  res.end(fs.readFileSync(resolved))
+  res.end(content)
   return true
 }
 
@@ -95,13 +103,18 @@ function sendIndex(res: ServerResponse, root: string, normalized: string): boole
     return false
   }
   const index = path.join(root, 'index.html')
-  if (!fs.existsSync(index)) return false
+  let content: Buffer
+  try {
+    content = fs.readFileSync(index)
+  } catch {
+    return false
+  }
   applySecurityHeaders(res, {
     'Content-Type': 'text/html; charset=utf-8',
     'Cache-Control': 'no-store',
   })
   res.writeHead(200)
-  res.end(fs.readFileSync(index))
+  res.end(content)
   return true
 }
 

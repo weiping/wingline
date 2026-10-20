@@ -278,6 +278,43 @@ test('SSE 未登录回 401', async () => {
   }
 })
 
+test('SSE 客户端在连接后立刻断开，服务仍能继续正常应答', async () => {
+  const o = new FakeOrca()
+  const { deps } = seedRunningTeam(o)
+  const webDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wl-web-'))
+  fs.writeFileSync(path.join(webDir, 'index.html'), '<html>INDEX</html>')
+
+  const srv = await createConsoleServer(deps, {
+    port: 0,
+    webRoot: webDir,
+    sse: { timelineMs: 50 },
+  })
+  try {
+    const loginRes = await fetch(srv.loginUrl())
+    const cookie = loginRes.headers.get('set-cookie')!.split(';')[0]!
+
+    const clientReq = http.request({
+      hostname: '127.0.0.1',
+      port: srv.port,
+      path: '/api/teams/duo/events',
+      headers: { Cookie: cookie },
+    })
+    clientReq.on('error', () => {})
+    clientReq.end()
+    clientReq.destroy()
+
+    const sessRes = await fetch(`http://127.0.0.1:${srv.port}/api/session`, {
+      headers: { Cookie: cookie },
+    })
+    expect(sessRes.status).toBe(200)
+    const json = (await sessRes.json()) as any
+    expect(json.ok).toBe(true)
+  } finally {
+    await srv.close()
+    fs.rmSync(webDir, { recursive: true })
+  }
+})
+
 test('SSE 端点推送连接后写入的 timeline 事件', async () => {
   const o = new FakeOrca()
   const { deps } = seedRunningTeam(o)

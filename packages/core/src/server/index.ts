@@ -187,8 +187,22 @@ async function handleSse(
 
   try {
     checkParam('team', team)
+    let closed = req.destroyed || res.destroyed
+    let unsub: (() => void) | undefined
+    req.on('close', () => {
+      closed = true
+      unsub?.()
+      sseClients.delete(res)
+    })
+
     const lastEventId = req.headers['last-event-id'] as string | undefined
-    const unsub = await feeds.subscribe(team, (chunk) => res.write(chunk), lastEventId)
+    unsub = await feeds.subscribe(team, (chunk) => res.write(chunk), lastEventId)
+
+    if (closed || req.destroyed || res.destroyed) {
+      unsub()
+      sseClients.delete(res)
+      return
+    }
 
     res.writeHead(200, {
       ...SECURITY_HEADERS,
@@ -197,11 +211,6 @@ async function handleSse(
     })
     res.flushHeaders()
     sseClients.add(res)
-
-    req.on('close', () => {
-      unsub()
-      sseClients.delete(res)
-    })
   } catch (err) {
     respondError(res, err)
   }
