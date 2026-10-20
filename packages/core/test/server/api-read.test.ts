@@ -94,7 +94,7 @@ test('GET /api/teams/:team/log returns TimelineEvent[] with filters', async () =
   expect(Array.isArray(res.events)).toBe(true)
 })
 
-test.each(['Duo', '..', 'a/b'])('team param %s is rejected with invalid_param', async (bad) => {
+test.each(['Duo', '..'])('team param %s is rejected with invalid_param', async (bad) => {
   const o = new FakeOrca()
   const { deps } = seedRunningTeam(o)
   const d = { ...deps, orca: cachedOrca(o) }
@@ -102,17 +102,28 @@ test.each(['Duo', '..', 'a/b'])('team param %s is rejected with invalid_param', 
   registerReadRoutes(r)
 
   const route = r.match('GET', `/api/teams/${bad}`)
-  // Router regex should match the pattern, handler checks PARAM_RULES
-  if (route) {
-    await expect(route.h({ deps: d, params: route.params, query: new URLSearchParams(), body: null })).rejects.toMatchObject({
-      code: 'invalid_param',
-    })
-  }
+  expect(route).not.toBeNull()
+  await expect(route!.h({ deps: d, params: route!.params, query: new URLSearchParams(), body: null })).rejects.toMatchObject({
+    code: 'invalid_param',
+  })
+})
+
+test('team 形如 a/b 时路由不匹配 → 落到静态资源并回 404（不是 400 invalid_param）', () => {
+  const r = new Router()
+  registerReadRoutes(r)
+
+  // 路由段是 ([^/]+)，含斜杠的 team 在匹配阶段就落选，根本走不到 checkParam
+  expect(r.match('GET', '/api/teams/a/b')).toBeNull()
+  expect(r.match('GET', '/api/teams/a/b/tasks')).toBeNull()
+  expect(r.match('GET', '/api/teams/a/b/posts/builder')).toBeNull()
+  expect(r.match('GET', '/api/teams/a/b/log')).toBeNull()
 })
 
 test('no response contains a session marker', async () => {
   const o = new FakeOrca()
   const { deps } = seedRunningTeam(o)
+  // 任务详情路由也要走一遍，任务本身不带标记
+  o.tasks.push({ id: 'task-1', status: 'ready', title: '普通任务', spec: '', parentId: null, assigneeHandle: null, dispatchId: null, result: null })
   const d = { ...deps, orca: cachedOrca(o) }
   deps.registry.setSessionMarker('builder@duo', 'WLS-1234abcd', '2026-10-16T00:00:00.000Z')
   deps.registry.setSessionId('builder@duo', 'sess-123')
@@ -125,13 +136,15 @@ test('no response contains a session marker', async () => {
     { path: '/api/teams/duo', params: { team: 'duo' } },
     { path: '/api/teams/duo/attention', params: { team: 'duo' } },
     { path: '/api/teams/duo/tasks', params: { team: 'duo' } },
+    { path: '/api/teams/duo/tasks/task-1', params: { team: 'duo', id: 'task-1' } },
     { path: '/api/teams/duo/posts/builder', params: { team: 'duo', post: 'builder' } },
     { path: '/api/teams/duo/log', params: { team: 'duo' } },
   ]
 
   for (const { path: p, params } of routes) {
-    const m = r.match('GET', p)!
-    const res = await m.h({ deps: d, params, query: new URLSearchParams(), body: null })
+    const m = r.match('GET', p)
+    expect(m, `读路由 ${p} 应该存在`).not.toBeNull()
+    const res = await m!.h({ deps: d, params, query: new URLSearchParams(), body: null })
     expect(JSON.stringify(res)).not.toContain('WLS-1234abcd')
   }
 })

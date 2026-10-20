@@ -3,7 +3,7 @@ import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, expect, test } from 'vitest'
-import { createConsoleServer, writeConsoleFile, type CommandDeps } from '@wingline/core'
+import { createConsoleServer, exitCodeOf, writeConsoleFile, type CommandDeps } from '@wingline/core'
 import { consoleCmd, renderConsole } from '../src/console.js'
 import { FakeOrca, mkDeps, seedRunningTeam } from '../../core/test/commands/fake-client.js'
 
@@ -16,6 +16,14 @@ function webRoot(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wl-cli-web-'))
   fs.writeFileSync(path.join(dir, 'index.html'), '<html></html>')
   cleanups.push(() => fs.rmSync(dir, { recursive: true }))
+  return dir
+}
+
+/** win32 上 startInOrca 的 nodeOnPath 守卫要求 PATH 里能看见 node.exe；mkDeps 默认 env 为空，拷一份 process.execPath 顶上（只做存在性检查，不会真去执行）。 */
+function fakeNodePath(): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wl-fake-node-'))
+  fs.copyFileSync(process.execPath, path.join(dir, 'node.exe'))
+  cleanups.push(() => fs.rmSync(dir, { recursive: true, force: true }))
   return dir
 }
 
@@ -73,6 +81,22 @@ test('--open with no running team and no --worktree is console_no_worktree', asy
   await expect(consoleCmd(deps, { open: true })).rejects.toMatchObject({ code: 'console_no_worktree' })
 })
 
+test('服务在运行但没有任何团队：--open 降级为链接 + worktree 提示，退出不报错', async () => {
+  const { deps } = mkDeps(new FakeOrca())
+  await runningConsole(deps)
+  const res = await consoleCmd(deps, { open: true })
+  expect(res).toMatchObject({
+    outcome: 'opened',
+    tab: 'unsupported',
+    tabReason: 'worktree',
+  })
+  const out = renderConsole(res)
+  expect(out).toContain(res.url)
+  expect(out).toContain('console_no_worktree')
+  expect(out).toContain('wl up')
+  expect(out).toContain('--worktree')
+})
+
 test('a port that is already taken is console_port_in_use', async () => {
   const { deps } = mkDeps(new FakeOrca())
   const blocker = net.createServer()
@@ -81,4 +105,43 @@ test('a port that is already taken is console_port_in_use', async () => {
   const port = (blocker.address() as net.AddressInfo).port
   await expect(consoleCmd(deps, { port, webRoot: webRoot() })).rejects.toMatchObject({ code: 'console_port_in_use' })
   expect(fs.existsSync(path.join(deps.home, 'console.json'))).toBe(false)
+})
+
+test('--open 新服务 confirmMs 内未就绪 → console_start_unconfirmed（kind uncertain，CLI 映射退出码 3）', async () => {
+  const o = new FakeOrca()
+  const { deps } = mkDeps(o, { env: { PATH: fakeNodePath() } })
+  // 无运行中的服务、无团队：用 --worktree 跳过工作区推导，confirmMs: 0 表示一轮都不等
+  const err = await consoleCmd(deps, {
+    open: true, worktree: `path:${os.tmpdir()}`, confirmMs: 0, sleep: async () => {},
+  }).then(() => null, (e: unknown) => e)
+  expect(err).toMatchObject({ kind: 'uncertain', code: 'console_start_unconfirmed' })
+  expect(exitCodeOf(err)).toBe(3)
+  // 新开的终端确实发出去了，只是不确定它有没有跑起来
+  expect(o.created).toHaveLength(1)
+  expect(o.created[0]).toMatchObject({ title: 'console@wingline' })
+})
+
+test('缺省 confirmMs 仍是 10 秒窗口：每 200ms 轮询一次，共 50 次', async () => {
+  const o = new FakeOrca()
+  const { deps } = mkDeps(o, { env: { PATH: fakeNodePath() } })
+  const naps: number[] = []
+  await expect(consoleCmd(deps, {
+    open: true, worktree: `path:${os.tmpdir()}`,
+    sleep: async (ms) => { naps.push(ms) },
+  })).rejects.toMatchObject({ code: 'console_start_unconfirmed' })
+  expect(naps).toHaveLength(50)
+  expect(new Set(naps)).toEqual(new Set([200]))
+})
+
+test('某次轮询变慢时按墙钟提前退出，不会把 confirmMs 上界拖穿', async () => {
+  const o = new FakeOrca()
+  const { deps } = mkDeps(o, { env: { PATH: fakeNodePath() } })
+  let naps = 0
+  await expect(consoleCmd(deps, {
+    open: true, worktree: `path:${os.tmpdir()}`,
+    confirmMs: 400,
+    // 单拍睡 500ms > 400ms 窗口：第一拍睡完就已过截止时间
+    sleep: async () => { naps += 1; await new Promise((r) => setTimeout(r, 500)) },
+  })).rejects.toMatchObject({ code: 'console_start_unconfirmed' })
+  expect(naps).toBe(1)
 })

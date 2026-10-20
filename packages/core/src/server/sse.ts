@@ -93,50 +93,12 @@ export class TeamFeeds {
   private startLoop(team: string, loop: TeamLoop): void {
     // 1. timeline loop (2s)
     loop.timelineTimer = this.setTimer(async () => {
-      if (loop.subscribers.size === 0) return
-      for (const sub of loop.subscribers) {
-        try {
-          const res = await readTimelineAfter(this.deps, team, sub.cursor)
-          sub.cursor = res.cursor
-          for (const ev of res.events) {
-            sub.write(`id: ${ev.id}\nevent: timeline\ndata: ${JSON.stringify(ev)}\n\n`)
-          }
-        } catch (err) {
-          this.deps.warn(`SSE timeline tick error for ${team}: ${String(err)}`)
-        }
-      }
+      await this.tickTimeline(team, loop)
     }, this.timelineMs)
 
     // 2. snapshot loop (5s)
     loop.snapshotTimer = this.setTimer(async () => {
-      if (loop.subscribers.size === 0) return
-      try {
-        const posts = await ps(this.deps, { team })
-        const att = await attention(this.deps, team)
-        const disp = dispatcherHealth(this.deps, team).state
-
-        const data = {
-          team,
-          posts,
-          dispatcher: disp,
-          attentionCounts: {
-            frozen: att.frozen.length,
-            signals: att.signals.length,
-            questions: att.questions.length,
-            stale: att.stale.length,
-          },
-        }
-        const serialized = JSON.stringify(data)
-        const hash = crypto.createHash('sha256').update(serialized).digest('hex')
-        if (hash !== loop.lastSnapshotHash) {
-          loop.lastSnapshotHash = hash
-          for (const sub of loop.subscribers) {
-            sub.write(`event: snapshot\ndata: ${serialized}\n\n`)
-          }
-        }
-      } catch (err) {
-        this.deps.warn(`SSE snapshot tick error for ${team}: ${String(err)}`)
-      }
+      await this.tickSnapshot(team, loop)
     }, this.snapshotMs)
 
     // 3. ping loop (15s)
@@ -145,6 +107,52 @@ export class TeamFeeds {
         sub.write(': ping\n\n')
       }
     }, this.pingMs)
+  }
+
+  private async tickTimeline(team: string, loop: TeamLoop): Promise<void> {
+    if (loop.subscribers.size === 0) return
+    for (const sub of loop.subscribers) {
+      try {
+        const res = await readTimelineAfter(this.deps, team, sub.cursor)
+        sub.cursor = res.cursor
+        for (const ev of res.events) {
+          sub.write(`id: ${ev.id}\nevent: timeline\ndata: ${JSON.stringify(ev)}\n\n`)
+        }
+      } catch (err) {
+        this.deps.warn(`SSE timeline tick error for ${team}: ${String(err)}`)
+      }
+    }
+  }
+
+  private async tickSnapshot(team: string, loop: TeamLoop): Promise<void> {
+    if (loop.subscribers.size === 0) return
+    try {
+      const posts = await ps(this.deps, { team })
+      const att = await attention(this.deps, team)
+      const disp = dispatcherHealth(this.deps, team).state
+
+      const data = {
+        team,
+        posts,
+        dispatcher: disp,
+        attentionCounts: {
+          frozen: att.frozen.length,
+          signals: att.signals.length,
+          questions: att.questions.length,
+          stale: att.stale.length,
+        },
+      }
+      const serialized = JSON.stringify(data)
+      const hash = crypto.createHash('sha256').update(serialized).digest('hex')
+      if (hash !== loop.lastSnapshotHash) {
+        loop.lastSnapshotHash = hash
+        for (const sub of loop.subscribers) {
+          sub.write(`event: snapshot\ndata: ${serialized}\n\n`)
+        }
+      }
+    } catch (err) {
+      this.deps.warn(`SSE snapshot tick error for ${team}: ${String(err)}`)
+    }
   }
 
   private stopLoop(loop: TeamLoop): void {

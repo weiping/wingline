@@ -84,6 +84,52 @@ test('snapshot is pushed only when the hash changes', async () => {
   feeds.closeAll()
 })
 
+test('timeline tick 内单次读取失败只 warn，下一次 tick 照常运行', async () => {
+  const o = new FakeOrca()
+  const { deps, warnings } = seedRunningTeam(o)
+  const d = { ...deps, orca: cachedOrca(o) }
+
+  const writes: string[] = []
+  let tickTimeline: () => Promise<void> = async () => {}
+
+  const feeds = new TeamFeeds(d, {
+    setTimer: ((fn: any, ms: number) => {
+      if (ms === 2000) tickTimeline = fn
+      return 1 as any
+    }) as any,
+    clearTimer: () => {},
+  })
+
+  const unsub = await feeds.subscribe('duo', (chunk) => writes.push(chunk))
+
+  // 让时间线读的第一次 listAudit 抛错，只失败这一次
+  const registry = deps.registry as any
+  const realListAudit = registry.listAudit.bind(registry)
+  let boom = true
+  registry.listAudit = (...args: unknown[]) => {
+    if (boom) {
+      boom = false
+      throw new Error('db locked')
+    }
+    return realListAudit(...args)
+  }
+
+  // 第一次 tick：读失败，只 warn，不写任何东西，也不炸掉循环
+  await tickTimeline()
+  expect(writes).toHaveLength(0)
+  expect(warnings.some((w) => w.includes('SSE timeline tick error for duo'))).toBe(true)
+
+  // 下一次 tick：游标没被污染，照常推送新事件
+  deps.registry.appendAudit({ team: 'duo', actor: 'human', command: 'after', target: null, outcome: 'ok' })
+  await tickTimeline()
+  expect(writes.join('')).toContain('event: timeline\n')
+  expect(writes.join('')).toContain('"action":"after"')
+
+  registry.listAudit = realListAudit
+  unsub()
+  feeds.closeAll()
+})
+
 test('two subscribers on one team share one loop; the loop stops when both leave', async () => {
   const o = new FakeOrca()
   const { deps } = seedRunningTeam(o)
