@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-16-phase-3d-screen-signals-remote-autostart-design.md`（下称 spec）；依赖 3A、3C 的 plan 已完成。
 
+> **状态（2026-10-20）：未开始。** 依赖的 3A 已实现并合并；3C 尚未实施，而本计划依赖 3C（"依赖 3A、3C 的 plan 已完成"），须在 3C 完成后才能开工。
+
 ## Global Constraints
 
 - 不新增运行时依赖。

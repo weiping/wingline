@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-16-phase-3c-editor-sync-tui-design.md`（下称 spec）；依赖 3A、3B 的 plan 已完成。
 
+> **状态（2026-10-20）：未开始。** 依赖的 3A、3B 已实现并合并（3A 见 `docs/superpowers/plans/2026-10-16-phase-3a-restore-timeline.md`，3B 见 `docs/superpowers/plans/2026-10-16-phase-3b-console.md` 与 `docs/superpowers/plans/2026-10-20-phase-3b-review-fixes.md`）。本计划是阶段 3 的下一个待实施项。
+
 ## Global Constraints
 
 - 不新增运行时依赖。

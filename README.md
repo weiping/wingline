@@ -6,7 +6,7 @@ Wingline adds a team layer to Orca: a declarative team spec, long-lived posts (`
 
 雁阵在 Orca 之上加一层“常驻团队”：用一份 `team.yaml` 描述团队，每个岗位是一个常驻的 Orca 终端；任务在岗位之间流转，完成时自动跑质量闸门、自动派出评审；调度员替你盯着团队，转述岗位的提问、发现卡住的任务并逐级提醒。
 
-> 状态：阶段 0–1（团队与岗位）、阶段 2A（任务工作流）、阶段 2B（调度员与巡查）已完成；控制台等后续阶段见[设计总纲](docs/superpowers/specs/2026-10-10-wingline-design.md)。
+> 状态：阶段 0–1（团队与岗位）、阶段 2A（任务工作流）、阶段 2B（调度员与巡查）、阶段 3A（重启恢复与审计时间线）、阶段 3B（本地控制台）已完成；3C（团队编辑器 / Orca 界面同步 / `wl tui`）及后续阶段见[设计总纲](docs/superpowers/specs/2026-10-10-wingline-design.md)。
 
 ## 功能
 

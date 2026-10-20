@@ -1,7 +1,7 @@
 # 雁阵 Wingline 阶段 3A：重启恢复与审计时间线设计
 
 - 日期：2026-10-16
-- 状态：设计中（未实现）
+- 状态：**已实现**（2026-10-16 合并；实现期经复审修复，改动见 `docs/superpowers/plans/2026-10-16-phase-3a-restore-timeline.md`）
 - 范围：阶段 3（控制台与恢复）子项目 A：`wl restore`（重启后接回岗位会话、重新认领协调者、拉起调度员、重新派发在办任务）、会话标记、审计事件表与 `wl log` 时间线。
 - 依赖：阶段 1（`wl up` 的岗位拉起与 Run 逻辑，总纲第 7 节）、阶段 2A（`docs/superpowers/specs/2026-10-13-phase-2a-task-workflow-design.md`，下称 2A：第 7.1 节调用方解析、第 7.4 节 `screenGuard`、第 9 节账本、第 10 节 `staleReasons` 与 `wl task recover`）、阶段 2B（`docs/superpowers/specs/2026-10-13-phase-2b-dispatcher-patrol-design.md`，下称 2B：`dispatcherUp`、`dispatcherHealth`、`patrol_events`）。
 - 不含：本地 HTTP API、SSE、控制台网页、`wl tui`、向 Orca 原生界面同步状态（均为 3B）。

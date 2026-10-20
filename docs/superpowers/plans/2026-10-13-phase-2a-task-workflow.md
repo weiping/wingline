@@ -10,6 +10,14 @@
 
 **Spec：** `docs/superpowers/specs/2026-10-13-phase-2a-task-workflow-design.md`（第五次修订，下称 spec）。实现者必须先读 spec 全文，尤其第 2 节（Orca 实测语义）、第 5 节（Run 与协调者）、第 7 节（通知与画面检查）、第 9 节（账本）、第 10 节 `done`。本计划的接口/字段/错误码均取自 spec；spec 留了开放选择时本计划在对应任务里注明决定。
 
+> **状态（2026-10-20）：已实现。** 合并于 PR #1（`feat/phase-2a-task1`），随后经多轮复审修复（`docs/superpowers/reviews/2026-10-15-phase-2-review.md` 与实现期的 opus 复审）。实现时把部分 Step 5 的提交信息改写、并按项目惯例未加署名尾注，历史对照：
+> - Task 1 → `feat(core): parse links/gates/budgets/self_claim/tags/plan_first`；
+> - Task 2/3/4/8 → 实现期重写为 `feat(core): registry support for …`、`feat(core): orchestration methods on OrcaClient …`、`feat(core): orchestration intent ledger settled by request-show`、`feat(core): gate execution in the post worktree …`（含各自的复审修复波次）；
+> - Task 5/6/7/9/10/11/12/13 → `feat(core): wl up establishes, adopts or keeps the orchestration Run …`、`feat(core): actor and handle resolution for task commands`、`feat(core): screen guard and one-line notifications …`、`feat(core): task preflight, queries, task_log and stale-task detection`、`feat(core): task dispatch, announce, create, plan`、`feat(core): task claim/release/reassign/start`、`feat(core): wl task done with gate, verdicts, links and rerun safety`、`feat(core): task escalate/resolve/recover`；
+> - Task 14 → `feat(cli): wl task command family`（计划写的是 "wl task command surface"）；
+> - Task 15 → `test: contract tests against sanitized real orchestration receipts`；
+> - Task 16 → `test: end-to-end task flow tests`（落在 `packages/core/test/commands/task/flow.test.ts`）。
+
 > **修订历史（摘要）：** 2026-10-14 第二至四次修订按三轮复审与补充探针二至四同步 spec。
 >
 > **2026-10-15 第五次修订（本版）：** 按 spec 第五次修订（复审四 + 补充探针五、六）整体重写。要点：①账本（Task 4）删掉"新行/旧行 + 错误码白名单"，一切失败经 `request-show` 定案；`FakeOrca`（Task 3）把被拒的 `worker_done` 记进账本、能在"已落地之后"抛出四个传输码、模拟 `request-show` 与"一个终端一个进行中的派发"。②派发不带 `--inject`，删除 `INJECT_IDLE_WAIT_MS` 与 `delivery: 'injected'`；新增 Task 7 `screenGuard`/`notifyPost`。③删除 WIP 预算与 `wip_budget_exceeded`，改为 `post_busy`/`queued`。④`wl up` 增加 run-list 找回、`--adopt-run`/`--new-run`、`run_lost`、派给死终端的任务报告（Task 5）。⑤gate 在岗位 worktree 根目录执行、有超时、输出全量存文件（Task 8）。⑥新增 `release`/`reassign`/`recover`/`list --stale`/`show --history`、`task_log`、`bypassed` 判定与结束方式、通用前置（`status` + 规格哈希）。⑦新增契约测试任务（Task 15），回执 fixture 入库。
@@ -125,7 +133,7 @@ packages/cli/test/
   ```
   2B 计划 Task 6 在 `TeamSpec` 上再加 `patrol`，不改这里的字段。
 
-- [ ] **Step 1：写失败测试**
+- [x] **Step 1：写失败测试**
 
 ```ts
 // load.test.ts：删除"保留字段被拒绝"的 test.each 与 'reserved post field is rejected with its phase' 两个用例，替换为：
@@ -176,13 +184,13 @@ test('hash changes when tags/gate/links/budgets change', () => {
 })
 ```
 
-- [ ] **Step 2：运行确认失败** — `pnpm vitest run packages/core/test/spec` → FAIL。
-- [ ] **Step 3：实现。**
+- [x] **Step 2：运行确认失败** — `pnpm vitest run packages/core/test/spec` → FAIL。
+- [x] **Step 3：实现。**
   - `schema.ts`：`postSchema` 加 `self_claim: z.boolean().default(false)`、`tags: z.array(z.string().regex(ID)).default([])`、`plan_first: z.boolean().default(false)`；`teamSchema` 加 `links: z.record(z.string(), z.object({ reviewed_by: z.array(z.string()).optional(), hands_to: z.array(z.string()).optional(), consults: z.array(z.string()).optional() }).strict()).default({})`、`gates: z.record(z.string(), z.string().min(1)).default({})`、`budgets: z.object({ team: z.unknown().optional(), task: z.object({ max_gate_failures: pos.default(3), gate_timeout_seconds: pos.default(600), max_minutes: pos.optional() }).strict().default({}) }).strict().default({})`（`pos = z.number().int().positive()`）；删除 `RESERVED_TOP`、`RESERVED_POST`。
   - `load.ts`：删除 `rejectReserved`；`budgets.team` 存在（不论内容）→ `at.fail('field_removed', ['budgets', 'team'], 'budgets.team.max_in_progress_per_post 已取消：Orca 限定每个岗位终端同时只有一个进行中的派发')`。`crossCheck` 新增：`links` 的键与每个 `reviewed_by`/`hands_to`/`consults` 元素不在 posts id 集合 → `links_unknown_post`；元素等于键 → `links_self`；同一键同时有 `reviewed_by` 与 `hands_to` → `links_conflict`；`gates` 键不在集合 → `gates_unknown_post`；`findHandsToCycle(links): string[] | null`（DFS 白/灰/黑三色，回溯出环上的 id）有环 → `links_cycle`，信息 `hands_to 形成环：a → b → a`。`loadTeamSpec` 给每个 post 填新字段，顶层填 `budgets.task`（`maxMinutes` 缺省 `null`）。
   - `hash.ts`：`normalised.posts` 每项加 `selfClaim`/`tags`/`planFirst`/`gate`/`reviewedBy`/`handsTo`，顶层加 `budgets`。
-- [ ] **Step 4：运行确认通过** — `pnpm vitest run packages/core/test/spec` → PASS；`pnpm typecheck`。
-- [ ] **Step 5：提交** — `git commit -m "feat(core): parse links/gates/budgets/self_claim/tags/plan_first"`
+- [x] **Step 4：运行确认通过** — `pnpm vitest run packages/core/test/spec` → PASS；`pnpm typecheck`。
+- [x] **Step 5：提交** — `git commit -m "feat(core): parse links/gates/budgets/self_claim/tags/plan_first"`
 
 ---
 
@@ -248,7 +256,7 @@ test('hash changes when tags/gate/links/budgets change', () => {
   listTaskLog(taskId: string): TaskLogRow[]                                         // 按 id 升序
   ```
 
-- [ ] **Step 1：写失败测试**（`registry.test.ts`，沿用文件里已有的 `tmpDb()` 与 `team` 常量；涉及新表的用例先 `upsertTeam`——`team` 列有外键）
+- [x] **Step 1：写失败测试**（`registry.test.ts`，沿用文件里已有的 `tmpDb()` 与 `team` 常量；涉及新表的用例先 `upsertTeam`——`team` 列有外键）
 
 ```ts
 const running: TeamRow = { ...team, runId: 'run-1', coordinatorHandle: 'coord-1' }
@@ -336,8 +344,8 @@ test('task_log is append-only and ordered; object detail is stored as JSON', () 
 })
 ```
 
-- [ ] **Step 2：运行确认失败。**
-- [ ] **Step 3：实现。** `migrations.ts` 追加第二项：
+- [x] **Step 2：运行确认失败。**
+- [x] **Step 3：实现。** `migrations.ts` 追加第二项：
   ```sql
   ALTER TABLE teams ADD COLUMN coordinator_handle TEXT;
   ALTER TABLE requests ADD COLUMN retry_request TEXT;
@@ -354,8 +362,8 @@ test('task_log is append-only and ordered; object detail is stored as JSON', () 
   CREATE INDEX task_log_task ON task_log(task_id, id);
   ```
   `registry.ts`：`teamRow`/`upsertTeam` 加 `coordinator_handle`；`getRequest` 多读三列；账本方法按签名，`args` 用 `JSON.stringify`；`insertTaskExt`/`recordGate` 用 `INSERT … ON CONFLICT DO NOTHING`；五个 setter 共用一个私有 `upsertExt(team, taskId, column, value)`（`INSERT INTO task_ext(task_id, team, created_at, <col>) VALUES (…) ON CONFLICT(task_id) DO UPDATE SET <col> = excluded.<col>`；列名来自白名单常量，不拼接外部输入）；`incrementGateFailures` 先 `upsertExt` 再 `UPDATE … SET gate_failures = gate_failures + 1` 后读回；`bumpEpoch` 先确保行存在（`INSERT … ON CONFLICT DO NOTHING`），再按签名的 CAS `UPDATE`，最后读回 `epoch`；`recordVerdict` 在 `BEGIN IMMEDIATE … COMMIT` 里先查后写；`finishVerdict` 写 `result = JSON.stringify(result)`、`finished_at = now()`。
-- [ ] **Step 4：运行确认通过** — `pnpm vitest run packages/core/test` → PASS（含阶段 1 全部测试）；`pnpm typecheck`。
-- [ ] **Step 5：提交** — `git commit -m "feat(core): registry support for coordinator, intent ledger, task_ext, task_done, gates, task_log"`
+- [x] **Step 4：运行确认通过** — `pnpm vitest run packages/core/test` → PASS（含阶段 1 全部测试）；`pnpm typecheck`。
+- [x] **Step 5：提交** — `git commit -m "feat(core): registry support for coordinator, intent ledger, task_ext, task_done, gates, task_log"`
 
 ---
 
@@ -409,7 +417,7 @@ test('task_log is append-only and ordered; object detail is stored as JSON', () 
   - `terminalShow` → `terminal show --terminal <h>`，读 `r.terminal.title`/`connected`/`preview`（`preview` 缺省 `''`；R6 fixture）
   - `worktreeShow` → `worktree show --worktree <sel>`，读 `r.worktree.path`（字段名同样以 Task 15 为准）
 
-- [ ] **Step 1：写失败测试（`client.test.ts`，沿用已有 `clientWith`——它返回 `{ client, calls, opts }`）**
+- [x] **Step 1：写失败测试（`client.test.ts`，沿用已有 `clientWith`——它返回 `{ client, calls, opts }`）**
 
 ```ts
 const m = (requestId: string, replayed = false) => ({ mutation: { requestId, replayed } })
@@ -481,9 +489,9 @@ test('terminalShow reads preview (empty when missing); worktreeShow reads the pa
 })
 ```
 
-- [ ] **Step 2：运行确认失败。**
-- [ ] **Step 3：实现 `types.ts`/`client.ts`。**
-- [ ] **Step 4：`FakeOrca` 编排模型（`fake-client.ts`）。** 2A 的重跑安全只有在假客户端忠实模拟 spec 第 2 节的实测语义时才测得出来，所以这是一个小模型：
+- [x] **Step 2：运行确认失败。**
+- [x] **Step 3：实现 `types.ts`/`client.ts`。**
+- [x] **Step 4：`FakeOrca` 编排模型（`fake-client.ts`）。** 2A 的重跑安全只有在假客户端忠实模拟 spec 第 2 节的实测语义时才测得出来，所以这是一个小模型：
   - **状态：** `coordinator: string | null`；`runs: RunSummary[]`；`tasks: OrchestrationTask[]`（内部保留 assignee/dispatch，`taskList()` 对 `blocked`/`completed`/`failed` 输出 null）；`gates: Map<string, { taskId: string; status: 'pending' | 'resolved' }>`；`ledger: Map<string, { input: string; outcome: { ok: true; value: unknown } | { ok: false; error: WinglineError } }>`；`pendingIds: Set<string>`（`requestShow` 对它们报 `pending`）；`previews: Map<string, string>`（`terminalShow` 的 `preview`，缺省 `'❯ '`）；`worktreePaths: Map<string, string>`（缺省返回 `os.tmpdir()`）；`faults: Array<{ method: string; when: 'transport' | 'before' | 'after'; error: Error; match?: (a: Record<string, unknown>) => boolean }>`（按方法名、`when` 与可选的 `match(入参)` 取第一条匹配的并移除）；`orch: Array<{ m: string; a: Record<string, unknown> }>`（除只读的 `taskList`/`terminalShow`/`worktreeShow` 外每次编排调用的入参）；`callsOf(m)` 返回该方法的入参数组；每个方法同时往阶段 1 已有的 `calls` 字符串数组推方法名；`onMutate?: () => void`（在第②步之前调用，用来观察"调用发生时账本行的状态"）。
   - **写调用统一经 `mutate(m, a, { coordinatorOnly, recordRejections }, exec)`：** ⓪入参记入 `orch`/`calls`；`onMutate?.()`；取 `transport` 故障抛出（模拟请求没到运行时，在账本检查之前）。①有 `retryRequest` 且账本里有 → 入参（去掉 `retryRequest` 后 `JSON.stringify`）不同则抛 `orca`/`request_mismatch`；相同则：记下的是成功 → 返回**快照** + `replayed: true`；记下的是拒绝 → 原样抛出那个错误（R5-2）。②取 `before` 故障。③`coordinatorOnly` 且 `a.from !== coordinator` → `orca`/`consumer_fenced`（不进账本，R4-1）。④`exec()`；它抛出的 `orca` 错误：`recordRejections` 为真（只有 `workerDone`）且有 `retryRequest` → 记进账本后再抛（R5-2），否则不记直接抛。⑤成功且有 `retryRequest` → 存账本（`structuredClone` 快照）。⑥取 `after` 故障抛出（模拟"已落地但调用方看到传输错误/超时"——四个传输码与 `orca_timeout` 都用这个位置）。返回结果 + `replayed: false`。
   - `requestShow({ request })`：`pendingIds.has` → `pending`；账本里有 → `completed`，`receipt` 是**原始回执形状**（账本条目除了映射后的快照 `result`，另存一份 `raw`：`taskCreate` → `{ task: { id } }`，`gateCreate` → `{ gate: { id } }`，`runCreate` → `{ run: { id, coordinator_handle } }`，其余 `{}`；拒绝时 `raw = { rejected: <code> }`），因为 `oneShot` 的 `fromReceipt` 读的是 Orca 的原始回执（复审五 I-2）；否则 `absent`、`receipt: null`。先取 `before` 故障（供"查询本身失败"的测试）。
@@ -498,7 +506,7 @@ test('terminalShow reads preview (empty when missing); worktreeShow reads the pa
   - 新 helper `bypassReport(o, taskId)`：模拟岗位直接用 Orca CLI 上报——以任务当前 assignee 为 `from` 调 `workerDone`（不带 `retryRequest`）。
   - `mkDeps` 默认 `env: {}`、`now: () => new Date()`（可被 `over` 覆盖）。
   - `seedRunningTeam(o, over?: Partial<CommandDeps> & { yaml?: string })`：`mkDeps` → `const specPath = mkTeam(over?.yaml ?? DUO_YAML)`；`registry.upsertTeam({ name: 'duo', specPath, specHash: specHash(loadTeamSpec(specPath)), runId: 'run-1', coordinatorHandle: 'coord-1', status: 'up' })`（**真实哈希**：Task 9 的通用前置会比对它）；`o.coordinator = 'coord-1'`；`o.runs.push({ id: 'run-1', objective: 'wingline:duo', coordinatorHandle: 'coord-1', createdAt: '…' })`；登记两个岗位 `builder@duo`（handle `term-b`，lead）与 `checker@duo`（handle `term-c`），两者的 worktree 都是 `path:<os.tmpdir()>`，并往 `o.terminals` 推两条对应终端（title 即地址）与协调者终端 `coord-1`（title `zsh`）。
-- [ ] **Step 5：钉住 `FakeOrca` 自身的语义**（`fake-client.test.ts`，每条三五行，是 spec 第 2 节事实的逐条翻译，全部写出）：
+- [x] **Step 5：钉住 `FakeOrca` 自身的语义**（`fake-client.test.ts`，每条三五行，是 spec 第 2 节事实的逐条翻译，全部写出）：
   1. 同 id 同参数回放返回旧快照（任务此后已 `completed`，回放的 `dispatch` 仍返回原 `dispatchId`）；同 id 不同参数 `request_mismatch`。
   2. 换协调者后，旧 `from` 重放已落地的 id 仍是回放；新 id 用旧 `from` 被 fence。
   3. 被 fence 的调用不进账本：条件变化后同 id 重放是重新执行。
@@ -506,8 +514,8 @@ test('terminalShow reads preview (empty when missing); worktreeShow reads the pa
   5. `after` 故障：调用已落地（任务已建、`requestShow` 为 `completed`），调用方看到错误。`transport` 故障在账本检查之前：已落地的 id 也照样抛。
   6. 一个终端一个派发：第二个 `dispatch` 到同一 `to` 抛 `runtime_error`，任务保持 `ready`；前一个完成后可以派。
   7. `gateCreate` 让 `dispatched` 变 `blocked` 且之后 `workerDone` 抛 `inactive_dispatch`；`gateResolve` 回 `ready`；`terminalClose` 让任务回 `ready`；之后派给已关闭的 handle 仍成功。
-- [ ] **Step 6：运行确认通过** — `pnpm vitest run packages/core/test` → PASS；`pnpm typecheck`。
-- [ ] **Step 7：提交** — `git commit -m "feat(core): orchestration methods on OrcaClient and a FakeOrca that models Orca's ledger/fence/gate/busy semantics"`
+- [x] **Step 6：运行确认通过** — `pnpm vitest run packages/core/test` → PASS；`pnpm typecheck`。
+- [x] **Step 7：提交** — `git commit -m "feat(core): orchestration methods on OrcaClient and a FakeOrca that models Orca's ledger/fence/gate/busy semantics"`
 
 ---
 
@@ -548,7 +556,7 @@ test('terminalShow reads preview (empty when missing); worktreeShow reads the pa
 
 **实现层决定：** spec 第 9.1 节第 3 步区分"`completed` 且是成功回执 / 是被记下的拒绝"。本计划不解析 `request-show` 的 `receipt`（各方法的回执形状不同，拒绝的形状只在 `worker_done` 上见过），而是：原错误是**传输/不确定类**时，用同一个 id 和同一组参数再调用一次——Orca 对 `completed` 的请求重放返回记下的结果（事实 7、10），成功即成功、抛出明确错误即"被记下的拒绝"；原错误本身就是**明确的 Orca 错误**时，`completed` 说明它就是那个被记下的拒绝，不再重放。只有 `oneShot` 的"本地无记录"分支没有原参数可重放，才读 `receipt`（`fromReceipt`）。
 
-- [ ] **Step 1：写失败测试**
+- [x] **Step 1：写失败测试**
 
 ```ts
 const rt = () => new WinglineError('orca', 'runtime_timeout', 'Timed out waiting for the Orca runtime')
@@ -746,8 +754,8 @@ test('oneShot with no local row: absent → a normal call with that id; pending 
 })
 ```
 
-- [ ] **Step 2：运行确认失败。**
-- [ ] **Step 3：实现。**
+- [x] **Step 2：运行确认失败。**
+- [x] **Step 3：实现。**
   - `ledgered`：读行；`done` → `JSON.parse(receipt)`；无行 → `openIntent(key, c.id ?? randomUUID(), await build(team))` 后重读；有行且 `c.beforeReplay` 返回 `'settle'` → `preSettle(row)`：`request-show` 为 `completed` → 照常重放；`absent` → `reissueIntent(key, randomUUID(), await build(当前团队行))`；`pending`/查询失败 → 记 `uncertain`、抛 `uncertain`。然后 `attempt(row)`：调用 `call({ ...JSON.parse(args), retryRequest })`，成功 → `finishRequest(key, 'done', value)` 并返回。
   - 失败分支：`fenced(err)` 且本次尚未重发 → `refreshCoordinator` → `reissueIntent(key, randomUUID(), await build(t))` → 再 `attempt` 一次；非 `WinglineError` 或 `kind` 为 `input`/`internal` → 原样上抛（行保持 `pending`）；其余 → `settleFailure(err, row)`。
   - `settleFailure`（spec 第 9.1 节第 3 步）：`state = await requestShow(id)`（抛出视为 `unknown`）：
@@ -759,8 +767,8 @@ test('oneShot with no local row: absent → a normal call with that id; pending 
   - `oneShot`：`id = c.retryRequest ?? c.id ?? randomUUID()`，`key = \`oneshot:${id}\``；本地有行 → `fresh = await c.build(当前团队行)`，与落盘的 `args` 去掉 `from` 后比较（`JSON.stringify`），不同 → `input`/`retry_request_args_changed`；本地无行且 `c.retryRequest` 给了 → `requestShow(id)`：`completed` → `c.fromReceipt(receipt)` 非空 → `openIntent` + `finishRequest(key, 'done', 结果)` 后返回；为空 → 抛 `uncertain`/`retry_request_unreadable`，hint"这个 id 已在 Orca 落地但读不出结果：先用 wl task list 确认，再去掉 --retry-request 重跑"；`pending` → 抛 `uncertain`；`absent` 或查询失败 → 往下正常调用（查询失败时 Orca 的账本仍会兜住重复）。最后 `ledgered(deps, { key, team, id, build, call, hint: (a) => \`${c.retryHint(id)}（本次协调者 --from ${a.from}）\` })`。
   - `refreshCoordinator`：`runShow({ id: team.runId! })` → `updateCoordinatorHandle` → `getTeam`。
   - 拆分：`attempt`、`preSettle`、`settleFailure`、`adoptReceipt` 各自 ≤50 行。
-- [ ] **Step 4：运行确认通过。**
-- [ ] **Step 5：提交** — `git commit -m "feat(core): orchestration intent ledger settled by request-show"`
+- [x] **Step 4：运行确认通过。**
+- [x] **Step 5：提交** — `git commit -m "feat(core): orchestration intent ledger settled by request-show"`
 
 ---
 
@@ -789,7 +797,7 @@ test('oneShot with no local row: absent → a normal call with that id; pending 
   ```
   `run` 可选是有意的：不让新字段破坏阶段 1 已提交的类型字面量。`up()` 每次都填 `run`（没轮到建 Run 时是 `deferred`）；消费方一律写 `r.run?.…`。
 
-- [ ] **Step 1：写失败测试（`up.test.ts` 新增）**
+- [x] **Step 1：写失败测试（`up.test.ts` 新增）**
 
 ```ts
 test('first up: run-list finds nothing → run-create from the lead handle through the ledger', async () => {
@@ -901,8 +909,8 @@ test('up passes --adopt-run / --new-run through; ambiguous exits 1, lost exits 2
 })
 ```
 
-- [ ] **Step 2：运行确认失败。**
-- [ ] **Step 3：实现。** `up()` 在 posts 循环后调用新函数 `ensureRun(l, posts, args)`，再调用 `reportDeadAssignees(l)`（只在 `run.runId` 非空时；一次 `taskList` + 一次 `terminalList`，只读）。`ensureRun`：
+- [x] **Step 2：运行确认失败。**
+- [x] **Step 3：实现。** `up()` 在 posts 循环后调用新函数 `ensureRun(l, posts, args)`，再调用 `reportDeadAssignees(l)`（只在 `run.runId` 非空时；一次 `taskList` + 一次 `terminalList`，只读）。`ensureRun`：
   - lead 结果不是 `launched`/`already_live` → `deferred`。`leadHandle = registry.getPost(leadAddress)!.handle!`。
   - `args.newRun` → `setRunId(name, null)`、`updateCoordinatorHandle(name, null)`、`dropRequest(\`${name}:run-create\`)`，跳过 run-list，走 create。
   - `args.adoptRun` → `runUse({ id: adoptRun, from: leadHandle })`，`setRunId`、`updateCoordinatorHandle`，`adopted`。
@@ -911,8 +919,8 @@ test('up passes --adopt-run / --new-run through; ambiguous exits 1, lost exits 2
   - 有 `runId` → `terminalList()` 里有 `coordinatorHandle` → `kept`；否则 `runUse({ id, from: leadHandle })` 写回，`reclaimed`；`runUse` 抛 `run_not_found` → `lost`（`retry: \`wl up ${specPath} --new-run\``，`reason` 写"原 Run 已不存在，旧任务无法恢复"）。
   - 捕获 `WinglineError`：`orca` → `failed`；`uncertain` → `uncertain`（`retry: \`wl up ${specPath}\``）；其余上抛。整个 `ensureRun` 保持在 `up()` 已有的 `withTeamLock` 内。
   - 拆分：`ensureRun` 只做分派，`createRun`/`adoptRun`/`keepOrReclaim` 各自一个函数。
-- [ ] **Step 4：运行确认通过** — `pnpm vitest run packages/core/test/commands/up.test.ts packages/cli` → PASS；`pnpm typecheck`。
-- [ ] **Step 5：提交** — `git commit -m "feat(core): wl up establishes, adopts or keeps the orchestration Run and reports dead assignees"`
+- [x] **Step 4：运行确认通过** — `pnpm vitest run packages/core/test/commands/up.test.ts packages/cli` → PASS；`pnpm typecheck`。
+- [x] **Step 5：提交** — `git commit -m "feat(core): wl up establishes, adopts or keeps the orchestration Run and reports dead assignees"`
 
 ---
 
@@ -932,7 +940,7 @@ test('up passes --adopt-run / --new-run through; ambiguous exits 1, lost exits 2
   export function actorOf(actor: Actor | null): { actor: string; actorSource: ActorSource } // task_log 用：null → human
   ```
 
-- [ ] **Step 1：写失败测试**
+- [x] **Step 1：写失败测试**
 
 ```ts
 test('explicit --as wins and needs no Orca call', async () => {
@@ -973,10 +981,10 @@ test('actorOf maps to task_log fields', () => {
 })
 ```
 
-- [ ] **Step 2：运行确认失败。**
-- [ ] **Step 3：实现**（按签名；隐式分支调用 `deps.orca.terminalList()`，按 `handle` 找终端，`deps.registry.getPost(title)` 存在才算）。`actor_required` 的 hint：`在岗位终端里运行，或加 --as <岗位地址>；Windows 上未验证 Orca 是否设置 ORCA_TERMINAL_HANDLE`。
-- [ ] **Step 4：运行确认通过。**
-- [ ] **Step 5：提交** — `git commit -m "feat(core): actor and handle resolution for task commands"`
+- [x] **Step 2：运行确认失败。**
+- [x] **Step 3：实现**（按签名；隐式分支调用 `deps.orca.terminalList()`，按 `handle` 找终端，`deps.registry.getPost(title)` 存在才算）。`actor_required` 的 hint：`在岗位终端里运行，或加 --as <岗位地址>；Windows 上未验证 Orca 是否设置 ORCA_TERMINAL_HANDLE`。
+- [x] **Step 4：运行确认通过。**
+- [x] **Step 5：提交** — `git commit -m "feat(core): actor and handle resolution for task commands"`
 
 ---
 
@@ -1005,7 +1013,7 @@ test('actorOf maps to task_log fields', () => {
   export async function notifyPost(deps: CommandDeps, address: string, text: string): Promise<NotifyResult>
   ```
 
-- [ ] **Step 1：写失败测试**
+- [x] **Step 1：写失败测试**
 
 ```ts
 const r6 = JSON.parse(fs.readFileSync(path.join(repoRoot, 'test/fixtures/receipts/orchestration-r6.json'), 'utf8'))
@@ -1068,10 +1076,10 @@ test('a send failure is reported, not thrown', async () => {
 
 `repoRoot` 用 `path.resolve(fileURLToPath(import.meta.url), '../../../../../..')`，与已有契约测试读 fixture 的方式一致（Task 15 统一成一个 `fixture(name)` helper）。
 
-- [ ] **Step 2：运行确认失败。**
-- [ ] **Step 3：实现。** `PROMPT_PATTERNS`（大小写不敏感，逐条对应 spec 第 7.4 节）：`/\(y\/n\)/i`、`/\[y\/n\]/i`、`/\(yes\/no\)/i`、`/^\s*[❯>›]\s*\d+[.)]/`、`/do you want to/i`、`/would you like to/i`、`/\ballow /i`、`/\bapprove/i`、`/press enter/i`、`/esc to cancel/i`、`/trust (this|the) (folder|files|directory)/i`、`/continue\?/i`、`/\?\s*$/`；另有 `SHELL_PROMPT = /(?:[$%#]\s*$)|(?:^PS .*>\s*$)/`，只对最后一个非空行判断，命中 → `unknown`。`neutralize`：先按 2B 的 `sanitizeQuote` 同样规则去控制/格式/分隔字符，再把 `` ` ``→`｀`、`$`→`＄`、`;`→`；`、`|`→`｜`、`&`→`＆`、`<`→`＜`、`>`→`＞`、`\`→`＼`，最后截断；2A 的通知模板对任务标题一律先 `neutralize(title, 80)`。`notifyPost`：`locatePost(deps.orca, address)` 为空 → `post_offline`；`screenGuard`：`offline` → `post_offline`、`at_prompt` → `at_prompt`、`unknown` → `screen_unknown`；`clear` → `terminalSend({ handle, text, enter: true, waitSubmitSec: 10 })`（与阶段 1 `wl send` 同一常量），`stages` 含 `turn_started` → `notified`，否则 `notified_unconfirmed`；任何抛出 → `send_failed` 并 `deps.warn`。不写 `requests` 行（通知不重试，spec 第 7.3 节）。
-- [ ] **Step 4：运行确认通过。**
-- [ ] **Step 5：提交** — `git commit -m "feat(core): screen guard and one-line notifications that never type into a prompt"`
+- [x] **Step 2：运行确认失败。**
+- [x] **Step 3：实现。** `PROMPT_PATTERNS`（大小写不敏感，逐条对应 spec 第 7.4 节）：`/\(y\/n\)/i`、`/\[y\/n\]/i`、`/\(yes\/no\)/i`、`/^\s*[❯>›]\s*\d+[.)]/`、`/do you want to/i`、`/would you like to/i`、`/\ballow /i`、`/\bapprove/i`、`/press enter/i`、`/esc to cancel/i`、`/trust (this|the) (folder|files|directory)/i`、`/continue\?/i`、`/\?\s*$/`；另有 `SHELL_PROMPT = /(?:[$%#]\s*$)|(?:^PS .*>\s*$)/`，只对最后一个非空行判断，命中 → `unknown`。`neutralize`：先按 2B 的 `sanitizeQuote` 同样规则去控制/格式/分隔字符，再把 `` ` ``→`｀`、`$`→`＄`、`;`→`；`、`|`→`｜`、`&`→`＆`、`<`→`＜`、`>`→`＞`、`\`→`＼`，最后截断；2A 的通知模板对任务标题一律先 `neutralize(title, 80)`。`notifyPost`：`locatePost(deps.orca, address)` 为空 → `post_offline`；`screenGuard`：`offline` → `post_offline`、`at_prompt` → `at_prompt`、`unknown` → `screen_unknown`；`clear` → `terminalSend({ handle, text, enter: true, waitSubmitSec: 10 })`（与阶段 1 `wl send` 同一常量），`stages` 含 `turn_started` → `notified`，否则 `notified_unconfirmed`；任何抛出 → `send_failed` 并 `deps.warn`。不写 `requests` 行（通知不重试，spec 第 7.3 节）。
+- [x] **Step 4：运行确认通过。**
+- [x] **Step 5：提交** — `git commit -m "feat(core): screen guard and one-line notifications that never type into a prompt"`
 
 ---
 
@@ -1094,7 +1102,7 @@ test('a send failure is reported, not thrown', async () => {
   export function gateBody(output: string, file: string, multilineSafe: boolean): string | null
   ```
 
-- [ ] **Step 1：写失败测试**
+- [x] **Step 1：写失败测试**
 
 ```ts
 const opts = (over: Partial<{ cwd: string; timeoutMs: number }> = {}) => ({ cwd: process.cwd(), timeoutMs: 30_000, ...over })
@@ -1147,10 +1155,10 @@ test('writeGateOutput / gateBody: full output in the file, the tail in --body, o
 })
 ```
 
-- [ ] **Step 2：运行确认失败。**
-- [ ] **Step 3：实现。** `runGate`：`spawn(command, { shell: true, cwd, detached: process.platform !== 'win32', windowsHide: true })`（全项目唯一 `shell: true`，注释写明 spec 第 3 节约束 6 与总纲 §2.4）；合并 stdout+stderr；超时：POSIX `process.kill(-child.pid, 'SIGKILL')`（进程组），Windows `spawn('taskkill', ['/T', '/F', '/PID', String(child.pid)], { shell: false })`；输出末尾追加 `\n（gate 超时，已终止）`。环境变量继承 `process.env`。`gateCwd` 读 `registry.getPost(address)!.worktree`。拆分：`spawnGate`、`killTree`、`gateCwd` 各自一个函数。
-- [ ] **Step 4：运行确认通过。**
-- [ ] **Step 5：提交** — `git commit -m "feat(core): gate execution in the post worktree with timeout, tree kill and full output files"`
+- [x] **Step 2：运行确认失败。**
+- [x] **Step 3：实现。** `runGate`：`spawn(command, { shell: true, cwd, detached: process.platform !== 'win32', windowsHide: true })`（全项目唯一 `shell: true`，注释写明 spec 第 3 节约束 6 与总纲 §2.4）；合并 stdout+stderr；超时：POSIX `process.kill(-child.pid, 'SIGKILL')`（进程组），Windows `spawn('taskkill', ['/T', '/F', '/PID', String(child.pid)], { shell: false })`；输出末尾追加 `\n（gate 超时，已终止）`。环境变量继承 `process.env`。`gateCwd` 读 `registry.getPost(address)!.worktree`。拆分：`spawnGate`、`killTree`、`gateCwd` 各自一个函数。
+- [x] **Step 4：运行确认通过。**
+- [x] **Step 5：提交** — `git commit -m "feat(core): gate execution in the post worktree with timeout, tree kill and full output files"`
 
 ---
 
@@ -1201,7 +1209,7 @@ test('writeGateOutput / gateBody: full output in the file, the tail in --body, o
   ```
   `DoneClosure` 在 Task 12 定义（`{ kind: 'completed' | 'handed_to' | 'sent_for_review' | 'escalated'; targets?: string[] }`），本任务先在 `query.ts` 里声明并由 Task 12 导入，避免循环依赖。
 
-- [ ] **Step 1：写失败测试**
+- [x] **Step 1：写失败测试**
 
 ```ts
 const task = (over: Partial<OrchestrationTask>): OrchestrationTask => ({ id: 't1', status: 'ready', title: 'a', spec: 's', parentId: null, assigneeHandle: null, dispatchId: null, result: null, ...over })
@@ -1303,8 +1311,8 @@ test('staleReasons boundaries: owner busy is queueing not idle; a done row means
 })
 ```
 
-- [ ] **Step 2：运行确认失败。**
-- [ ] **Step 3：实现。**
+- [x] **Step 2：运行确认失败。**
+- [x] **Step 3：实现。**
   - `taskPreflight`：`o.orca !== false` 时 `deps.orca.status()`，`reachable` 为假 → `new WinglineError('orca', 'runtime_unavailable', 'Orca 运行时不可达', { hint: '先执行 orca open（或打开 Orca 应用）' })`；`mustTeamReady`；`fs.existsSync(specPath)` 否 → `spec_not_found`；`specHash(loadTeamSpec(specPath))` 与 `teams.spec_hash` 比较。
   - `logTask`：`epoch` 缺省读 `getTaskExt(taskId)?.epoch ?? 0`；`actorOf(actor)` 填两列。
   - `isPostFrozen`：`return false`，文件头注释"阶段 2B 计划 Task 3 改为读 frozen_posts"。
@@ -1312,8 +1320,8 @@ test('staleReasons boundaries: owner busy is queueing not idle; a done row means
   - `showTask`：`result` 解析出 `outcome`/`reportedBy`；`closure` 取最近一次 `task_done.result` 里的 `closure`；`history` 时附 `listTaskLog`。
   - `staleReasons` 的判定按 spec 第 10 节表格，顺序固定为 `done_unfinished`、`call_uncertain`、`dead_assignee`、`owner_idle`、`bypassed`、`blocked_waiting`，同一任务可以出现多次。`call_uncertain` 从账本键解析任务：`dispatch:<t>:<e>` → `wl task start <t> --as <owner>`；`done:<t>:…` → `wl task done <t> --as <owner>`；`recover:<t>:…` → `wl task recover <t>`；`resolve:<gate>` → 经 `gates` 找任务，命令 `wl task resolve <gate> --resolution <原来的决定>`；`oneshot:*` 不归任何任务，跳过。`owner_idle` 要求主人没有任何 `dispatched` 任务（spec 第 10 节）。`bypassed` 要求 `kind = work`、`result.provenance = worker_report`、`verdicts` 里没有该任务当前 `epoch` 的行。`done_unfinished` 只看**当前 `epoch`** 的未收尾判定（旧轮次的在加 epoch 时已被收尾为 `abandoned`，见 Task 10）。`owner` 为空时命令里的 `--as` 写 `<主人>`。拆分：每类原因一个小函数，`staleReasons` 只做拼接与排序。
   - `gatherStaleInput`：`fetchTasks` + `terminalList`（`alive` = handle 集合）+ `listUnfinishedVerdicts` + 对终态任务逐个 `listVerdictsOf` + `listOpenRequests('')` + `listGates`。
-- [ ] **Step 4：运行确认通过。**
-- [ ] **Step 5：提交** — `git commit -m "feat(core): task preflight, queries, task_log and stale-task detection"`
+- [x] **Step 4：运行确认通过。**
+- [x] **Step 5：提交** — `git commit -m "feat(core): task preflight, queries, task_log and stale-task detection"`
 
 ---
 
@@ -1347,7 +1355,7 @@ test('staleReasons boundaries: owner busy is queueing not idle; a done row means
   ```
   通知文本（固定模板，单行）：新任务 `[雁阵] 你有新任务 <id>：<标题>。查看：wl task show <id>；完成后运行：wl task done <id>（不要直接用 orca orchestration send 上报）`；排队 `[雁阵] 你有排队任务 <id>：<标题>，手上的任务完成后运行 wl task start <id>`。标题先去掉换行与控制字符、截到 80 字符。
 
-- [ ] **Step 1：写失败测试**
+- [x] **Step 1：写失败测试**
 
 ```ts
 // dispatch.test.ts
@@ -1524,14 +1532,14 @@ test('planTask writes the plan under the team lock and logs it; terminal tasks a
 })
 ```
 
-- [ ] **Step 2：运行确认失败。**
-- [ ] **Step 3：实现。**
+- [x] **Step 2：运行确认失败。**
+- [x] **Step 3：实现。**
   - `dispatchTo`（spec 第 9.4 节）：①读 `task_ext`（无行按 epoch 0）、一次 `taskList`；②按键 `dispatch:<id>:<epoch>` 分支：`done` 且任务 `ready` → `bumpEpoch(team, id, epoch, getVerdict(id, epoch)?.verdict === 'escalate')`；**该轮判定存在且未收尾 → `finishVerdict(id, epoch, { outcome: 'abandoned' })`**（spec 第 9.4 节）；写 `task_log`（`epoch_bump`），换键走③；`done` 且其他状态 → 返回存下的结果；无行且任务不是 `ready` → `task_not_open`；`pending`/`uncertain` → 走④；③忙检查：`tasks` 里有别的任务 `dispatched` 且 `assigneeHandle === target.handle` → `queued`；④`ledgered(deps, { key, team, build: (t) => ({ task: id, to: target.handle, from: t.coordinatorHandle!, self: isOwnTerminal(deps, target.handle) }), call: async ({ self, ...a }) => { const r = await deps.orca.dispatch(a); return { status: 'dispatched', dispatchId: r.dispatchId, self, replayed: r.replayed } }, beforeReplay: async (s) => (alive(s.to) ? 'replay' : 'settle') })`；捕获 `isBusyError` → 再 `taskList` 找出占用者，返回 `queued`；成功写 `setDispatchedAt`；⑤结果 `replayed` 时再 `taskList`：`dispatched` 给了目标 → 返回；`ready` → `bumpEpoch` 后回到③（只此一次）；其他 → 返回。`self` 随参数落盘但不传给 Orca。拆分：`currentRound`、`busyWith`、`ledgerDispatch`、`confirmReplay`。
   - `announce`：`self` → `{ delivery: 'self' }`；`queued` → `notifyPost(排队文本)` 后 `{ delivery: 'queued', busyWith }`（排队通知失败不改变 `queued`）；`dispatched` → `notifyPost(新任务文本)` 映射为 `notified`/`notified_unconfirmed`/`not_notified`（带 `reason`）。写 `task_log`：`start` 或 `queued`，再一条 `notify`（`detail` 带结果）。
   - `create.ts`：`taskPreflight`；给了 `post` 先 `locatePost`（无 → `post_offline`，在任何 Orca 写调用之前）；`actor = await resolveActor(deps, a.as)`；`id = a.retryRequest ?? randomUUID()`；`oneShot(deps, { team, retryRequest: a.retryRequest, id, fromReceipt: (r) => r.task?.id ? { id: r.task.id, replayed: true } : null, retryHint: (rid) => \`${重建出的同一条 wl task create 命令} --retry-request ${rid}\`, build: (t) => ({ spec: taskSpec(deps, \`${actor?.address ?? 'human'}: ${a.title}\`), taskTitle: a.title, run: t.runId!, from: t.coordinatorHandle!, ...(a.parent ? { parent: a.parent } : {}) }), call: (x) => deps.orca.taskCreate(x) })`；`insertTaskExt({ taskId, team, tags, kind: 'work', claimedBy: a.post ?? null, readySince: now })`；`logTask(create)`；给了 `post` → `dispatchTo` + `announce`，`dispatchTo` 抛出的 `uncertain` 在这里改写 hint 为同一条 `wl task create … --retry-request <id>（本次协调者 --from <handle>）`。重跑时若 `dispatch` 行已 `done`，`announce` 会再发一次通知——这是可接受的冗余（一行提醒，经画面检查）。
   - `plan.ts`：`findTaskAnywhere` → `taskPreflight` → `withTeamLock` 内检查状态（`completed`/`failed` → `task_terminal`）并 `setPlan`、`logTask(plan)`。
-- [ ] **Step 4：运行确认通过。**
-- [ ] **Step 5：提交** — `git commit -m "feat(core): dispatchTo with busy detection, announce, wl task create and plan"`
+- [x] **Step 4：运行确认通过。**
+- [x] **Step 5：提交** — `git commit -m "feat(core): dispatchTo with busy detection, announce, wl task create and plan"`
 
 ---
 
@@ -1551,7 +1559,7 @@ test('planTask writes the plan under the team lock and logs it; terminal tasks a
   ```
   团队取自调用方地址（`reassign` 取自任务所在团队）的 `@` 后半段。
 
-- [ ] **Step 1：写失败测试**
+- [x] **Step 1：写失败测试**
 
 ```ts
 const seed = (over: Parameters<typeof seedRunningTeam>[1] = {}) => {
@@ -1656,12 +1664,12 @@ test('start rerun after success is a no-op', async () => {
 })
 ```
 
-- [ ] **Step 2：运行确认失败。**
-- [ ] **Step 3：实现。**
+- [x] **Step 2：运行确认失败。**
+- [x] **Step 3：实现。**
   - `claim.ts`：`claimTask`：`requireActor` → 团队 → `taskPreflight` → 找岗位（无 → `post_unknown`）→ `!selfClaim` → `self_claim_disabled` → `withTeamLock(team, async () => { findTask；status !== 'ready' || claimedBy → task_not_open；tags 不相交 → tags_mismatch；setClaimedBy；logTask(claim) })`。`releaseTask`：同样的锁；`ext.claimedBy !== actor` → `not_claimed_by_you`；`dispatched` → `task_dispatched`（hint"先 `wl task escalate <id>` 收回派发，或完成后 `wl task done`"）；`completed`/`failed` → `task_terminal`；`setClaimedBy(null)`、`setReadySince(now)`、`logTask(release)`。`reassignTask`：`findTaskAnywhere` → `taskPreflight` → 目标不在规格岗位里 → `post_unknown` → `isPostFrozen(target)` → `post_frozen`（2A 恒不触发）→ 锁内按状态改主人、`ready` 时写 `ready_since`、`logTask(reassign)`；锁外 `notifyPost`。
   - `start.ts`：`requireActor`；`taskPreflight`；`ext.claimedBy !== actor.address` → `not_claimed_by_you`；`planFirst && !ext.plan` → `plan_required`；`handle = await resolveHandle(deps, actor)`；`findTask`：`dispatched` 且 assignee 是 `handle` → `{ delivery: isOwnTerminal ? 'self' : 'not_notified', already: true }`；`dispatched` 给另一个 handle、`blocked`/终态 → `task_not_open`；`isPostFrozen` → `post_frozen`；`d = await dispatchTo(...)`；`queued` → `post_busy`（hint"岗位手上已有进行中的任务 <busyWith>，先 `wl task done` 或 `wl task release`"）；否则 `announce`。
-- [ ] **Step 4：运行确认通过。**
-- [ ] **Step 5：提交** — `git commit -m "feat(core): wl task claim, release, reassign and start"`
+- [x] **Step 4：运行确认通过。**
+- [x] **Step 5：提交** — `git commit -m "feat(core): wl task claim, release, reassign and start"`
 
 ---
 
@@ -1690,7 +1698,7 @@ test('start rerun after success is a no-op', async () => {
   ```
   `skipped_frozen` 在 2A 里不会产生（`isPostFrozen` 恒为 false），2B 计划 Task 3 只改 `frozen.ts`，不改这里。
 
-- [ ] **Step 1：写失败测试**
+- [x] **Step 1：写失败测试**
 
 ```ts
 // gate 命令通过环境变量拿计数文件和退出码，避免在命令字符串里嵌 Windows 路径；每跑一次往文件追加一个字符
@@ -1954,8 +1962,8 @@ test('when multilineSafe is false, a multi-line gate output stays in the file an
 })
 ```
 
-- [ ] **Step 2：运行确认失败。**
-- [ ] **Step 3：实现**（spec 第 10 节 `done` 的 5 步；`done.ts` 拆成 `decide`、`decideDispatched`、`decideBypassed`、`report`、`linkAll`、`linkOne`、`escalateGate`、`closureOf`，各自 ≤50 行）。
+- [x] **Step 2：运行确认失败。**
+- [x] **Step 3：实现**（spec 第 10 节 `done` 的 5 步；`done.ts` 拆成 `decide`、`decideDispatched`、`decideBypassed`、`report`、`linkAll`、`linkOne`、`escalateGate`、`closureOf`，各自 ≤50 行）。
   - 入口：`requireActor` → 团队 → `taskPreflight` → `ext = getTaskExt(id)`；`ext?.claimedBy !== actor.address` → `not_your_task` → `v = getVerdict(id, ext.epoch)`：`v?.finishedAt` → `{ ...JSON.parse(v.result!), replayed: true }`；`a.resumeEpoch !== undefined` 且（`a.resumeEpoch !== ext.epoch` 或 `!v` 或已收尾）→ `input`/`verdict_missing`；`!v` → `decide()`（可能直接返回 `gate_failed`/`gate_failed_after_bypass`）。
   - `decideDispatched`：`handle = await resolveHandle(actor)`；`task.assigneeHandle !== handle` → `not_dispatched_to_you`；`n = ext.gateFailures + 1`；`g = await runGate(post.gate, { cwd: await gateCwd(deps, actor.address), timeoutMs: spec.budgets.task.gateTimeoutSeconds * 1000 })`；`file = writeGateOutput(home, team, id, epoch, n, g.output)`（没有 gate 时不写文件）；通过 → `recordVerdict({ verdict: 'passed', gateFailures: ext.gateFailures, dispatchId: task.dispatchId!, reportFrom: handle, body: gateBody(...) })`；失败且 `n < max` → `incrementGateFailures`、`logTask(gate_failed, { file })`，返回 `{ outcome: 'gate_failed', gateOutputPath: file }`；失败且 `n >= max` → `recordVerdict({ verdict: 'escalate', gateFailures: n, … })`。
   - `decideBypassed`（任务 `completed`/`failed`、`result.provenance === 'worker_report'`、本轮无 `task_done`）：`logTask(bypass_detected)`；跑 gate（同上）；通过 → `recordVerdict({ verdict: 'bypassed', dispatchId: '', reportFrom: '', body: null, gateFailures: ext.gateFailures })`；失败 → 牵头岗不是调用方时 `notifyPost(lead, \`[雁阵] ${actor} 的任务 ${id} 绕过 wl 直接上报，补跑 gate 失败，见 ${file}；要重开用 wl task escalate ${id} --reopen --reason <原因>\`)`，返回 `{ outcome: 'gate_failed_after_bypass', gateOutputPath: file }`。
@@ -1967,8 +1975,8 @@ test('when multilineSafe is false, a multi-line gate output stays in the file an
   - `closureOf(v, links)`：`escalate` → `escalated`；有 `handsTo` 连接 → `handed_to` + 目标；有 `reviewedBy` 连接 → `sent_for_review` + 目标；否则 `completed`。
   - 最后 `finishVerdict(id, epoch, result)`、`logTask(done | escalate)` 并返回 `result`。
   - **实现层决定：** 牵头岗就是调用方时不通知（不往自己的终端里打"请处理你自己"；命令输出已经说明了）。
-- [ ] **Step 4：运行确认通过。**
-- [ ] **Step 5：提交** — `git commit -m "feat(core): wl task done with persisted verdicts, bypass detection and rerun-safe follow-ups"`
+- [x] **Step 4：运行确认通过。**
+- [x] **Step 5：提交** — `git commit -m "feat(core): wl task done with persisted verdicts, bypass detection and rerun-safe follow-ups"`
 
 ---
 
@@ -1988,7 +1996,7 @@ test('when multilineSafe is false, a multi-line gate output stays in the file an
     Promise<{ status: 'dispatched' | 'queued' | 'ready'; delivery?: Delivery; epoch: number; reason?: string }>
   ```
 
-- [ ] **Step 1：写失败测试**
+- [x] **Step 1：写失败测试**
 
 ```ts
 async function dispatchedTask(o: FakeOrca, deps: CommandDeps, to = 'term-b') {
@@ -2111,13 +2119,13 @@ test('recover with the owner offline: back to ready, not dispatched', async () =
 })
 ```
 
-- [ ] **Step 2：运行确认失败。**
-- [ ] **Step 3：实现。**
+- [x] **Step 2：运行确认失败。**
+- [x] **Step 3：实现。**
   - `escalateTask`：`findTaskAnywhere` → `taskPreflight` → `actor = await resolveActor(deps, a.as)`；`actor` 非空且既不是 `claimed_by` 也不是牵头岗 → `not_your_task`；`completed`/`failed` 且 `!reopen` → `reopen_required`；`oneShot(deps, { team, retryRequest: a.retryRequest, fromReceipt: (r) => r.gate?.id ? { id: r.gate.id, replayed: true } : null, build: (t) => ({ task: id, question: a.reason, from: t.coordinatorHandle! }), call: gateCreate, retryHint: (rid) => \`wl task escalate ${id} --reason <同一个理由> --retry-request ${rid}\` })` → `recordGate` → `logTask(escalate)` → `taskList` 读回当前状态 → 牵头岗不是调用方时 `notifyPost(lead, \`[雁阵] 任务 ${id} 已转人工决策（${理由摘要}）：wl task resolve ${gateId} --resolution <决定>\`)`。`tookBackDispatch` = 调用前任务是 `dispatched`。
   - `resolveGate`：`getGate`（无 → `gate_unknown`）→ `taskPreflight` → `reassign` 不在规格岗位里 → `post_unknown`；`isPostFrozen(reassign)` → `post_frozen` → `ledgered(key \`resolve:${gateId}\`, build: (t) => ({ id: gateId, resolution, from: t.coordinatorHandle! }), call: gateResolve)` → `reassign` 时 `setClaimedBy` → `setReadySince(now)` → `logTask(resolve)` → `taskList` 读回状态返回。不碰 `epoch`/`gate_failures`（下次派发时 `dispatchTo` 处理）。
   - `recoverTask`：`findTaskAnywhere` → `taskPreflight`；读本地记录 `recover:<id>:open`（`requests` 表的步骤记录，`receipt = { dispatchId, epoch }`）：**存在 → 跳过前置检查，用记录里的值续跑**；不存在 → 任务不是 `dispatched` 或 assignee 存活 → `assignee_alive`（不是 `dispatched` 时 hint 改为"任务不在派发中，不需要 recover"），然后 `beginRequest` + `finishRequest('done', { dispatchId: task.dispatchId, epoch: ext.epoch })` 落这条记录。`ledgered(\`recover:${id}:${dispatchId}:gate\`, gateCreate question "雁阵 recover：原派发对象已不存在")` → `recordGate` → `ledgered(\`recover:${id}:${dispatchId}:resolve\`, gateResolve resolution "recover")` → 主人为空 → `{ status: 'ready' }`；`isPostFrozen(owner)` → `{ status: 'ready', reason: 'skipped_frozen' }`；`locatePost(owner)` 为空 → `{ status: 'ready', reason: 'post_offline' }`；否则（`dispatch:<id>:<记录的 epoch>` 行不存在且当前 epoch 仍等于记录的 epoch 时先 `bumpEpoch` 一次，保证"recover 之后 epoch + 1"）`dispatchTo` + `announce` → `dropRequest(\`recover:${id}:open\`)`（任何一条 `ready` 返回分支同样删除）→ `logTask(recover)`。
-- [ ] **Step 4：运行确认通过。**
-- [ ] **Step 5：提交** — `git commit -m "feat(core): wl task escalate, resolve and recover"`
+- [x] **Step 4：运行确认通过。**
+- [x] **Step 5：提交** — `git commit -m "feat(core): wl task escalate, resolve and recover"`
 
 ---
 
@@ -2150,7 +2158,7 @@ wl task recover <id> [--as <addr>] [--json]
 - `list --stale` 按原因分组，每条一行 `<id> <标题> <原因> → <命令>`。
 - `show --history` 每条一行 `<时间> <谁>（显式/隐式/人）<动作> <细节>`。
 
-- [ ] **Step 1：写失败测试**
+- [x] **Step 1：写失败测试**
 
 ```ts
 test('wl task create --json prints the created id', async () => {
@@ -2193,10 +2201,10 @@ test('wl task reassign / release / recover are wired', async () => {
 
 > 直接用 `main.test.ts` 里**已有**的两个 helper：`cmds(over?: Partial<Commands>)` 与 `exec(argv, c = cmds())`。本任务给 `Commands` 加 13 个字段（`createTask`、`listTasks`、`listStale`、`showTask`、`claimTask`、`releaseTask`、`reassignTask`、`startTask`、`planTask`、`doneTask`、`escalateTask`、`resolveGate`、`recoverTask`），`cmds` 的默认对象必须为每个新字段补一个默认实现，否则 `pnpm typecheck` 失败；新加的默认实现一律 `async () => { throw new Error('未注入：<字段名>') }`，阶段 1 的四个保持原样。2B 计划 Task 11 用同样的方式补它的字段。
 
-- [ ] **Step 2：运行确认失败。**
-- [ ] **Step 3：实现。** `Commands` 接口补 13 个字段，`realCommands` 补导入；逐个注册 `task` 子命令；逗号参数 `.split(',').filter(Boolean)`；`exitCodeOfDone`。`index.ts` 补 `commands/task/` 下各文件的导出（`ledger`、`identity`、`notify`、`gate-exec`、`preflight`、`query`、`log`、`frozen`、`dispatch`、`create`、`plan`、`claim`、`start`、`done`、`escalate`）。
-- [ ] **Step 4：运行确认通过** — `pnpm test`；`pnpm typecheck`。
-- [ ] **Step 5：提交** — `git commit -m "feat(cli): wl task command surface"`
+- [x] **Step 2：运行确认失败。**
+- [x] **Step 3：实现。** `Commands` 接口补 13 个字段，`realCommands` 补导入；逐个注册 `task` 子命令；逗号参数 `.split(',').filter(Boolean)`；`exitCodeOfDone`。`index.ts` 补 `commands/task/` 下各文件的导出（`ledger`、`identity`、`notify`、`gate-exec`、`preflight`、`query`、`log`、`frozen`、`dispatch`、`create`、`plan`、`claim`、`start`、`done`、`escalate`）。
+- [x] **Step 4：运行确认通过** — `pnpm test`；`pnpm typecheck`。
+- [x] **Step 5：提交** — `git commit -m "feat(cli): wl task command surface"`
 
 ---
 
@@ -2210,11 +2218,11 @@ test('wl task reassign / release / recover are wired', async () => {
 
 `spikes/out/` 被 git 忽略，所以 spec 第 12 节要求的回执必须另外入库（复审四 A-I13）。
 
-- [ ] **Step 1：写抓取脚本。** 复用 `spikes/lib.ts` 的 `setup()`/`record`/`IDLE_COMMAND`，在一个新 Run 里依次执行并记录**原始 JSON**：`run-create`、`run-list`、`run-show`、`task-create`（两个，一个带 `--parent`）、`dispatch`、`task-list`（含一个 `dispatched`、一个 `completed`、一个 `blocked` 任务）、`send --type worker_done`、`gate-create`、`gate-resolve`、`request-show`（对一个已落地的 id、一个随机 id，以及在 `worker_done` 被拒后对那个 id）、`worktree show --worktree <WINGLINE_SPIKE_WORKTREE>`、`terminal show`。脱敏规则与 `orchestration-r6.json` 相同（用户名、绝对路径前缀替换为 `USER`/`/Users/USER`），只保留雁阵读取的字段与少量上下文；写入 `test/fixtures/receipts/orchestration-2a.json`，键名与上面的命令一一对应（`run-list`、`request-show-completed`、`request-show-absent`、`request-show-rejected-worker-done`、`task-list-mixed`、`worktree-show` 等）。脚本结束时关闭它建的终端；会留下一个 Run（CLI 无法删除），在 `spikes/REPORT.md` 记一笔。
-- [ ] **Step 2：在装有 Orca 的机器上运行一次**（`WINGLINE_SPIKE_WORKTREE=path:<仓库路径> pnpm tsx spikes/contract-capture.ts`），核对输出后提交 fixture。若 `run-list`/`worktree show`/`request-show` 的字段名与 Task 3 的假设不同，同一提交里改 `client.ts` 的映射与 `client.test.ts`，并在提交说明里写明。
-- [ ] **Step 3：写契约测试。** 用一个返回 fixture 的假 `OrcaRunner` 构造真实的 `OrcaClient`，逐个方法断言映射结果：`runList` 能找到 `wingline:` 开头的 objective；`requestShow` 三种状态；`taskList` 对 `completed` 任务给出 `result`（含 `provenance`）且 `assigneeHandle`/`dispatchId` 为 null，对 `dispatched` 任务两者非空，`parentId` 与 fixture 一致（`parent_id` 的字段名此前没有任何证据，这一条就是证据）；`terminalShow` 对 R6 两个画面给出 `preview`；`worktreeShow` 给出绝对路径。另加一条：`check`/`reply`/`worker-list` 的 R6 回执在 2B 计划 Task 1 里钉，这里不重复。
-- [ ] **Step 4：运行确认通过** — `pnpm test`。
-- [ ] **Step 5：提交** — `git commit -m "test: contract tests against sanitized real orchestration receipts"`
+- [x] **Step 1：写抓取脚本。** 复用 `spikes/lib.ts` 的 `setup()`/`record`/`IDLE_COMMAND`，在一个新 Run 里依次执行并记录**原始 JSON**：`run-create`、`run-list`、`run-show`、`task-create`（两个，一个带 `--parent`）、`dispatch`、`task-list`（含一个 `dispatched`、一个 `completed`、一个 `blocked` 任务）、`send --type worker_done`、`gate-create`、`gate-resolve`、`request-show`（对一个已落地的 id、一个随机 id，以及在 `worker_done` 被拒后对那个 id）、`worktree show --worktree <WINGLINE_SPIKE_WORKTREE>`、`terminal show`。脱敏规则与 `orchestration-r6.json` 相同（用户名、绝对路径前缀替换为 `USER`/`/Users/USER`），只保留雁阵读取的字段与少量上下文；写入 `test/fixtures/receipts/orchestration-2a.json`，键名与上面的命令一一对应（`run-list`、`request-show-completed`、`request-show-absent`、`request-show-rejected-worker-done`、`task-list-mixed`、`worktree-show` 等）。脚本结束时关闭它建的终端；会留下一个 Run（CLI 无法删除），在 `spikes/REPORT.md` 记一笔。
+- [x] **Step 2：在装有 Orca 的机器上运行一次**（`WINGLINE_SPIKE_WORKTREE=path:<仓库路径> pnpm tsx spikes/contract-capture.ts`），核对输出后提交 fixture。若 `run-list`/`worktree show`/`request-show` 的字段名与 Task 3 的假设不同，同一提交里改 `client.ts` 的映射与 `client.test.ts`，并在提交说明里写明。
+- [x] **Step 3：写契约测试。** 用一个返回 fixture 的假 `OrcaRunner` 构造真实的 `OrcaClient`，逐个方法断言映射结果：`runList` 能找到 `wingline:` 开头的 objective；`requestShow` 三种状态；`taskList` 对 `completed` 任务给出 `result`（含 `provenance`）且 `assigneeHandle`/`dispatchId` 为 null，对 `dispatched` 任务两者非空，`parentId` 与 fixture 一致（`parent_id` 的字段名此前没有任何证据，这一条就是证据）；`terminalShow` 对 R6 两个画面给出 `preview`；`worktreeShow` 给出绝对路径。另加一条：`check`/`reply`/`worker-list` 的 R6 回执在 2B 计划 Task 1 里钉，这里不重复。
+- [x] **Step 4：运行确认通过** — `pnpm test`。
+- [x] **Step 5：提交** — `git commit -m "test: contract tests against sanitized real orchestration receipts"`
 
 ---
 
@@ -2223,7 +2231,7 @@ test('wl task reassign / release / recover are wired', async () => {
 **Files:**
 - Create：`packages/core/test/commands/task/flow.test.ts`
 
-- [ ] **Step 1：写失败测试**
+- [x] **Step 1：写失败测试**
 
 ```ts
 const FLOW_YAML = SELF_CLAIM_YAML + `gates:\n  builder: 'node -e "process.exit(0)"'\nlinks:\n  builder:\n    reviewed_by: [checker]\n  checker:\n    reviewed_by: [builder]\n`
@@ -2300,10 +2308,10 @@ test('a post bypasses wl and reports directly: list --stale shows bypassed; wl t
 })
 ```
 
-- [ ] **Step 2：运行确认失败。**
-- [ ] **Step 3：** 本任务不写生产代码；失败则回到对应任务修正。
-- [ ] **Step 4：运行确认通过** — `pnpm test` 全仓库 PASS。
-- [ ] **Step 5：提交** — `git commit -m "test: end-to-end phase 2A task workflow"`
+- [x] **Step 2：运行确认失败。**
+- [x] **Step 3：** 本任务不写生产代码；失败则回到对应任务修正。
+- [x] **Step 4：运行确认通过** — `pnpm test` 全仓库 PASS。
+- [x] **Step 5：提交** — `git commit -m "test: end-to-end phase 2A task workflow"`
 
 ---
 

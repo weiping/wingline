@@ -1,7 +1,7 @@
 # 雁阵 Wingline 阶段 2B：调度员与巡查熔断设计
 
 - 日期：2026-10-13（第四次修订 2026-10-15）
-- 状态：设计中（未实现）
+- 状态：**已实现**（2026-10-13 合并 PR #2；实现期经复审修复，改动见 `docs/superpowers/plans/2026-10-13-phase-2b-dispatcher-patrol.md`）
 - 范围：阶段 2（团队工作流）子项目 B：调度员进程、收件箱处理、巡查信号、分级处理（提示/通知人/冻结），以及面向人的出口（`wl attention`、`patrol.notify`、`wl dispatcher status`/`hush`/`reply`）。
 - 依赖：阶段 2A（`docs/superpowers/specs/2026-10-13-phase-2a-task-workflow-design.md`，下称 2A）。用到的接口：第 5.2 节协调者归属规则、第 6 节 `task_ext`（`claimed_by`/`epoch`/`ready_since`/`dispatched_at`）与 `task_done`/`task_log`、第 7.4 节 `screenGuard`、第 9 节账本、第 10 节 `wl task list --stale` 的判定函数、`wl task done` 的重跑路径与 `wl task recover` 的步骤、`OrcaClient` 的 `runUse`/`runShow`/`taskList`/`terminalList`/`terminalShow`/`requestShow`。
 - 不含：巡查信号里的"消耗过快"（需要 token 统计）、"原地打转"（没有可靠数据源）、"上下文快满"与"用量上限"（需要解析画面，阶段 3）、"陪护"诊断岗、冻结后的自动恢复。

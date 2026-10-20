@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-16-phase-3a-restore-timeline-design.md`（下称 spec）
 
+> **状态（2026-10-20）：已实现。** Task 1–10 全部执行完毕并合并；随后经复审修复（`docs/superpowers/reviews/2026-10-16-phase-3-review.md` 与实现期的 fix 波次）。Step 5 的提交信息与历史基本一致，其中 Task 1 实际为 `spike: codex session search and resume probe`（结论是"不成立"，见该 Task 内的注记），Task 9 实际为 `feat(audit): audited command wrapper`，Task 10 实际为 `feat(cli): wl restore and wl log`（`readTimeline`/`followTimeline`）。
+
 ## Global Constraints
 
 - Node ≥ 22.13；不新增运行时依赖。
@@ -71,12 +73,14 @@
 **Interfaces:**
 - Produces: `test/fixtures/receipts/search-claude.json`、`search-codex.json`（脱敏的 `orca search --json` 真实回执，供 Task 3 的契约测试）；REPORT 中 Codex 的结论（成立时写明恢复命令的形式：`codex resume <id> <原参数>` 或 `<原启动命令> resume <id>`）。
 
-> 本任务需要真机上运行中的 Orca（macOS 或 Linux）。在沙箱里无法完成时，实现者写好脚本后报告 NEEDS_CONTEXT，由控制方交给人在真机上运行；Task 3–10 不依赖它的结论（Codex 默认归为“无接回能力”，Task 5 的模板留一行待填）。
+> 本任务需要真机上运行中的 Orca（macOS 或 Linux）。在沙箱里无法完成时，实现者写好脚本后报告 NEEDS_CONTEXT，由控制方交给人在真机上运行；Task 3–10 不依赖它的结论（Codex 默认归为”无接回能力”，Task 5 的模板留一行待填）。
 
-- [ ] **Step 1: 写探针脚本**，沿用 `spikes/lib.ts` 的写法：开 `spike-codex` 终端（`--command codex`），等 `tui-idle`，`--text "只回复收到。标记 WLS-<随机>" --enter`，等答完；`orca search '"WLS-…"' --agent codex --fresh --json` 存为 `spikes/out/codex-resume/<平台>/search.json`；关闭终端；分别用 `codex resume <sessionId>` 与 `codex <原参数> resume <sessionId>` 开 `spike-codex-2`，等空闲后 `terminal show` 存 `after-*.json`；关闭。输出一行 `RESULT codex-resume <成立|不成立> search=<命中数> resume=<形式|无>`。
-- [ ] **Step 2: 在真机上运行**（`pnpm tsx spikes/codex-resume.ts`），同法用 `claude` 抓一份搜索回执。
-- [ ] **Step 3: 脱敏后存入** `test/fixtures/receipts/search-claude.json`（与 `search-codex.json`），替换用户名、路径为 `/Users/u/repo` 形式；在 `spikes/REPORT.md` 增加“3A 探针：Codex 会话恢复”一节，写结论与判读。
-- [ ] **Step 4: 提交** — `git commit -m "spike: codex session search and resume probe"`
+> **实现结果（2026-10-17）：探针已跑完，结论是”不成立”** —— 两次真机运行都撞 `agent_prompt_blocked`（Orca 1.4.227 在 codex 一侧”被叫醒但还没到能接 prompt”是稳定状态），`orca search` 回执为 `hits: []`。空结果是**构造出来的**，不构成”Orca 不索引 codex 会话”的证据。codex 接回在本任务范围不可验证：3A 的接回逻辑只对 claude 验证通过（`spikes/REPORT.md`「3A 探针」与「3A 真机验证」两节），codex 岗位走 `fresh` 路径或用 `--session` 手工指定（3A spec §5.3 的逃生口）。`codex resume` 的命令形式与”Orca 是否索引 codex 会话”留待 3D 用 e2e 实测或在沙箱外直跑 codex CLI 验证。下方 Step 均已执行（脚本、真机运行、脱敏入库、提交）。
+
+- [x] **Step 1: 写探针脚本**，沿用 `spikes/lib.ts` 的写法：开 `spike-codex` 终端（`--command codex`），等 `tui-idle`，`--text “只回复收到。标记 WLS-<随机>” --enter`，等答完；`orca search '”WLS-…”' --agent codex --fresh --json` 存为 `spikes/out/codex-resume/<平台>/search.json`；关闭终端；分别用 `codex resume <sessionId>` 与 `codex <原参数> resume <sessionId>` 开 `spike-codex-2`，等空闲后 `terminal show` 存 `after-*.json`；关闭。输出一行 `RESULT codex-resume <成立|不成立> search=<命中数> resume=<形式|无>`。
+- [x] **Step 2: 在真机上运行**（`pnpm tsx spikes/codex-resume.ts`），同法用 `claude` 抓一份搜索回执。
+- [x] **Step 3: 脱敏后存入** `test/fixtures/receipts/search-claude.json`（与 `search-codex.json`），替换用户名、路径为 `/Users/u/repo` 形式；在 `spikes/REPORT.md` 增加“3A 探针：Codex 会话恢复”一节，写结论与判读。
+- [x] **Step 4: 提交** — `git commit -m "spike: codex session search and resume probe"`
 
 ---
 
@@ -98,7 +102,7 @@
   - `Registry.listTeamTaskLog(team: string, o: { afterId?: number; since?: string; limit?: number }): TaskLogRow[]`（语义同 `listAudit`）
   - `Registry.listPatrolEvents(team, o)` 的选项增加 `afterId?: number`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```ts
 test('setSessionMarker stores marker and time and clears a cached session id', () => {
@@ -119,10 +123,10 @@ test('listTeamTaskLog and listPatrolEvents accept afterId', () => { /* 各写 3 
 
 `migrate-3a.test.ts`：用 2B 时的迁移列表建一个库并写入一个岗位，再用当前迁移打开：岗位数据保留、三列为 `null`、`audit_events` 存在。
 
-- [ ] **Step 2: 运行确认失败** — `pnpm vitest run packages/core/test/registry` → 新测试 FAIL（方法不存在）。
-- [ ] **Step 3: 实现** — 追加一个迁移字符串（spec 第 8 节的 SQL）；`PostRow` 映射新列；按上面的签名实现方法（`detail` 以 `JSON.stringify` 存）。
-- [ ] **Step 4: 运行确认通过** — 同上命令全部 PASS。
-- [ ] **Step 5: 提交** — `git commit -m "feat(registry): session columns and audit_events"`
+- [x] **Step 2: 运行确认失败** — `pnpm vitest run packages/core/test/registry` → 新测试 FAIL（方法不存在）。
+- [x] **Step 3: 实现** — 追加一个迁移字符串（spec 第 8 节的 SQL）；`PostRow` 映射新列；按上面的签名实现方法（`detail` 以 `JSON.stringify` 存）。
+- [x] **Step 4: 运行确认通过** — 同上命令全部 PASS。
+- [x] **Step 5: 提交** — `git commit -m "feat(registry): session columns and audit_events"`
 
 ---
 
@@ -138,7 +142,7 @@ test('listTeamTaskLog and listPatrolEvents accept afterId', () => { /* 各写 3 
   - `OrcaClient.search(a: { query: string; agent: string; environment?: string }): Promise<SearchHit[]>` — 调用 `orca search <query> --agent <agent> --fresh [--environment <env>] --json`，`query` 原样作为一个参数（调用方负责加引号）
   - `FakeOrca.sessions: Array<{ marker: string; agent: string; sessionId: string; cwd: string | null; updatedAt?: string; messageCount?: number; environment?: string }>`；`FakeOrca.searchError?: Error`；`search` 返回 `query` 去掉引号后等于 `marker`、`agent`（与 `environment`）相同的条目，并记入 `calls`（`'search'`）
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```ts
 test('search passes the quoted query as one argument with --fresh and maps hits', async () => {
@@ -156,10 +160,10 @@ test('search maps the real claude receipt (contract)', async () => {
 
 > `OrcaRunner.json` 会自动追加 `--json`（沿用现有约定）；断言里不含它。真实回执的字段名以 Task 1 存下的 `search-claude.json` 为准；Task 1 未完成时，契约测试先用 spec 第 2 节第 1 条的字段（`result.hits[].sessionId/cwd/updatedAt`）手写一份最小回执，并在测试名里标 `(provisional)`。
 
-- [ ] **Step 2: 运行确认失败** — `pnpm vitest run packages/core/test/orca` → FAIL。
-- [ ] **Step 3: 实现** `search`（缺失字段映射为 `null`）与 FakeOrca 的同名方法。
-- [ ] **Step 4: 运行确认通过。**
-- [ ] **Step 5: 提交** — `git commit -m "feat(orca): search client method"`
+- [x] **Step 2: 运行确认失败** — `pnpm vitest run packages/core/test/orca` → FAIL。
+- [x] **Step 3: 实现** `search`（缺失字段映射为 `null`）与 FakeOrca 的同名方法。
+- [x] **Step 4: 运行确认通过。**
+- [x] **Step 5: 提交** — `git commit -m "feat(orca): search client method"`
 
 ---
 
@@ -182,7 +186,7 @@ test('search maps the real claude receipt (contract)', async () => {
   - `startPost(l: Launch, post: PostSpec, o: { text: string; command: string; existingHandle: string | null; keyOf: (step: Step) => string }): Promise<'sent' | 'unconfirmed' | 'at_prompt' | 'shell'>` — `up.ts` 现有 `startPost` 的参数化版本：终端命令、发送文本、请求键由调用方给出
 - `renderBriefing` 不变；`BRIEFING_LIMIT` 的检查移到“加标记之后”（导出 `checkBriefingLimit(text: string, address: string): void`，抛 `briefing_too_long`）。
 
-- [ ] **Step 1: 写失败测试**（`launch.test.ts`）
+- [x] **Step 1: 写失败测试**（`launch.test.ts`）
 
 ```ts
 test('wl up writes a fresh marker before sending and the brief carries it on the line after the first', async () => {
@@ -204,10 +208,10 @@ test('a brief that only exceeds the limit because of the marker line is rejected
 })
 ```
 
-- [ ] **Step 2: 运行确认失败** — `pnpm vitest run packages/core/test/commands/launch.test.ts` → FAIL。
-- [ ] **Step 3: 实现** — 搬移函数到 `launch.ts`；`up.ts` 的 `launchPost` 改为：`gen` → `ensureMarker` → `text = briefText(…withMarker(briefing, marker)…)`（单行指引末尾附 `（会话标记 <marker>）`）→ `checkBriefingLimit` → `startPost(l, post, { text, command: post.launch, existingHandle, keyOf: (s) => requestId(team, post.id, s, hash, gen) })`。`up` 开头的 `renderBriefing` 不再自行检查上限（改由 `checkBriefingLimit` 在发送前检查；仍在调用 Orca 之前完成——所有岗位的文本在进入 `withTeamLock` 前先算好并检查）。
-- [ ] **Step 4: 运行确认通过** — `pnpm vitest run packages/core/test/commands` 全部 PASS（`up.test.ts` 无需修改，除非断言了完整启动包文本：那类断言改为断言首行与其余部分不变）。
-- [ ] **Step 5: 提交** — `git commit -m "refactor(up): extract launch helpers; session marker in briefs"`
+- [x] **Step 2: 运行确认失败** — `pnpm vitest run packages/core/test/commands/launch.test.ts` → FAIL。
+- [x] **Step 3: 实现** — 搬移函数到 `launch.ts`；`up.ts` 的 `launchPost` 改为：`gen` → `ensureMarker` → `text = briefText(…withMarker(briefing, marker)…)`（单行指引末尾附 `（会话标记 <marker>）`）→ `checkBriefingLimit` → `startPost(l, post, { text, command: post.launch, existingHandle, keyOf: (s) => requestId(team, post.id, s, hash, gen) })`。`up` 开头的 `renderBriefing` 不再自行检查上限（改由 `checkBriefingLimit` 在发送前检查；仍在调用 Orca 之前完成——所有岗位的文本在进入 `withTeamLock` 前先算好并检查）。
+- [x] **Step 4: 运行确认通过** — `pnpm vitest run packages/core/test/commands` 全部 PASS（`up.test.ts` 无需修改，除非断言了完整启动包文本：那类断言改为断言首行与其余部分不变）。
+- [x] **Step 5: 提交** — `git commit -m "refactor(up): extract launch helpers; session marker in briefs"`
 
 ---
 
@@ -223,7 +227,7 @@ test('a brief that only exceeds the limit because of the marker line is rejected
   - `resumeCommand(agent: string, launch: string, sessionId: string): string | null` — `claude` → `${launch} --resume ${sessionId}`；`codex` → Task 1 的结论（未定前返回 `null`）；其他 → `null`；`sessionId` 不匹配 `SESSION_ID` 时抛 `WinglineError('input', 'session_override_invalid', …)`
   - `supportsResume(agent: string): boolean`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```ts
 test('claude keeps every launch flag and appends --resume', () => {
@@ -236,10 +240,10 @@ test('session ids with shell metacharacters are rejected', () => {
 test('codex follows the probe result', () => { /* 按 Task 1 结论；未定前断言 null 并在测试名标 (pending probe) */ })
 ```
 
-- [ ] **Step 2: 运行确认失败。**
-- [ ] **Step 3: 实现**（一张 `Record<string, (launch: string, id: string) => string>` 模板表）。
-- [ ] **Step 4: 运行确认通过。**
-- [ ] **Step 5: 提交** — `git commit -m "feat(restore): per-agent resume command"`
+- [x] **Step 2: 运行确认失败。**
+- [x] **Step 3: 实现**（一张 `Record<string, (launch: string, id: string) => string>` 模板表）。
+- [x] **Step 4: 运行确认通过。**
+- [x] **Step 5: 提交** — `git commit -m "feat(restore): per-agent resume command"`
 
 ---
 
@@ -257,7 +261,7 @@ test('codex follows the probe result', () => { /* 按 Task 1 结论；未定前�
   - `samePath(a: string, b: string): boolean` — 两边 `fs.realpathSync`（不存在时用原值）后比较
   - 判定条数之前，排除 `session_id` 已被本团队其他岗位登记的命中（复审 I-2）
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```ts
 test('override wins, then cached session id, then search', async () => { /* 三种情况分别返回 via: override / cached / search，后两者不调用 search 的断言用 o.calls */ })
@@ -275,10 +279,10 @@ test('a hit already bound to another post of the team is excluded before countin
 test('search failure → uncertain, never none', async () => { /* o.searchError = new WinglineError('uncertain', 'timeout', 'x') */ })
 ```
 
-- [ ] **Step 2: 运行确认失败。**
-- [ ] **Step 3: 实现** — 查询串为 `"${marker}"`；`hit.cwd === null` 的命中在本阶段排除（3D 才放宽）。
-- [ ] **Step 4: 运行确认通过。**
-- [ ] **Step 5: 提交** — `git commit -m "feat(restore): session lookup by marker"`
+- [x] **Step 2: 运行确认失败。**
+- [x] **Step 3: 实现** — 查询串为 `"${marker}"`；`hit.cwd === null` 的命中在本阶段排除（3D 才放宽）。
+- [x] **Step 4: 运行确认通过。**
+- [x] **Step 5: 提交** — `git commit -m "feat(restore): session lookup by marker"`
 
 ---
 
@@ -299,7 +303,7 @@ test('search failure → uncertain, never none', async () => { /* o.searchError 
 - 处理顺序：牵头岗先，其余按 `team.yaml` 顺序；接回或新开成功后 `setPostHandle` 并 `setPostStatus(address, 'live')`（复审 M-3）。
 - 接回提示文本：`[雁阵] 重启后已接回本会话，你的地址仍是 ${address}。`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```ts
 test('a live post is kept and nothing is written', async () => {})
@@ -322,10 +326,10 @@ test('a second Orca restart after a first restore creates a new terminal with th
 test('the lead is processed first and handle/status are updated', async () => {})
 ```
 
-- [ ] **Step 2: 运行确认失败。**
-- [ ] **Step 3: 实现**（判定顺序见 spec 第 5.2 节第 2 步；`fresh` 时 reason 为 `未找到原会话，上下文已丢失` 或 `该岗位在阶段 3 之前启动，没有会话标记` 或 `<agent> 不支持接回会话`）。
-- [ ] **Step 4: 运行确认通过。**
-- [ ] **Step 5: 提交** — `git commit -m "feat(restore): per-post resume or fresh launch"`
+- [x] **Step 2: 运行确认失败。**
+- [x] **Step 3: 实现**（判定顺序见 spec 第 5.2 节第 2 步；`fresh` 时 reason 为 `未找到原会话，上下文已丢失` 或 `该岗位在阶段 3 之前启动，没有会话标记` 或 `<agent> 不支持接回会话`）。
+- [x] **Step 4: 运行确认通过。**
+- [x] **Step 5: 提交** — `git commit -m "feat(restore): per-post resume or fresh launch"`
 
 ---
 
@@ -344,7 +348,7 @@ test('the lead is processed first and handle/status are updated', async () => {}
   - `restore(deps: CommandDeps, a: RestoreArgs): Promise<RestoreResult>`
   - `restoreExitCode(r: RestoreResult): 0 | 2 | 3`
 
-- [ ] **Step 1: 写失败测试**（`restore.test.ts`）
+- [x] **Step 1: 写失败测试**（`restore.test.ts`）
 
 ```ts
 test('unknown team → team_unknown; stopped team → team_stopped with a wl up hint', async () => {})
@@ -362,10 +366,10 @@ test('exit code: all good 0, any ambiguous/uncertain 3, orca failure without unc
 
 `flow.test.ts`（端到端，FakeOrca）：`wl up` duo → 模拟 Orca 重启（清空 `o.terminals`、旧 handle 失效、`o.sessions` 填入两岗位的标记命中）→ 一个 dispatched 任务的 assignee 失效 → `restore`：两岗位 `resumed`、Run `reclaimed`、任务 `recovered`；再跑一次：全部 `kept`，没有新的 `terminalCreate`、接回提示与派发。
 
-- [ ] **Step 2: 运行确认失败。**
-- [ ] **Step 3: 实现**（整个函数体在 `registry.withTeamLock` 内；`dryRun` 时 Run 只读出 `teams.run_id/coordinator_handle` 现状、调度员只读出 `dispatcherHealth`、任务只列出 `dead_assignee`）。第 6 步在 `dispatcherUp` 返回（已确认心跳）之后执行，执行前重新读取 `teams.coordinator_handle`（复审 M-4）。
-- [ ] **Step 4: 运行确认通过。**
-- [ ] **Step 5: 提交** — `git commit -m "feat(restore): orchestrate posts, run, dispatcher and tasks"`
+- [x] **Step 2: 运行确认失败。**
+- [x] **Step 3: 实现**（整个函数体在 `registry.withTeamLock` 内；`dryRun` 时 Run 只读出 `teams.run_id/coordinator_handle` 现状、调度员只读出 `dispatcherHealth`、任务只列出 `dead_assignee`）。第 6 步在 `dispatcherUp` 返回（已确认心跳）之后执行，执行前重新读取 `teams.coordinator_handle`（复审 M-4）。
+- [x] **Step 4: 运行确认通过。**
+- [x] **Step 5: 提交** — `git commit -m "feat(restore): orchestrate posts, run, dispatcher and tasks"`
 
 ---
 
@@ -386,7 +390,7 @@ test('exit code: all good 0, any ambiguous/uncertain 3, orca failure without unc
   - `WRITE_COMMANDS: readonly string[]` — CLI `Commands` 中属于写命令的字段名（`up`、`down`、`restore`、`send`、`createTask`、`claimTask`、`releaseTask`、`reassignTask`、`startTask`、`planTask`、`doneTask`、`escalateTask`、`resolveGate`、`recoverTask`、`dispatcherUp`、`dispatcherDown`、`freezePostCmd`、`unfreezePostCmd`、`hushCmd`、`unhushCmd`、`dispatcherReply`）
 - CLI：`Commands` 增加 `restore`、`log`（Task 10）；`realCommands = auditedCommands(rawCommands, AUDIT)`，`AUDIT` 定义在 `cli.ts` 旁的 `packages/cli/src/audit-table.ts`（新）。`restore` 的 `dryRun` 为真时不写审计。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```ts
 test('a wrapped command writes ok with actor, target and clipped summary', async () => {
@@ -401,10 +405,10 @@ test('every write command in Commands is in the audit table and no read command 
 test('restore --dry-run is not audited', async () => {})
 ```
 
-- [ ] **Step 2: 运行确认失败。**
-- [ ] **Step 3: 实现。** 团队名：地址参数取 `@` 之后；任务 id 参数经 `registry.getTaskExt(id)?.team`；`up` 成功时取结果里的 `team`，失败时为 `-`，不为审计单独加载规格；取不到写 `-`。执行者在命令执行**之后**解析（`resolveActor`），解析失败记 `unknown`，不重试，避免 Orca 不可达时每条命令多一次失败调用（复审 M-1）。
-- [ ] **Step 4: 运行确认通过** — `pnpm vitest run packages/core/test/audit.test.ts packages/cli/test`。
-- [ ] **Step 5: 提交** — `git commit -m "feat(audit): audited command wrapper"`
+- [x] **Step 2: 运行确认失败。**
+- [x] **Step 3: 实现。** 团队名：地址参数取 `@` 之后；任务 id 参数经 `registry.getTaskExt(id)?.team`；`up` 成功时取结果里的 `team`，失败时为 `-`，不为审计单独加载规格；取不到写 `-`。执行者在命令执行**之后**解析（`resolveActor`），解析失败记 `unknown`，不重试，避免 Orca 不可达时每条命令多一次失败调用（复审 M-1）。
+- [x] **Step 4: 运行确认通过** — `pnpm vitest run packages/core/test/audit.test.ts packages/cli/test`。
+- [x] **Step 5: 提交** — `git commit -m "feat(audit): audited command wrapper"`
 
 ---
 
@@ -427,7 +431,7 @@ test('restore --dry-run is not audited', async () => {})
 - 映射规则见 spec 第 7.1 节；排序键 `(at, sourceOrder, id)`，`sourceOrder`：task 0、patrol 1、command 2。
 - 每次 `readTimeline` 顺带 `pruneAudit(now - 30 天)`（失败只警告）。
 
-- [ ] **Step 1: 写失败测试**（`log.test.ts`）
+- [x] **Step 1: 写失败测试**（`log.test.ts`）
 
 ```ts
 test('merges the three sources by time and maps actor/target/action per spec', () => {
@@ -446,11 +450,11 @@ test('unknown team → team_unknown', () => {})
 
 CLI（`main.test.ts`）：`wl restore duo --json` 透传 `{ team, dryRun, noTasks, sessions }`（`--session builder=s1 --session checker=s2` → `{ builder: 's1', checker: 's2' }`；缺 `=` → 退出码 1）；`wl restore` 结果含 `ambiguous` 时退出码 3；`wl log duo` 每事件一行，形如 `10:00:01  命令  human  send  builder@duo  ok`，跨天插入日期行；`wl log duo --follow --json` 输出 NDJSON 并在 SIGINT 后退出码 0。
 
-- [ ] **Step 2: 运行确认失败。**
-- [ ] **Step 3: 实现** core 函数与 CLI：
+- [x] **Step 2: 运行确认失败。**
+- [x] **Step 3: 实现** core 函数与 CLI：
   - `program.command('restore <team>')`：`--dry-run`、`--no-tasks`、`--session <post=id>`（可重复）、`--json`；`exitOf = restoreExitCode`；`renderRestore` 按“岗位 → Run → 调度员 → 任务”分节，`fresh` 行带“上下文已丢失”，`ambiguous` 行列出候选与 `wl restore <team> --session <post>=<id>`。
   - `program.command('log <team>')`：`--task`、`--post`、`--since`、`--limit`、`--source`、`--follow`、`--json`；`--follow` 用 `AbortController` 接 SIGINT/SIGTERM。
   - README 增加“重启之后：`wl restore`”与“时间线：`wl log`”两节（中文），说明 `fresh` 意味着上下文丢失、`--dry-run` 的用法、旧岗位没有标记的情形、开机自动恢复留到后续（3D）。
   - `test/live/duo.live.test.ts` 增加一个默认跳过的用例（`WL_LIVE_RESTART=1` 时运行）：`wl up` → 提示人重启 Orca → `wl restore` → 断言 `terminal show` 的 `preview` 含重启前发送的标记文本。
-- [ ] **Step 4: 运行确认通过** — `pnpm test` 全仓库 PASS（沙箱里已知的两例僵尸进程失败除外）；`pnpm typecheck` 通过。
-- [ ] **Step 5: 提交** — `git commit -m "feat(cli): wl restore and wl log"`
+- [x] **Step 4: 运行确认通过** — `pnpm test` 全仓库 PASS（沙箱里已知的两例僵尸进程失败除外）；`pnpm typecheck` 通过。
+- [x] **Step 5: 提交** — `git commit -m "feat(cli): wl restore and wl log"`

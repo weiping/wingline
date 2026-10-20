@@ -10,6 +10,15 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-16-phase-3b-console-design.md`（下称 spec）；依赖 3A 的 plan 已完成（`auditedCommands`、`readTimeline`/`readTimelineAfter`、`TimelineEvent`、`audit_events`）。
 
+> **状态（2026-10-20）：已实现。** 合并于 PR #6（`bccd3db`），随后经 `docs/superpowers/reviews/2026-10-20-phase-3b-code-review.md` 复审并修复，合并于 PR #7（`0284a16`）。
+>
+> **实际提交与本计划 Step 5 的提交信息对照**（实现时把部分前端任务合并成两个提交，且按项目惯例未加署名尾注）：
+> - Task 9+10+11+12（前端）→ 实际为 `41f5ecb feat(web): console app with api client, layout and six pages`（四个前端任务合并为一个提交）；
+> - Task 13（e2e/CI/文档）→ 实际为 `37798b8 test(e2e): console smoke — login, answer a question, see the audit event` + `161fe5b docs: console section in README; ci e2e job; manual console live check`；
+> - 复审修复见 `docs/superpowers/plans/2026-10-20-phase-3b-review-fixes.md`。
+>
+> 复审另外修掉了 `main` 上既存的 Windows CI 红灯（`54aa5fc`、`254a90f`），不属于本计划的 Task 范围。
+
 ## Global Constraints
 
 - `wingline` 包的 `dependencies` 不变；前端依赖只进 `packages/web` 的依赖与开发依赖（`preact`；`vite`、`@preact/preset-vite`、`@testing-library/preact`、`jsdom`），Playwright 只进根目录开发依赖。
@@ -69,9 +78,9 @@
 
 > 需要真机上运行中的 Orca。沙箱里无法完成时写好脚本并报告 NEEDS_CONTEXT，由控制方交给人运行；Task 2–13 不依赖结论（Task 8 的 `openTab` 默认返回“不支持”）。
 
-- [ ] **Step 1: 写探针**：起一个 `node:http` 小服务（`/set` 写 cookie、`/check` 回显 cookie、`/events` 每秒推一条 SSE），用 `orca --help` 列出的标签页命令打开 `/set` → 跳 `/check` 页面（页面里用 `EventSource` 连 `/events`，收到 5 条后把结果 POST 回服务）；输出 `RESULT console-tab <成立|不成立> cookie=<ok|no> sse=<ok|no> command=<实际命令>`。
-- [ ] **Step 2: 真机运行并记录**到 `spikes/REPORT.md`“3B 探针：控制台标签页”一节；存回执。
-- [ ] **Step 3: 提交** — `git commit -m "spike: open a local console page in Orca's built-in browser"`
+- [x] **Step 1: 写探针**：起一个 `node:http` 小服务（`/set` 写 cookie、`/check` 回显 cookie、`/events` 每秒推一条 SSE），用 `orca --help` 列出的标签页命令打开 `/set` → 跳 `/check` 页面（页面里用 `EventSource` 连 `/events`，收到 5 条后把结果 POST 回服务）；输出 `RESULT console-tab <成立|不成立> cookie=<ok|no> sse=<ok|no> command=<实际命令>`。
+- [x] **Step 2: 真机运行并记录**到 `spikes/REPORT.md`“3B 探针：控制台标签页”一节；存回执。
+- [x] **Step 3: 提交** — `git commit -m "spike: open a local console page in Orca's built-in browser"`
 
 ---
 
@@ -88,7 +97,7 @@
   - 背景（复审 I-4）：`ps`、`attention`、`listTasks` 等 core 函数内部直接调用 `deps.orca`，所以缓存必须做成装饰器，由调用方以 `{ ...deps, orca: cachedOrca(deps.orca) }` 传入
   - `plainText(s: string): string` — 去掉 ANSI CSI/OSC 序列与除 `\n`、`\t` 外的控制字符
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```ts
 test('core queries run through the decorator share one Orca call per kind within ttl', async () => {
@@ -104,10 +113,10 @@ test('plainText strips colors, cursor moves and OSC titles but keeps newlines', 
 })
 ```
 
-- [ ] **Step 2: 运行确认失败** — `pnpm vitest run packages/core/test/view` → FAIL。
-- [ ] **Step 3: 实现。**
-- [ ] **Step 4: 运行确认通过。**
-- [ ] **Step 5: 提交** — `git commit -m "feat(view): shared Orca snapshot cache and plain text"`
+- [x] **Step 2: 运行确认失败** — `pnpm vitest run packages/core/test/view` → FAIL。
+- [x] **Step 3: 实现。**
+- [x] **Step 4: 运行确认通过。**
+- [x] **Step 5: 提交** — `git commit -m "feat(view): shared Orca snapshot cache and plain text"`
 
 ---
 
@@ -125,7 +134,7 @@ test('plainText strips colors, cursor moves and OSC titles but keeps newlines', 
   - `checkWrite(req: { method: string; headers: IncomingHttpHeaders }, port: number, s: { csrf: string } | null): 'ok' | 'unauthenticated' | 'forbidden'`
   - `safeEqual(a: string, b: string): boolean`（`crypto.timingSafeEqual`，长度不同直接 false）
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```ts
 test('a login token redeems once; the second use and an expired token fail', () => {})
@@ -148,10 +157,10 @@ test.each([
 test('write without a session is unauthenticated', () => {})
 ```
 
-- [ ] **Step 2: 运行确认失败。**
-- [ ] **Step 3: 实现**（token 只存 `sha256` 哈希）。
-- [ ] **Step 4: 运行确认通过。**
-- [ ] **Step 5: 提交** — `git commit -m "feat(server): login tokens, sessions and request checks"`
+- [x] **Step 2: 运行确认失败。**
+- [x] **Step 3: 实现**（token 只存 `sha256` 哈希）。
+- [x] **Step 4: 运行确认通过。**
+- [x] **Step 5: 提交** — `git commit -m "feat(server): login tokens, sessions and request checks"`
 
 ---
 
@@ -167,11 +176,11 @@ test('write without a session is unauthenticated', () => {})
   - `serveStatic(root: string, urlPath: string, res: ServerResponse): boolean` — 命中文件返回 true；`/assets/` 下（带哈希）的文件 `Cache-Control: public, max-age=31536000, immutable`，其余 `no-store`；规范化后不在 `root` 内 → 404；非 `/api`、`/_control`、`/auth` 且无扩展名的路径回退 `index.html`
   - `assertWebBuilt(root: string): void` — `index.html` 不存在时抛 `WinglineError('internal', 'web_missing', '控制台前端未构建', { hint: '运行 pnpm build' })`
 
-- [ ] **Step 1: 写失败测试**：`/` 与 `/t/duo/inbox` 都返回 `index.html`；`/assets/app-abc123.js` 带长期缓存头；`/../package.json` 与 `/%2e%2e/x` 返回 404；每个响应都带 `SECURITY_HEADERS`；`assertWebBuilt` 在空目录抛 `web_missing`。
-- [ ] **Step 2: 运行确认失败。**
-- [ ] **Step 3: 实现**（MIME 只需 `.html`、`.js`、`.css`、`.svg`、`.json`、`.woff2`）。
-- [ ] **Step 4: 运行确认通过。**
-- [ ] **Step 5: 提交** — `git commit -m "feat(server): static assets with security headers"`
+- [x] **Step 1: 写失败测试**：`/` 与 `/t/duo/inbox` 都返回 `index.html`；`/assets/app-abc123.js` 带长期缓存头；`/../package.json` 与 `/%2e%2e/x` 返回 404；每个响应都带 `SECURITY_HEADERS`；`assertWebBuilt` 在空目录抛 `web_missing`。
+- [x] **Step 2: 运行确认失败。**
+- [x] **Step 3: 实现**（MIME 只需 `.html`、`.js`、`.css`、`.svg`、`.json`、`.woff2`）。
+- [x] **Step 4: 运行确认通过。**
+- [x] **Step 5: 提交** — `git commit -m "feat(server): static assets with security headers"`
 
 ---
 
@@ -192,7 +201,7 @@ test('write without a session is unauthenticated', () => {})
   - 岗位与团队的返回结果只含会话 ID，不含会话标记（3A 第 4.3 节）
   - `interface PostDetail { address: string; row: PsRow; sessionId: string | null; currentTask: TaskRow | null; queued: TaskRow[]; signals: PatrolStateRow[]; frozen: FrozenRow | null; hushedUntil: string | null; events: TimelineEvent[]; preview: string[] }`
 
-- [ ] **Step 1: 写失败测试**（直接调用 `router.match(...).h(ctx)`，不起服务）
+- [x] **Step 1: 写失败测试**（直接调用 `router.match(...).h(ctx)`，不起服务）
 
 ```ts
 test('GET /api/teams lists every team with post summary, dispatcher state and attention counts', async () => {})
@@ -206,10 +215,10 @@ test('no response contains a session marker', async () => { /* 遍历 8 个 GET 
 test('statusOf maps input/orca/uncertain/internal to 400/502/504/500', () => {})
 ```
 
-- [ ] **Step 2: 运行确认失败。**
-- [ ] **Step 3: 实现。**
-- [ ] **Step 4: 运行确认通过。**
-- [ ] **Step 5: 提交** — `git commit -m "feat(server): router and read API"`
+- [x] **Step 2: 运行确认失败。**
+- [x] **Step 3: 实现。**
+- [x] **Step 4: 运行确认通过。**
+- [x] **Step 5: 提交** — `git commit -m "feat(server): router and read API"`
 
 ---
 
@@ -227,7 +236,7 @@ test('statusOf maps input/orca/uncertain/internal to 400/502/504/500', () => {})
   - `consoleCommands(deps: CommandDeps): WriteCommands` — 用 `auditedCommands(rawWrite, CONSOLE_AUDIT, { prefix: 'console:', actor: 'human' })` 生成
   - 不确定错误的响应体附 `retry`（CLI 提示）与 `retryRequest`（来自 `WinglineError` 的 `detail.retryRequest`，没有则省略）
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```ts
 test('POST send maps {post, message} to send({address, message}) and invalidates the snapshot', async () => {})
@@ -240,10 +249,10 @@ test('every write route is audited with console: prefix and actor human', async 
 test('an uncertain send returns 504 with retry and retryRequest', async () => {})
 ```
 
-- [ ] **Step 2: 运行确认失败。**
-- [ ] **Step 3: 实现。**
-- [ ] **Step 4: 运行确认通过。**
-- [ ] **Step 5: 提交** — `git commit -m "feat(server): write API through audited commands"`
+- [x] **Step 2: 运行确认失败。**
+- [x] **Step 3: 实现。**
+- [x] **Step 4: 运行确认通过。**
+- [x] **Step 5: 提交** — `git commit -m "feat(server): write API through audited commands"`
 
 ---
 
@@ -259,7 +268,7 @@ test('an uncertain send returns 504 with retry and retryRequest', async () => {}
   - `class TeamFeeds { constructor(deps: CommandDeps & { orca: CachedOrca }, o?: { timelineMs?: number; snapshotMs?: number; pingMs?: number; setTimer?: typeof setInterval; clearTimer?: typeof clearInterval }); subscribe(team: string, write: (chunk: string) => void, lastEventId?: string): () => void; closeAll(): void }` — 每个团队一个循环，订阅者为 0 时停止；`timeline` 事件 `id: <source>:<id>`、`event: timeline`、`data: <TimelineEvent JSON>`；`snapshot` 在 `ps`+`attention` 结果的 sha256 变化时推送 `{ team, posts, dispatcher, attentionCounts }`；心跳 `: ping\n\n`
   - `cursorFrom(lastEventId: string | undefined, start: LogCursor): LogCursor` — 只前移对应来源，其余取 `start`（连接建立时刻的游标）
 
-- [ ] **Step 1: 写失败测试**（注入假的定时器，手动触发 tick）
+- [x] **Step 1: 写失败测试**（注入假的定时器，手动触发 tick）
 
 ```ts
 test('first connection gets no history; new rows after it are pushed with source:id ids', () => {})
@@ -271,10 +280,10 @@ test('two subscribers on one team share one loop; the loop stops when both leave
 test('a failing read in a tick is logged and the next tick runs', () => {})
 ```
 
-- [ ] **Step 2: 运行确认失败。**
-- [ ] **Step 3: 实现。**
-- [ ] **Step 4: 运行确认通过。**
-- [ ] **Step 5: 提交** — `git commit -m "feat(server): per-team SSE feeds"`
+- [x] **Step 2: 运行确认失败。**
+- [x] **Step 3: 实现。**
+- [x] **Step 4: 运行确认通过。**
+- [x] **Step 5: 提交** — `git commit -m "feat(server): per-team SSE feeds"`
 
 ---
 
@@ -296,7 +305,7 @@ test('a failing read in a tick is logged and the next tick runs', () => {})
   - `/auth` 成功时返回 200 页面，内容含 `<meta http-equiv="refresh" content="0;url=/">`，不用 302（复审 I-3）
   - CLI：`wl console [--port <n>] [--open] [--worktree <选择器>] [--link] [--json]`，行为见 spec 第 4 节；`Commands` 增加 `console` 字段以便测试注入
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 `server.test.ts`（起真实服务于随机端口、FakeOrca 后端、`webRoot` 为临时目录里的最小 `index.html`）：
 
@@ -314,10 +323,10 @@ test('SSE endpoint streams a timeline event written after connecting', async () 
 
 `console.test.ts`（CLI，注入 `console` 命令）：已有存活服务时只打印新链接、退出码 0；`--link` 无服务 → 退出码 1、`console_not_running`；`--port` 被占用 → 退出码 1、`console_port_in_use`；`--open` 在 `openTab` 返回 `unsupported` 时打印链接、提示 `console_tab_unsupported`、退出码 0；新服务 10 秒内未就绪 → 退出码 3。
 
-- [ ] **Step 2: 运行确认失败。**
-- [ ] **Step 3: 实现**（服务的 `webRoot` 在 CLI 中为 `new URL('./web/', import.meta.url)` 对应的 `dist/web/`；启动前 `assertWebBuilt`；SIGINT/SIGTERM/SIGHUP → `close()` + `removeConsoleFileIfMine`）。
-- [ ] **Step 4: 运行确认通过。**
-- [ ] **Step 5: 提交** — `git commit -m "feat(console): wl console server, single instance and --open"`
+- [x] **Step 2: 运行确认失败。**
+- [x] **Step 3: 实现**（服务的 `webRoot` 在 CLI 中为 `new URL('./web/', import.meta.url)` 对应的 `dist/web/`；启动前 `assertWebBuilt`；SIGINT/SIGTERM/SIGHUP → `close()` + `removeConsoleFileIfMine`）。
+- [x] **Step 4: 运行确认通过。**
+- [x] **Step 5: 提交** — `git commit -m "feat(console): wl console server, single instance and --open"`
 
 ---
 
@@ -339,7 +348,7 @@ test('SSE endpoint streams a timeline event written after connecting', async () 
   - `<Layout>`：左侧团队切换器与 6 个入口、顶部连接状态与待办数角标；跟随 `prefers-color-scheme`
   - 共享类型：从 `@wingline/core` 以 `import type` 引入 `TimelineEvent`、`AttentionReport`、`PsRow`、`TaskRow`、`PostDetail`（仅类型，不进运行时包）
 
-- [ ] **Step 1: 写失败测试**（jsdom，文件首行 `// @vitest-environment jsdom`）
+- [x] **Step 1: 写失败测试**（jsdom，文件首行 `// @vitest-environment jsdom`）
 
 ```tsx
 test('api.post sends X-Wingline-Token from /api/session and JSON content type', async () => {})
@@ -349,10 +358,10 @@ test('Layout shows reconnecting when the stream reports it', () => {})
 test('the built index.html has no inline style or script attributes', () => { /* 读 packages/cli/dist/web/index.html（构建后）断言不含 'style=' 与 '<script>' 内联代码 */ })
 ```
 
-- [ ] **Step 2: 运行确认失败。**
-- [ ] **Step 3: 实现** 工程与上述模块；`pnpm install` 更新锁文件。样式只用 class 与对象形式的 `style`（Preact 经 `el.style` 设置，不受 CSP 的 `style-src 'self'` 限制），不写字符串形式的 `style="…"`（复审 M-5）。
-- [ ] **Step 4: 运行确认通过** — `pnpm vitest run packages/web`；`pnpm build` 后 `packages/cli/dist/web/index.html` 存在。
-- [ ] **Step 5: 提交** — `git commit -m "feat(web): console app scaffold, api client and layout"`
+- [x] **Step 2: 运行确认失败。**
+- [x] **Step 3: 实现** 工程与上述模块；`pnpm install` 更新锁文件。样式只用 class 与对象形式的 `style`（Preact 经 `el.style` 设置，不受 CSP 的 `style-src 'self'` 限制），不写字符串形式的 `style="…"`（复审 M-5）。
+- [x] **Step 4: 运行确认通过** — `pnpm vitest run packages/web`；`pnpm build` 后 `packages/cli/dist/web/index.html` 存在。
+- [x] **Step 5: 提交** — `git commit -m "feat(web): console app scaffold, api client and layout"`
 
 ---
 
@@ -366,11 +375,11 @@ test('the built index.html has no inline style or script attributes', () => { /*
 - Consumes: `api`、`useEventStream`、`ActionDialog`（Task 9）；`GET /api/teams/:team`、`/log`
 - Produces: 页面组件 `Overview({ team })`、`Timeline({ team })`；`EventRow` 供岗位详情复用
 
-- [ ] **Step 1: 写失败测试**：总览渲染调度员状态卡、每个岗位一张卡（冻结 / 静音 / 信号标记）、最近 20 条时间线；SSE 推来的 `snapshot` 更新岗位卡状态；“发消息”打开对话框并 POST `/send`。时间线新事件在顶部、筛选来源 / 岗位 / 任务、展开显示 `detail`、点击任务跳到任务详情；断线后显示“重连中”，`closed` 时显示“会话已过期，请运行 wl console --link 获取新链接”。
-- [ ] **Step 2: 运行确认失败。**
-- [ ] **Step 3: 实现。**
-- [ ] **Step 4: 运行确认通过。**
-- [ ] **Step 5: 提交** — `git commit -m "feat(web): overview and timeline pages"`
+- [x] **Step 1: 写失败测试**：总览渲染调度员状态卡、每个岗位一张卡（冻结 / 静音 / 信号标记）、最近 20 条时间线；SSE 推来的 `snapshot` 更新岗位卡状态；“发消息”打开对话框并 POST `/send`。时间线新事件在顶部、筛选来源 / 岗位 / 任务、展开显示 `detail`、点击任务跳到任务详情；断线后显示“重连中”，`closed` 时显示“会话已过期，请运行 wl console --link 获取新链接”。
+- [x] **Step 2: 运行确认失败。**
+- [x] **Step 3: 实现。**
+- [x] **Step 4: 运行确认通过。**
+- [x] **Step 5: 提交** — `git commit -m "feat(web): overview and timeline pages"`
 
 ---
 
@@ -385,11 +394,11 @@ test('the built index.html has no inline style or script attributes', () => { /*
 - Produces: `Inbox({ team })`、`PostDetail({ team, post })`；`CommandHint({ command })`（可复制的命令）
 - 收件箱条目 → 操作的映射：提问 → `reply`（必填回答）；gate → `resolve`（必填说明，可选改派）；`dead_assignee` → `recover`；冻结 → `unfreeze`；巡查信号 → `hush`（可选时长）/ `send`；其余条目只显示 `CommandHint`。
 
-- [ ] **Step 1: 写失败测试**：每类条目渲染出对应按钮，提交时 POST 到正确路径与请求体；`done_unfinished` 等无写接口的条目只显示命令；调度员失联一节在最前；岗位详情显示会话 ID（不显示会话标记）、排队任务、信号等级、40 行预览（预览中的 `<script>` 文本按字面显示，不生成元素）。
-- [ ] **Step 2: 运行确认失败。**
-- [ ] **Step 3: 实现。**
-- [ ] **Step 4: 运行确认通过。**
-- [ ] **Step 5: 提交** — `git commit -m "feat(web): inbox and post detail pages"`
+- [x] **Step 1: 写失败测试**：每类条目渲染出对应按钮，提交时 POST 到正确路径与请求体；`done_unfinished` 等无写接口的条目只显示命令；调度员失联一节在最前；岗位详情显示会话 ID（不显示会话标记）、排队任务、信号等级、40 行预览（预览中的 `<script>` 文本按字面显示，不生成元素）。
+- [x] **Step 2: 运行确认失败。**
+- [x] **Step 3: 实现。**
+- [x] **Step 4: 运行确认通过。**
+- [x] **Step 5: 提交** — `git commit -m "feat(web): inbox and post detail pages"`
 
 ---
 
@@ -403,11 +412,11 @@ test('the built index.html has no inline style or script attributes', () => { /*
 - Consumes: `GET /api/teams/:team/tasks`、`/tasks/:id`；`POST /tasks`、`/escalate`、`/reassign`、`/recover`、`/gates/:gateId/resolve`
 - Produces: `TaskBoard({ team })`、`TaskDetail({ team, id })`
 
-- [ ] **Step 1: 写失败测试**：五列按状态分组；卡片显示主人、标签、第几轮、卡住原因角标；按标签 / 主人 / 只看卡住的筛选；“新建任务”可选岗位并 POST；任务详情显示计划、父子链、闸门失败次数、gate 输出路径、历史，并按状态只显示可用的按钮（`blocked` 有 resolve，`dispatched` 且主人终端失效有 recover，未终态有转人工与改派）。
-- [ ] **Step 2: 运行确认失败。**
-- [ ] **Step 3: 实现。**
-- [ ] **Step 4: 运行确认通过。**
-- [ ] **Step 5: 提交** — `git commit -m "feat(web): task board and task detail pages"`
+- [x] **Step 1: 写失败测试**：五列按状态分组；卡片显示主人、标签、第几轮、卡住原因角标；按标签 / 主人 / 只看卡住的筛选；“新建任务”可选岗位并 POST；任务详情显示计划、父子链、闸门失败次数、gate 输出路径、历史，并按状态只显示可用的按钮（`blocked` 有 resolve，`dispatched` 且主人终端失效有 recover，未终态有转人工与改派）。
+- [x] **Step 2: 运行确认失败。**
+- [x] **Step 3: 实现。**
+- [x] **Step 4: 运行确认通过。**
+- [x] **Step 5: 提交** — `git commit -m "feat(web): task board and task detail pages"`
 
 ---
 
@@ -420,9 +429,9 @@ test('the built index.html has no inline style or script attributes', () => { /*
 **Interfaces:**
 - Consumes: `createConsoleServer`（Task 8）、FakeOrca 与 `seedRunningTeam`
 
-- [ ] **Step 1: 写冒烟用例**：`server-fixture.ts` 用 FakeOrca 与临时 `WINGLINE_HOME` 起服务、写入一个待回答的提问；Playwright 打开登录链接 → 进入收件箱 → 回答提问 → 打开时间线页，断言出现 `console:dispatcher reply` 的命令事件。
-- [ ] **Step 2: 运行** — `pnpm build && pnpm test:e2e`（使用预装的 Chromium，`PLAYWRIGHT_BROWSERS_PATH` 已配置）→ PASS。
-- [ ] **Step 3: CI**：新增 job `e2e`（仅 `ubuntu-latest`、Node 24）：`pnpm install --frozen-lockfile` → `pnpm exec playwright install --with-deps chromium` → `pnpm build` → `pnpm test:e2e`。
-- [ ] **Step 4: 文档与真机用例**：README 增加“控制台：`wl console`”一节（中文；说明登录链接等同凭据、5 分钟内有效且只能用一次、`--link`、`--open` 的 worktree 规则与退路、只服务本机）；`test/live/duo.live.test.ts` 增加默认跳过、需人工确认的 `wl console --open` 用例。
-- [ ] **Step 5: 全量验证** — `pnpm typecheck && pnpm test`（已知的两例沙箱僵尸进程失败除外）→ PASS。
-- [ ] **Step 6: 提交** — `git commit -m "test(e2e): console smoke; ci job; docs"`
+- [x] **Step 1: 写冒烟用例**：`server-fixture.ts` 用 FakeOrca 与临时 `WINGLINE_HOME` 起服务、写入一个待回答的提问；Playwright 打开登录链接 → 进入收件箱 → 回答提问 → 打开时间线页，断言出现 `console:dispatcher reply` 的命令事件。
+- [x] **Step 2: 运行** — `pnpm build && pnpm test:e2e`（使用预装的 Chromium，`PLAYWRIGHT_BROWSERS_PATH` 已配置）→ PASS。
+- [x] **Step 3: CI**：新增 job `e2e`（仅 `ubuntu-latest`、Node 24）：`pnpm install --frozen-lockfile` → `pnpm exec playwright install --with-deps chromium` → `pnpm build` → `pnpm test:e2e`。
+- [x] **Step 4: 文档与真机用例**：README 增加“控制台：`wl console`”一节（中文；说明登录链接等同凭据、5 分钟内有效且只能用一次、`--link`、`--open` 的 worktree 规则与退路、只服务本机）；`test/live/duo.live.test.ts` 增加默认跳过、需人工确认的 `wl console --open` 用例。
+- [x] **Step 5: 全量验证** — `pnpm typecheck && pnpm test`（已知的两例沙箱僵尸进程失败除外）→ PASS。
+- [x] **Step 6: 提交** — `git commit -m "test(e2e): console smoke; ci job; docs"`

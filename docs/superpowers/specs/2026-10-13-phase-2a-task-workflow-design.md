@@ -1,7 +1,7 @@
 # 雁阵 Wingline 阶段 2A：任务工作流设计
 
 - 日期：2026-10-13（第五次修订 2026-10-15）
-- 状态：设计中（未实现）
+- 状态：**已实现**（2026-10-13 合并 PR #1；实现期经四轮复审修复，改动见 `docs/superpowers/plans/2026-10-13-phase-2a-task-workflow.md` 与 `docs/superpowers/reviews/2026-10-15-phase-2-review.md`）
 - 范围：阶段 2（团队工作流）拆分出的子项目 A —— 任务状态机、`team.yaml` 的 `links`/`gates`/`budgets`/`posts[].self_claim|tags|plan_first`、`wl task` 命令族、编排写调用的幂等账本、派发通知与"打字前画面检查"、任务本地变迁记录。
 - 不含：调度员进程、巡查与熔断、基于 token 的预算（这些是阶段 2B，另开独立 spec 和 plan）。
 - 承接：`docs/superpowers/specs/2026-10-10-wingline-design.md`（下称总纲）第 4、5.1 节划定的边界；依赖阶段 0+1 已实现的 `wl up/ps/send/down`、`Registry`、`loadTeamSpec`、`locatePost`。
