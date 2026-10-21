@@ -120,6 +120,8 @@ budgets:                    # 可选
 | --- | --- | --- |
 | `wl up` | `teams.run_id` 为空 | `run-create --from <lead handle>`（5.1），或采用 run-list 找到的唯一 Run 后按下一行处理 |
 | `wl up` | `teams.run_id` 已存在，且**当前 `teams.coordinator_handle` 不在 `terminal list` 的存活终端里** | `run-use --id <run_id> --from <lead handle>`，写回 `teams.coordinator_handle` |
+| `wl up --adopt-run <id>` | 用户显式指定一个已有 Run | 与"采用 run-list 找到的唯一 Run"同一条规则：该 Run 当前的协调者终端还活着就保持不动（不 `run-use`）；死了才 `run-use --from <lead handle>` |
+| `wl up --new-run` | 用户显式要求新建 | 清掉旧 Run 后 `run-create --from <lead handle>`，协调者成为 lead（旧 Run 的协调者不再相关） |
 | 调度员（2B） | 每次启动；以及循环里任何一次编排调用报 `consumer_fenced` | `run-use --id <run_id> --from <调度员自己的 handle>`，写回 `teams.coordinator_handle` |
 
 - `wl up` **绝不把协调者身份从一个存活的终端上拿走**（调度员在跑时它的终端是活的）。
@@ -263,7 +265,7 @@ ready + claimed_by=X                                  │
           ▼                                       │ wl task resolve（或在 Orca 界面里 resolve）
       completed                                   ▼
                                                 ready（claimed_by=原主人或 --reassign 的目标）
-     wl task escalate（任意未终态时刻）：dispatched/ready → blocked（正在进行的 dispatch 被结束）
+     wl task escalate（任意未终态时刻）：dispatched/ready → blocked（正在进行的 dispatch 被结束）；终态任务需 --reopen（第 10 节）
 ```
 
 - 每个岗位终端同时最多一个 `dispatched` 任务（事实 11）；`claimed_by` 可以有多个 `ready` 任务排队。
@@ -477,7 +479,7 @@ ready + claimed_by=X                                  │
 - 不做巡查信号；`escalated` 只是达到 `max_gate_failures` 后的被动结果。
 - 不统计 token；`max_minutes` 只记录，不在 2A 判定。
 - `consults` 只做记录。
-- 不改变 `wl ps` 的输出。
+- 不改变 `wl ps` 的输出——**有一处有意偏离**：WORKTREE 列显示 `wl up` 时刻固定下来的 `path:/绝对路径`，而不是 `current`（gate 目录必须固定在 `wl up` 时刻，见发布说明 F-4）。
 - `resolve` 之后不自动派发；没有"放弃"状态（不 resolve 即停在 `blocked`）。
 - 评审结论（通过/打回）不在本阶段建模：评审任务 `done` 就是评审做完了。接收方拒收、依赖阻塞自动解除、转手次数上限推迟到阶段 4。
 - 不清理账本行与 `task_log`（第 6 节保留约定）。

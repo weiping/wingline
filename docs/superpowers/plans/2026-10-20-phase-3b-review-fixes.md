@@ -281,4 +281,4 @@ test('timeline tick 内单次读取失败只 warn，下一次 tick 照常运行'
 - [x] **Step 1:** `pnpm typecheck && pnpm vitest run`（全仓单测）→ PASS（已知的两例沙箱僵尸进程失败若复现，按既有记录说明，不算本次回归）。
 - [x] **Step 2:** e2e 本机不跑（Chromium 未安装，环境问题；CI e2e job 覆盖），在交付说明里如实注明。
 - [x] **Step 3:** `git log --oneline main..fix/phase-3b-review` 核对提交序列与报告条目的对应（C-1→Task 1、I-2→Task 1、I-3→Task 1、I-4→Task 3、I-5→Task 4、I-6→Task 5、I-7→Task 1/5/6、I-8→Task 1/5/7、I-9→Task 2、M-12/M-18→Task 5、M-13/M-14→Task 6）。
-- [x] **Step 4:** 停在本地分支，向用户汇报并询问是否 push / 开 PR。
+- [x] **Step 4:** 停在本地分支，向用户汇报并询问是否 push / 开 PR。（实际：用户批准后已推送并合并为 PR #7）

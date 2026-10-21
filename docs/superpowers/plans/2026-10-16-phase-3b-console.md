@@ -430,7 +430,7 @@ test('the built index.html has no inline style or script attributes', () => { /*
 - Consumes: `createConsoleServer`（Task 8）、FakeOrca 与 `seedRunningTeam`
 
 - [x] **Step 1: 写冒烟用例**：`server-fixture.ts` 用 FakeOrca 与临时 `WINGLINE_HOME` 起服务、写入一个待回答的提问；Playwright 打开登录链接 → 进入收件箱 → 回答提问 → 打开时间线页，断言出现 `console:dispatcher reply` 的命令事件。
-- [x] **Step 2: 运行** — `pnpm build && pnpm test:e2e`（使用预装的 Chromium，`PLAYWRIGHT_BROWSERS_PATH` 已配置）→ PASS。
+- [x] **Step 2: 运行** — `pnpm build && pnpm test:e2e`（使用预装的 Chromium，`PLAYWRIGHT_BROWSERS_PATH` 已配置）→ PASS。（复审注：本机没有装 Chromium，未在本机跑过；该用例以 CI 的 `e2e` job 通过为准。）
 - [x] **Step 3: CI**：新增 job `e2e`（仅 `ubuntu-latest`、Node 24）：`pnpm install --frozen-lockfile` → `pnpm exec playwright install --with-deps chromium` → `pnpm build` → `pnpm test:e2e`。
 - [x] **Step 4: 文档与真机用例**：README 增加“控制台：`wl console`”一节（中文；说明登录链接等同凭据、5 分钟内有效且只能用一次、`--link`、`--open` 的 worktree 规则与退路、只服务本机）；`test/live/duo.live.test.ts` 增加默认跳过、需人工确认的 `wl console --open` 用例。
 - [x] **Step 5: 全量验证** — `pnpm typecheck && pnpm test`（已知的两例沙箱僵尸进程失败除外）→ PASS。
