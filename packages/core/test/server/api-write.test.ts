@@ -397,3 +397,33 @@ test('retryRequest 下传契约：仅 send、createTask、escalateTask 下传，
   expect(calls.unhushCmd!.at(-1)?.retryRequest).toBeUndefined()
   expect(calls.dispatcherReply!.at(-1)?.retryRequest).toBeUndefined()
 })
+
+function routeHarness(pattern: string) {
+  const o = new FakeOrca()
+  const { deps } = seedRunningTeam(o)
+  deps.registry.insertTaskExt({ taskId: 'task-1', team: 'duo', tags: [], kind: 'work' })
+  deps.registry.recordGate('gate-1', 'duo', 'task-1')
+  const d = { ...deps, orca: cachedOrca(o) }
+  const { cmds, calls } = makeRecordingCmds()
+  const r = new Router()
+  registerWriteRoutes(r, cmds)
+  const sample = sampleRequest(pattern)
+  const route = r.match('POST', sample.path)!
+  const call = (retryRequest: unknown) => route.h({ deps: d, params: route.params, query: new URLSearchParams(), body: { ...sample.body, retryRequest } })
+  const total = () => Object.values(calls).reduce((n, a) => n + (a?.length ?? 0), 0)
+  return { call, total }
+}
+
+test.each(WRITE_ROUTES)('$pattern rejects a malformed retryRequest before calling the command', async (spec) => {
+  const h = routeHarness(spec.pattern)
+  for (const bad of [123, {}, '', 'a b', 'x'.repeat(129)]) {
+    await expect(h.call(bad)).rejects.toMatchObject({ code: 'invalid_param' })
+  }
+  expect(h.total()).toBe(0)
+})
+
+test('a UUID and an Orca-style id are accepted as retryRequest', async () => {
+  const h = routeHarness('/api/teams/:team/send')
+  await expect(h.call('6f1c2a9e-3b4d-4e5f-8a7b-0c1d2e3f4a5b')).resolves.toBeDefined()
+  await expect(h.call('req-1')).resolves.toBeDefined()
+})

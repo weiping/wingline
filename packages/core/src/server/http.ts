@@ -10,6 +10,8 @@ export const PARAM_RULES: Record<string, RegExp> = {
   id: /^[A-Za-z0-9_-]{1,80}$/,
   gateId: /^[A-Za-z0-9_-]{1,80}$/,
   messageId: /^[A-Za-z0-9_-]{1,80}$/,
+  /** 重试 id：UUID 或 Orca 的 req-1 形式；只在请求体里出现。 */
+  retryRequest: /^[A-Za-z0-9._:-]{1,128}$/,
 }
 
 export function checkParam(key: string, val: unknown): void {
