@@ -25,8 +25,10 @@ const FAILURES_BEFORE_SESSION_CHECK = 3
 /**
  * 订阅团队事件流。EventSource 出错后关闭并 5 秒后重建；连续失败 3 次先查会话，401 则停止（closed）。
  */
-export function useEventStream(team: string, on: Handlers): StreamState {
+export function useEventStream(team: string, on: Handlers): { state: StreamState; connection: number } {
   const [state, setState] = useState<StreamState>('reconnecting')
+  // 每次连上加 1：第二次起就是断线重连，页面据此重取数据补上断线期间的事件
+  const [connection, setConnection] = useState(0)
   const handlers = useRef(on)
   handlers.current = on
   useEffect(() => {
@@ -43,6 +45,7 @@ export function useEventStream(team: string, on: Handlers): StreamState {
       source = new EventSource(`/api/teams/${encodeURIComponent(team)}/events`)
       source.onopen = () => {
         failures = 0
+        setConnection((c) => c + 1)
         setState('live')
       }
       source.addEventListener('timeline', (ev) => handlers.current.timeline(JSON.parse((ev as MessageEvent<string>).data) as TimelineEvent))
@@ -74,12 +77,14 @@ export function useEventStream(team: string, on: Handlers): StreamState {
       source?.close()
     }
   }, [team])
-  return state
+  return { state, connection }
 }
 
 export type Listener = Partial<Handlers>
 interface StreamValue {
   state: StreamState
+  /** 连上的次数；大于 1 说明发生过重连。 */
+  connection: number
   snapshot: TeamSnapshot | null
   listen: (l: Listener) => () => void
 }
@@ -89,7 +94,7 @@ const StreamContext = createContext<StreamValue | null>(null)
 export function StreamProvider({ team, children }: { team: string; children: ComponentChildren }) {
   const listeners = useRef(new Set<Listener>())
   const [snapshot, setSnapshot] = useState<TeamSnapshot | null>(null)
-  const state = useEventStream(team, {
+  const { state, connection } = useEventStream(team, {
     timeline: (e) => {
       for (const l of listeners.current) l.timeline?.(e)
     },
@@ -105,7 +110,7 @@ export function StreamProvider({ team, children }: { team: string; children: Com
       listeners.current.delete(l)
     }
   }, [])
-  const value: StreamValue = { state, snapshot, listen }
+  const value: StreamValue = { state, connection, snapshot, listen }
   return <StreamContext.Provider value={value}>{children}</StreamContext.Provider>
 }
 

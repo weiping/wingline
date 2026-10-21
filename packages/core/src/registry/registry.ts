@@ -749,15 +749,24 @@ export class Registry {
     return Number(r.changes) > 0
   }
 
-  listPatrolEvents(team: string, o: { afterId?: number; since?: string; limit?: number } = {}): Array<PatrolEvent & { id: number; at: string }> {
+  /**
+   * 时间线三表共用的分页，返回 id 升序。不给 afterId：取最新 limit 条；给了 afterId（含 0）：取游标之后最早的 limit 条，
+   * 这样游标落后超过 limit 行时也只是分批追上，不会跳行。
+   */
+  private pageRows(table: 'patrol_events' | 'audit_events' | 'task_log', team: string, o: { afterId?: number; since?: string; limit?: number }): Row[] {
+    const forward = o.afterId !== undefined
     const rows = this.db
-      .prepare('SELECT * FROM patrol_events WHERE team = ? AND at >= ? AND id > ? ORDER BY id DESC LIMIT ?')
+      .prepare(`SELECT * FROM ${table} WHERE team = ? AND at >= ? AND id > ? ORDER BY id ${forward ? 'ASC' : 'DESC'} LIMIT ?`)
       .all(team, o.since ?? '', o.afterId ?? 0, o.limit ?? 1000) as Row[]
-    return rows.reverse().map(eventRow)
+    return forward ? rows : rows.reverse()
+  }
+
+  listPatrolEvents(team: string, o: { afterId?: number; since?: string; limit?: number } = {}): Array<PatrolEvent & { id: number; at: string }> {
+    return this.pageRows('patrol_events', team, o).map(eventRow)
   }
 
   // —— 阶段 3A：审计事件、团队任务日志、时间线游标 ——
-  // 三者共用同一套分页语义：id 升序；带 limit 时取最新 limit 条（仍升序）；afterId 向前翻页。
+  // 三者共用 pageRows 的分页语义：id 升序；不带 afterId 取最新 limit 条；带 afterId 取游标之后最早的 limit 条。
 
   appendAudit(r: Omit<AuditRow, 'id' | 'at' | 'detail'> & { at?: string; detail?: unknown }): void {
     const detail = r.detail === undefined || r.detail === null ? null : typeof r.detail === 'string' ? r.detail : JSON.stringify(r.detail)
@@ -767,10 +776,7 @@ export class Registry {
   }
 
   listAudit(team: string, o: { afterId?: number; since?: string; limit?: number } = {}): AuditRow[] {
-    const rows = this.db
-      .prepare('SELECT * FROM audit_events WHERE team = ? AND at >= ? AND id > ? ORDER BY id DESC LIMIT ?')
-      .all(team, o.since ?? '', o.afterId ?? 0, o.limit ?? 1000) as Row[]
-    return rows.reverse().map(auditRow)
+    return this.pageRows('audit_events', team, o).map(auditRow)
   }
 
   /** 删除 before 之前的审计行；给 team 时只清该团队（wl log / 调度员循环都按团队触发）。 */
@@ -782,10 +788,7 @@ export class Registry {
   }
 
   listTeamTaskLog(team: string, o: { afterId?: number; since?: string; limit?: number } = {}): TaskLogRow[] {
-    const rows = this.db
-      .prepare('SELECT * FROM task_log WHERE team = ? AND at >= ? AND id > ? ORDER BY id DESC LIMIT ?')
-      .all(team, o.since ?? '', o.afterId ?? 0, o.limit ?? 1000) as Row[]
-    return rows.reverse().map(logRow)
+    return this.pageRows('task_log', team, o).map(logRow)
   }
 
   /** team 是否写过 actions 之一的事件。 */
