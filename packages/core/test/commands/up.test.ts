@@ -348,6 +348,23 @@ test('run-create rejected by Orca → run failed (exit-2 kind), ledger row dropp
   expect(registry.getRequest('duo:run-create')).toBeNull()
   expect(registry.getTeam('duo')!.runId).toBeNull()
 })
+test('--adopt-run keeps a live coordinator: no run-use, coordinator unchanged', async () => {
+  const o = new FakeOrca(); const { deps, registry } = mkDeps(o)
+  o.terminals.push({ handle: 'term-dsp', title: 'dispatcher@duo', connected: true, worktreeId: 'w' })
+  o.runs.push({ id: 'run-9', objective: 'wingline:duo', coordinatorHandle: 'term-dsp', createdAt: 'T' })
+  const r = await up(deps, { specPath: duo(), adoptRun: 'run-9' })
+  expect(r.run).toEqual({ outcome: 'adopted', runId: 'run-9' })
+  expect(o.callsOf('runUse')).toEqual([])
+  expect(registry.getTeam('duo')).toMatchObject({ runId: 'run-9', coordinatorHandle: 'term-dsp' })
+})
+test('--adopt-run with a dead coordinator still reclaims for the lead', async () => {
+  const o = new FakeOrca(); const { deps, registry } = mkDeps(o)
+  o.runs.push({ id: 'run-9', objective: 'wingline:duo', coordinatorHandle: 'gone', createdAt: 'T' })
+  const r = await up(deps, { specPath: duo(), adoptRun: 'run-9' })
+  expect(r.run).toEqual({ outcome: 'adopted', runId: 'run-9' })
+  expect(o.callsOf('runUse')).toEqual([{ id: 'run-9', from: 'term-1' }])
+  expect(registry.getTeam('duo')!.coordinatorHandle).toBe('term-1')
+})
 test('--adopt-run with an id Orca does not know → failed, nothing written', async () => {
   const o = new FakeOrca(); const { deps, registry } = mkDeps(o)
   const r = await up(deps, { specPath: duo(), adoptRun: 'run-ghost' })

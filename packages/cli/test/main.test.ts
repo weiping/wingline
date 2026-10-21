@@ -597,6 +597,21 @@ test('wl log prints one line per event and a date row when the day changes', asy
   expect(lines[2]).toBe(`${hhmm('2026-10-17T09:00:00Z')}  任务  builder@duo  done  task-1#2`)
 })
 
+test.each([['--limit', 'abc'], ['--limit', '0'], ['--limit', '1.5'], ['--source', 'bogus']])('wl log %s %s is an input error (exit 1) and reads nothing', async (flag, value) => {
+  let called = false
+  const r = await exec(['log', 'duo', flag, value], cmds({ log: async () => { called = true; return { events: [], cursor: { task: 0, patrol: 0, command: 0 } } } }))
+  expect(r.code).toBe(1)
+  expect(called).toBe(false)
+  expect(r.err).toContain(flag)
+})
+
+test('wl log accepts a positive integer --limit and a known --source', async () => {
+  let seen: unknown
+  const r = await exec(['log', 'duo', '--limit', '5', '--source', 'patrol'], cmds({ log: async (_d, a) => { seen = a; return { events: [], cursor: { task: 0, patrol: 0, command: 0 } } } }))
+  expect(r.code).toBe(0)
+  expect(seen).toMatchObject({ limit: 5, source: 'patrol' })
+})
+
 test('wl log --follow --json streams NDJSON, exits 0 on SIGINT and drops its listeners', async () => {
   const before = process.listenerCount('SIGINT')
   const mk = () => ({ registry: { close() {} } }) as unknown as CommandDeps

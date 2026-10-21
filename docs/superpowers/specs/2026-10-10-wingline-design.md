@@ -75,15 +75,19 @@ Orca 擅长把多个 coding agent 放进各自的 worktree 并行运行，并用
 ```yaml
 links:            # 阶段 2：reviewed_by | hands_to | consults
 gates:            # 阶段 2：任务完成后执行的检查命令
-budgets:          # 阶段 2：团队与任务两级上限
+budgets:          # 阶段 2：团队与任务两级上限（实际只保留任务级，见 2A spec §4）
 posts[].self_claim / posts[].tags / posts[].plan_first   # 阶段 2
 ```
 
 ### 5.2 调度员（阶段 2）
 
+> 以 2B spec 为准：命令是 `wl dispatcher run <team>`；闸门、`worker-retain`、连接触发由 `wl task done` 执行，调度员只做收件箱、转述与巡查。
+
 每个团队一个专用 Orca 终端 `dispatcher@<team>`，运行 `wl dispatcher <team>`。循环：`check --wait` 取收件箱 → 处理 `worker_done`（核对、闸门、`worker-retain`、按连接触发后续任务、摘要转牵头岗）、`question`、`escalation` → `check --ack` → 每 5 分钟扫超时、预算、熔断信号，刷新 `worktree set --comment`。岗位终端永不 release。
 
 ### 5.3 巡查与熔断（阶段 2）
+
+> 以 2B spec 为准：信号集合与处理梯度见 2B spec §5；“陪护”诊断岗未实现。
 
 四种信号（阈值可配置）：无进展（默认 20 分钟无输出和状态变化）、原地打转（同一命令连续 3 次且结果相同）、消耗过快（可取得 token 用量的岗位，每分钟消耗超过近 7 天均值 3 倍）、闸门连败（3 次）。三级处理：提示岗位 → 通知牵头岗并进收件箱 → 冻结（停派新活）。不杀进程。冻结时可选“陪护”：派诊断岗读会话记录、写出原因和建议。
 

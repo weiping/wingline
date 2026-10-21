@@ -58,6 +58,25 @@ test('timeline shows newest first and appends live events that pass the filter',
   expect(getByText('巡查', { selector: '.tag' })).toBeTruthy()
 })
 
+test('after the stream drops and reconnects the timeline refetches the log, so events from the gap appear', async () => {
+  stubEventSource()
+  let n = 0
+  const calls = mockApi({
+    'GET /api/session': () => ({ csrfToken: 'tok', version: '1', teams: ['duo'] }),
+    'GET /api/teams/duo/log?limit=200': () => ({ events: ++n === 1 ? [] : [eventOf({ id: 'command:5', action: 'gap-event' })] }),
+  })
+  const { findByText } = render(withStream('duo', <Timeline team="duo" />))
+  await findByText('暂无事件。')
+  act(() => FakeEventSource.instances[0]!.open())
+  vi.useFakeTimers({ toFake: ['setTimeout'] })
+  act(() => FakeEventSource.instances[0]!.fail())
+  act(() => { vi.advanceTimersByTime(5_000) })
+  vi.useRealTimers()
+  act(() => FakeEventSource.instances[1]!.open())
+  expect(await findByText('gap-event')).toBeTruthy()
+  expect(calls.filter((c) => c.path === '/api/teams/duo/log?limit=200')).toHaveLength(2)
+})
+
 test('timeline source filter refetches with source=task', async () => {
   stubEventSource()
   const calls = mockApi({

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'preact/hooks'
 import type { TimelineEvent } from '@wingline/core'
 import { useApi } from '../hooks.js'
-import { useStreamListener } from '../stream.js'
+import { useStream, useStreamListener } from '../stream.js'
 import { EventRow } from '../components/EventRow.js'
 import { ActionDialog } from '../components/ActionDialog.js'
 import { ErrorBox, Loading, SOURCE_LABEL } from '../components/common.js'
@@ -22,6 +22,14 @@ export function Timeline({ team }: { team: string }) {
   const log = useApi<{ events: TimelineEvent[] }>(path)
   const [live, setLive] = useState<TimelineEvent[]>([])
   useEffect(() => setLive([]), [path])
+  // 断线重连后重取日志：断线期间的事件不会经 SSE 补发给页面，重取的结果已包含它们
+  const { connection } = useStream()
+  useEffect(() => {
+    if (connection > 1) {
+      log.reload()
+      setLive([])
+    }
+  }, [connection])
 
   const matches = (e: TimelineEvent): boolean =>
     (!source || e.source === source) &&

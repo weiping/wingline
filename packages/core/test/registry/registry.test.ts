@@ -416,6 +416,17 @@ test('audit rows round-trip; limit keeps the newest n in ascending order; afterI
   r.close()
 })
 
+test('afterId + limit pages forward from the cursor (earliest rows first), so a long gap never skips rows', () => {
+  const r = seededRegistry()
+  // 行数取小：Windows 上逐行落盘很慢，分页逻辑与行数无关
+  for (let i = 1; i <= 30; i++) r.appendAudit({ team: 'duo', actor: 'human', command: 'send', target: null, outcome: 'ok' })
+  expect(r.listAudit('duo', { limit: 10 })[0]!.id).toBe(21)
+  const page = r.listAudit('duo', { afterId: 5, limit: 10 })
+  expect([page[0]!.id, page[page.length - 1]!.id, page.length]).toEqual([6, 15, 10])
+  expect(r.listAudit('duo', { afterId: 0, limit: 3 }).map((a) => a.id)).toEqual([1, 2, 3])
+  r.close()
+})
+
 test('pruneAudit deletes rows older than the cutoff', () => {
   const r = seededRegistry()
   r.appendAudit({ team: 'duo', at: '2026-09-01T00:00:00.000Z', actor: 'human', command: 'send', target: null, outcome: 'ok' })

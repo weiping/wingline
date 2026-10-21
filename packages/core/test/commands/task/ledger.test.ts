@@ -351,3 +351,13 @@ test('oneShot: request-show pending → hint carries --retry-request <id>', asyn
   const id = o.callsOf('taskCreate')[0]!.retryRequest as string
   expect(err).toMatchObject({ kind: 'uncertain', hint: expect.stringContaining(`--retry-request ${id}`) })
 })
+
+test('uncertain outcome carries detail.retryRequest equal to the stored row id (3B §2.4 contract)', async () => {
+  const o = new FakeOrca(); const { deps, registry } = seedRunningTeam(o)
+  o.faults.push({ method: 'taskCreate', when: 'after', error: rt() })
+  o.requestShow = async () => ({ state: 'pending', receipt: null })
+  const err = await createCall(deps, o).catch((e: unknown) => e)
+  expect(err).toBeInstanceOf(WinglineError)
+  expect((err as WinglineError).kind).toBe('uncertain')
+  expect((err as WinglineError).detail).toEqual({ retryRequest: registry.getRequest('k')!.retryRequest })
+})

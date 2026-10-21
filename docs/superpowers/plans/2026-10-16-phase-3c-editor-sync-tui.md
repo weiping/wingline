@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **复审修订（2026-10-21）：** 本计划写于 3A/3B 落地之前，开工前先按对应 spec 末尾的“复审修订”一节逐条调整相关 Task（路径、接口、探针前提都有变化）；与那一节冲突处以 spec 为准。其中第 3 条（TUI 复用 `consoleCommands()`）与第 1 条（`warnings` 新字段）会改动多个 Task。
+
 **Goal:** 控制台的团队编辑器（保存 + 预演、草稿）与“关于与诊断”页、`wl up --draft`、调度员把工作区状态与卡片注释同步到 Orca、`wl tui`（总览 / 收件箱 / 时间线，可处理待办）。
 
 **Architecture:** 规格相关的纯逻辑放在 `core/src/spec/`（`planSpecChange`、草稿保存与替换），服务端加 4 个 spec 接口与 1 个 about 接口；Orca 同步是调度员 `scan()` 末尾的一步，输入复用本轮的 `ScanSnapshot`；TUI 在进程内调用 core，复用 3B 的 `cachedOrca` 装饰器，自写 ANSI 渲染。

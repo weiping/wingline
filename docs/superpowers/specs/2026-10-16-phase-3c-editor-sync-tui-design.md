@@ -82,7 +82,7 @@
 
 - `parsed`：YAML 解析后的原始对象（未经 schema 默认值填充；语法错误时为 `null`），供表单显示各字段现值；前端不自己解析 YAML（复审 I-6）。
 - `set`：`{ path: Array<string | number>, value }`。给出时服务端先用 Document API 把这一处写回 `yaml`（保留注释与顺序），再校验并返回新的 `yaml` 与 `parsed`；表单的每次修改都走这里。
-- `yaml` 字段上限 64 KB（3B 的请求体上限）。审计摘要只记 `wrote`、`path` 与哈希，不记 YAML 内容。
+- `yaml` 字段上限 **48 KB**（3B 的请求体上限是 64 KB，YAML 经 JSON 转义并连同 `set` 等字段后必须仍在其内，否则 413）。审计摘要只记 `wrote`、`path` 与哈希，不记 YAML 内容。
 
 ### 4.5 `wl up <spec> --draft`
 
@@ -220,7 +220,7 @@ packages/core/src/spec/plan-change.ts  # planSpecChange
 packages/core/src/spec/draft.ts        # 草稿路径、保存（临时文件 + 改名）、baseHash、--draft 的替换流程
 packages/core/src/commands/dispatcher/orca-sync.ts  # postWorkspaceStatus、worktree 汇总、注释拼接、写入
 packages/core/src/commands/about.ts    # 关于与诊断
-packages/core/src/server/routes.ts     # 增加 spec 与 about 接口
+packages/core/src/server/api-read.ts / api-write.ts   # 增加 spec 与 about 接口（路由注册在 index.ts 的 buildRouter；写路由要同时登记 WRITE_ROUTES、WriteCommands、CONSOLE_AUDIT）
 packages/web/src/pages/Edit.tsx、Settings.tsx
 packages/cli/src/tui/                  # screen.ts（备用屏幕、差分、恢复）、width.ts（cellWidth）、keys.ts、views/*.ts、app.ts
 ```
@@ -272,3 +272,13 @@ packages/cli/src/tui/                  # screen.ts（备用屏幕、差分、恢
 | 表单写回 YAML 时改变了用户的格式 | 版本对比出现无关改动 | 用 Document API 只改动涉及的节点；测试覆盖注释与顺序保留 |
 | TUI 异常退出后终端停留在 raw 模式 / 备用屏幕 | 终端不可用 | 多处幂等恢复；未捕获异常先恢复再报错；测试覆盖 |
 | 宽字符宽度计算与终端实际显示不一致 | 表格错位 | `cellWidth` 按 Unicode 东亚宽度表实现并测试；截断留 1 列余量 |
+
+## 复审修订（2026-10-21）
+
+阶段 3A/3B 落地后对本 spec 的核对结果；执行前以本节为准，与上文冲突处以本节为准。
+
+1. **“`wl attention` 的告警一节”不存在。** `AttentionReport` 目前只有 `frozen/signals/questions/stale/unavailable`。本阶段要新增 `warnings: string[]`，并同步改四处消费方：CLI 的 `renderAttention`、控制台收件箱页、SSE 快照的 `attentionCounts`、TUI。上文所有“告警里提示”都指这个新字段。
+2. **`posts.worktree` 存的是选择器，不是绝对路径**（`path:/abs`、`current` 等，见 `up.ts`、`migrate-3a.test.ts`）。第 6.3 节“不是绝对路径就跳过”会让所有岗位都被跳过。改为：去掉 `path:` 前缀；其余选择器用 `worktreeShow` 解析一次，每轮巡查内缓存。
+3. **写接口登记三处：** `WRITE_ROUTES`、`WriteCommands`、`CONSOLE_AUDIT`；`test.each(WRITE_ROUTES)` 要求每条路由的 `fields` 含 `retryRequest`。`saveSpec` 不是 `(deps, a) => Promise` 形态，进审计需要包一层。
+4. **TUI 的 `R` 重试**依赖 core 的不确定错误带 `detail.retryRequest`（2026-10-21 复审修复已落地，见 3B spec 的响应约定）。TUI 应复用控制台的写命令表：把 `consoleCommands()` 改成接收前缀参数，与控制台共用 `CONSOLE_AUDIT`，不另写一份。
+5. **`postWorkspaceStatus` 的输入不够：** `sent_for_review` 是 `task_done.result` 里的结束方式，不是任务状态；`ScanSnapshot` 只有 `unfinished` 与 `streakAfterCursor`，没有“全部 verdict”。需要额外查注册表（`task_done`）取最近一次 verdict，接口相应调整。

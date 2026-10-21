@@ -4,15 +4,16 @@ import type { TeamRow } from '../../registry/registry.js'
 import type { TeamSpec } from '../../spec/load.js'
 import type { CommandDeps } from '../deps.js'
 import { fenced, refreshCoordinator } from '../task/ledger.js'
+import { shellSafe } from '../task/notify.js'
 import { fetchTasks, mustTeamReady } from '../task/query.js'
 import { notifyHuman, type OutletIo } from './outlets.js'
 
 export const QUOTE_LIMIT = 300
 export const OPTION_LIMIT = 40
 
-/** 空白（含换行、制表、Zl/Zp）→ 空格；去掉 Cc/Cf；合并空白；超出 limit 截断加"…"（spec 第 4.1 节）。 */
+/** 空白（含换行、制表、Zl/Zp）→ 空格；去掉 Cc/Cf；合并空白；shell 元字符换全角（2A spec 第 7.4 节）；超出 limit 截断加"…"（spec 第 4.1 节）。 */
 export function sanitizeQuote(text: string, limit: number): string {
-  const flat = text.replace(/[\t\n\v\f\r\u2028\u2029]/g, ' ').replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, '').replace(/\s+/g, ' ').trim()
+  const flat = shellSafe(text.replace(/[\t\n\v\f\r\u2028\u2029]/g, ' ').replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, '').replace(/\s+/g, ' ').trim())
   const chars = Array.from(flat)
   return chars.length > limit ? `${chars.slice(0, limit).join('')}…` : flat
 }

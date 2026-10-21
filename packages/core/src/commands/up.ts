@@ -156,6 +156,9 @@ async function createRun(l: Launch, leadHandle: string): Promise<RunStep> {
 }
 
 async function adoptRun(l: Launch, id: string, leadHandle: string): Promise<RunStep> {
+  const found = (await l.deps.orca.runList()).find((r) => r.id === id)
+  // 2A §5.2：协调者终端还活着就不动它；Orca 不认识的 id 仍交给 run-use 报 run_not_found
+  if (found) return adoptDiscovered(l, found, leadHandle)
   await l.deps.orca.runUse({ id, from: leadHandle })
   writeRun(l, id, leadHandle)
   return { outcome: 'adopted', runId: id }

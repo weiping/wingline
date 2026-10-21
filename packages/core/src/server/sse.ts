@@ -32,6 +32,8 @@ interface TeamLoop {
   snapshotTimer: any
   pingTimer: any
   lastSnapshotHash: string | null
+  /** 最近一次推送的快照；晚加入的订阅者立即拿到它，不必等数据再变。 */
+  lastSnapshot: string | null
 }
 
 export class TeamFeeds {
@@ -71,6 +73,7 @@ export class TeamFeeds {
         snapshotTimer: null,
         pingTimer: null,
         lastSnapshotHash: null,
+        lastSnapshot: null,
       }
       this.loops.set(team, loop)
       this.startLoop(team, loop)
@@ -88,6 +91,15 @@ export class TeamFeeds {
         this.loops.delete(team)
       }
     }
+  }
+
+  /**
+   * 把团队当前的快照单独推给刚加入的订阅者（晚加入的连接不必等数据再变）。
+   * 必须在响应头写出之后调用；subscribe 本身不写任何内容。
+   */
+  replaySnapshot(team: string, write: (chunk: string) => void): void {
+    const snap = this.loops.get(team)?.lastSnapshot
+    if (snap) write(`event: snapshot\ndata: ${snap}\n\n`)
   }
 
   private startLoop(team: string, loop: TeamLoop): void {
@@ -146,6 +158,7 @@ export class TeamFeeds {
       const hash = crypto.createHash('sha256').update(serialized).digest('hex')
       if (hash !== loop.lastSnapshotHash) {
         loop.lastSnapshotHash = hash
+        loop.lastSnapshot = serialized
         for (const sub of loop.subscribers) {
           sub.write(`event: snapshot\ndata: ${serialized}\n\n`)
         }

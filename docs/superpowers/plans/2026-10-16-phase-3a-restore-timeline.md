@@ -456,5 +456,6 @@ CLI（`main.test.ts`）：`wl restore duo --json` 透传 `{ team, dryRun, noTask
   - `program.command('log <team>')`：`--task`、`--post`、`--since`、`--limit`、`--source`、`--follow`、`--json`；`--follow` 用 `AbortController` 接 SIGINT/SIGTERM。
   - README 增加“重启之后：`wl restore`”与“时间线：`wl log`”两节（中文），说明 `fresh` 意味着上下文丢失、`--dry-run` 的用法、旧岗位没有标记的情形、开机自动恢复留到后续（3D）。
   - `test/live/duo.live.test.ts` 增加一个默认跳过的用例（`WL_LIVE_RESTART=1` 时运行）：`wl up` → 提示人重启 Orca → `wl restore` → 断言 `terminal show` 的 `preview` 含重启前发送的标记文本。
+  - **实际（2026-10-21 复审注）：** 真机用例改为关闭 builder 终端来模拟终端丢失，Orca 桌面端完整重启后的接回**没有验证**；成功标准“Orca 完整重启后接回”仍是待验证项。
 - [x] **Step 4: 运行确认通过** — `pnpm test` 全仓库 PASS（沙箱里已知的两例僵尸进程失败除外）；`pnpm typecheck` 通过。
 - [x] **Step 5: 提交** — `git commit -m "feat(cli): wl restore and wl log"`

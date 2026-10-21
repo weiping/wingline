@@ -99,7 +99,7 @@ wl console [--port <n>] [--open] [--worktree <选择器>] [--link] [--json]
 
 ### 6.1 约定
 
-- **响应格式**与命令行 `--json` 相同：成功 `{ ok: true, result }`，失败 `{ ok: false, error: { kind, code, message, hint } }`；结果不确定时 `error` 里带 CLI 给出的 `retry` 提示与 `retryRequest`。
+- **响应格式**与命令行 `--json` 相同：成功 `{ ok: true, result }`，失败 `{ ok: false, error: { kind, code, message, hint } }`；结果不确定时 `error` 里带 CLI 给出的 `retry` 提示与 `retryRequest`。**约定：** `retryRequest` 取自 core 抛出的 `WinglineError.detail.retryRequest`（账本的不确定出口、`wl send` 的 `send_unconfirmed`、`wl task create` 派发未完成时都会带；账本已丢弃该行、“原样重跑即可”的情形不带）。
 - **状态码**：`input` → 400，`orca` → 502，`uncertain` → 504，`internal` → 500，未登录 → 401，写请求校验失败 → 403，Host 不符 → 421，路由不存在 → 404。
 - **Orca 只读调用的合并（`core/src/view/snapshot.ts`）**：一个缓存型的 `OrcaClient` 装饰器 `cachedOrca`，包住 `deps.orca`，服务端把 `{ ...deps, orca: cachedOrca(deps.orca) }` 传给所有 core 函数。只缓存只读方法（`taskList`、`terminalList`、`terminalShow`、`workerList`、`runShow`），同参数 5 秒内只调用一次、并发请求共享同一次进行中的调用；写方法直接透传，完成后作废全部缓存。必须做成装饰器而不是另一套查询函数：`ps`、`attention`、`listTasks` 等 core 函数内部直接调用 `deps.orca`，只有替换掉 `deps.orca` 才能让它们也命中缓存（复审 I-4）。
 - 团队名、岗位、任务 id 等路径参数先按现有规则校验（小写字母、数字、连字符；任务 id 按 Orca 的格式），不合法 → 400 `input:invalid_param`。
@@ -141,7 +141,7 @@ wl console [--port <n>] [--open] [--worktree <选择器>] [--link] [--json]
 
 `GET /api/teams/:team/events`（需要会话；`EventSource` 自动带 cookie）：
 
-- **`timeline`**：每 2 秒读一次 3A 的三张事件表中游标之后的新行，按时间合并后逐条推送 `TimelineEvent`。事件 id 为 `<来源>:<表内 id>`（如 `task:123`）。重连时浏览器带 `Last-Event-ID`，服务从该来源的该 id 之后续推；其余两个来源从连接建立时刻之后开始。首次连接（无 `Last-Event-ID`）不补历史，页面另用 `/log` 取历史。
+- **`timeline`**：每 2 秒读一次 3A 的三张事件表中游标之后的新行，按时间合并后逐条推送 `TimelineEvent`。事件 id 为 `<来源>:<表内 id>`（如 `task:123`）。重连时浏览器带 `Last-Event-ID`，服务从该来源的该 id 之后续推；其余两个来源从连接建立时刻之后开始。首次连接（无 `Last-Event-ID`）不补历史，页面另用 `/log` 取历史。 另两个来源在断线窗口里的事件不会补发，所以**页面在每次重连成功后重取 `/log`**（`EventSource` 自动重连不带 `Last-Event-ID` 的情形同样适用）。三张表的增量读取按游标升序取最早的 `limit` 条，游标落后很多时分批追上，不跳行。
 - **`snapshot`**：每 5 秒计算一次该团队 `ps` 与 `attention` 结果的哈希（数据来自 6.1 的缓存），变化时推送 `{ team, posts, dispatcher, attentionCounts }`。
 - 每 15 秒发一行注释 `: ping` 作为心跳。
 - 同一服务的所有连接共用同一个按团队的读取循环（订阅者为 0 时停止该团队的循环）。

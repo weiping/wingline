@@ -170,3 +170,13 @@ test('reply success writes answered_at and a reply event', async () => {
   expect(registry.listOpenQuestions('duo')).toEqual([])
   expect(registry.listPatrolEvents('duo').map((e) => e.action)).toContain('reply')
 })
+
+test('sanitizeQuote neutralizes shell metacharacters (2A §7.4)', () => {
+  expect(sanitizeQuote('run $(rm -rf ~); echo `id` | sh & <x> \\', 100)).toBe('run ＄(rm -rf ~)； echo ｀id｀ ｜ sh ＆ ＜x＞ ＼')
+})
+
+test('relayText: quoted body and options carry no ASCII metacharacter, the reply hint keeps its <回答>', () => {
+  const t = relayText({ team: 'duo', asker: 'builder@duo', messageId: 'm1', body: 'a;b$(c)', options: ['x|y'], verb: '提问' })
+  expect(t.slice(t.indexOf('「'), t.indexOf('。全文'))).not.toMatch(/[`$;|&<>\\]/)
+  expect(t).toContain('--body "<回答>"')
+})

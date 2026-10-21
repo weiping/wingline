@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **复审修订（2026-10-21）：** 本计划写于 3A/3B 落地之前，开工前先按对应 spec 末尾的“复审修订”一节逐条调整相关 Task（路径、接口、探针前提都有变化）；与那一节冲突处以 spec 为准。其中第 1 条是阻塞项：Task 4（远端环境）在新探针出来之前不能照原样执行。
+
 **Goal:** 调度员从画面识别“上下文快满”“用量上限”并通知 / 暂停升级；写了 `environment` 的岗位能在远端环境里找回会话；有新待办时给牵头岗终端打未读标记；`wl restore --all` 与 `wl autostart` 实现登录后自动恢复。
 
 **Architecture:** 画面判定集中到 `core/src/screen/`（迁入 2A 的 `classifyPreview` 模式），巡查新增两种信号走 2B 的 `patrol_state`/`advancePatrol` 之外的一个小状态推进器；远端环境只改 3A 的 `findSession`；未读标记是 `scan()` 末尾的一步；autostart 以纯函数生成三平台的文件与命令，经注入的执行器落地。

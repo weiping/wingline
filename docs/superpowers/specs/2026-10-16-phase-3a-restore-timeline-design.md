@@ -88,7 +88,7 @@ wl restore <team> [--dry-run] [--no-tasks] [--session <post>=<sessionId> ...] [-
 
 1. **前置检查**：`orca status --json` 可达（否则 `runtime_unavailable`，退出码 2，提示 `orca open`）；`loadTeamSpec(teams.spec_path)` 并比对规格哈希（不一致 → `team_spec_changed`，文件不存在 → `spec_not_found`），与 2A 第 10 节的通用前置相同。
 2. **逐个岗位判定**（按 `team.yaml` 中的顺序，牵头岗先）：
-   - **终端还活着**（按标题找到、`connected`）→ `kept`，不做任何事。
+   - **终端还活着**（按标题找到、`connected`）→ `kept`，不做任何事。**例外：** 终端是上一次 restore 拉起的接回终端、而空闲等待或接回提示还没定案（岗位状态不是 `live`，本代 `wait`/`notice` 账本行未 `done`）→ 补完这两步再报 `resumed`，而不是 `kept`；否则 `claude --resume` 失败退回 shell 的岗位会在重跑时被报成功。
    - **终端已失效** → 确定会话 ID：
      - 有 `--session` → 用它。
      - 否则 `posts.session_id` 非空 → 用它（上一次接回时记下的）。
@@ -158,11 +158,12 @@ interface RestoreResult {
 
 ### 5.6 `--dry-run`
 
-执行第 5.2 节第 1、2 步（`orca search` 是只读调用），第 4 步只读出 Run 现状，第 5 步只读出调度员状态，第 6 步只列出将被 recover 的任务；不调用任何 Orca 写命令、不写注册表与 `audit_events`。输出中的岗位结果用“将接回 / 将新开 / 需选择 / 保持”表述。
+**kept 分支同样不写注册表（句柄、状态都不刷新）。** 执行第 5.2 节第 1、2 步（`orca search` 是只读调用），第 4 步只读出 Run 现状，第 5 步只读出调度员状态，第 6 步只列出将被 recover 的任务；不调用任何 Orca 写命令、不写注册表与 `audit_events`。输出中的岗位结果用“将接回 / 将新开 / 需选择 / 保持”表述。
 
 ### 5.7 重跑安全
 
-- 已接回或已新开的岗位，重跑时终端是活的 → `kept`。
+- 已接回或已新开并定案的岗位，重跑时终端是活的 → `kept`；接回未定案的（见 5.2）重跑时补完，不报 `kept`。
+- **已知限制：** 只重启 orca-serve 时终端仍 `connected`，但 Orca 会重新执行原启动命令（agent 换了新进程、上下文已丢），此时仍会判 `kept`；`spikes/REPORT.md` 里记录了这个现象，与“旧终端原样存活”的说法并存。Orca 桌面端整体重启后的接回至今没有真机验证（真机用例以关闭终端模拟）。
 - 终端按标题查找，不重复创建；落账的步骤重跑时回放。
 - 接回提示经落账发送，重跑不会重复提示。
 - `recoverTask` 本身是 P1 幂等（2A 第 10 节，`recover:<task>:open` 记录）。

@@ -189,7 +189,7 @@ packages/core/src/screen/patterns.ts        # 模式表与 detectScreen（含迁
 packages/core/src/screen/reset-time.ts      # 重置时间解析
 packages/core/src/commands/dispatcher/screen-signals.ts   # context_low / usage_limit 的状态推进与处理
 packages/core/src/commands/dispatcher/unread.ts           # 未读标记
-packages/core/src/commands/restore.ts       # 增加 environment 搜索参数与 cwd 规则、--all、--wait-orca、--actor
+packages/core/src/commands/restore/             # find-session.ts 增加 environment 搜索参数与 cwd 规则；--all、--wait-orca、--actor 在 restore 入口
 packages/core/src/commands/autostart/       # plan.ts（生成文件内容与命令，纯函数）、apply.ts（经注入的执行器执行）、status.ts
 packages/core/src/spec/schema.ts            # posts[].environment、patrol.unread_mark
 ```
@@ -240,3 +240,15 @@ packages/core/src/spec/schema.ts            # posts[].environment、patrol.unrea
 | Orca 不提供未读标记命令 | 无红点 | 探针与退路；`wl attention` 与外部通知照常 |
 | 登录时 Orca 启动很慢 | 自动恢复超时 | `--wait-orca` 可配置；超时记日志，用户可手动 `wl restore --all` |
 | 自启动配置残留 | 卸载雁阵后仍在登录时执行 | `wl autostart uninstall`；README 列出三个平台的文件 / 任务位置 |
+
+## 复审修订（2026-10-21）
+
+阶段 3A/3B 落地后对本 spec 的核对结果；与上文冲突处以本节为准。
+
+1. **【阻塞】远端环境的会话判定被 3A 探针推翻。** `--environment` 命中会扣留 evidence（`snippet` 为 null），而 3A 的第三道闸要求 `evidence.snippet` 的高亮整串覆盖标记（`markerHighlighted(null)` 一律拒绝）。第 5.2 节想在 `cwd` 为空时“只凭标记判断”，但 3A 探针已证明加引号也会部分召回 token，只凭标记会接错会话。**在新探针确认远端命中是否给 snippet 之前，远端环境岗位只支持 `--session` 手工指定，不做自动搜索。** 第 5 节需据此重写。
+2. **`context_low` 的去重键不能含会话标记。** 第 4.2 节把 `<session_marker>:<session_id>` 放进 `patrol_state.task_id`，这一列会出现在 `wl attention --json`、控制台与时间线里，违反 3A §4.3，也会打破“session markers stay out of ps, attention…”测试。改用标记的哈希，或单独加一列。
+3. **autostart 命令构造：** `selfCommand` 会自动追加 `--home/--orca`，不要再手传；win32 下它返回裸 `node`（依赖 PATH），与第 7.2 节“登录时没有 PATH，全部写绝对路径”冲突，需要一个用绝对路径的变体。
+4. **`--actor autostart` 没有可接之处：** CLI 的 `realCommands` 是模块级常量；审计读 `a.as ?? o.actor`。最简做法是给 `RestoreArgs` 加 `as` 字段。
+5. **团队锁“拿不到立即失败”：** `withTeamLock` 遇到活锁直接抛 `team_busy`（退出码 1），不排队。因此并发的第二个 restore 得到退出码 1，而不是“串行执行后看到 kept”；`restore --all` 必须逐团队捕获错误并换算成退出码 1 后汇总（`restoreExitCode` 只返回 0/2/3）。
+6. **画面信号增加 Orca 调用量：** 现在 `ScanSnapshot.screens` 只读候选岗位的画面，本阶段要求每轮读所有存活岗位，需在计划里写明并评估。
+7. **依赖拆分：** `restore --all` 与 autostart（计划 Task 5–6）不依赖 3C，可以先做；但必须在“接回未定案不报 kept”的修复（3A §5.2 例外，已落地）之后，否则无人值守会把失败报成成功。

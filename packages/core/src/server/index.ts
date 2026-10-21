@@ -211,6 +211,7 @@ async function handleSse(
     })
     res.flushHeaders()
     sseClients.add(res)
+    feeds.replaySnapshot(team, (chunk) => res.write(chunk))
   } catch (err) {
     respondError(res, err)
   }
