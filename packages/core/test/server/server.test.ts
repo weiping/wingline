@@ -7,6 +7,7 @@ import { consoleWorktree, createConsoleServer, openTab, SECURITY_HEADERS } from 
 import { Registry } from '../../src/registry/registry.js'
 import { FakeOrca, seedRunningTeam } from '../commands/fake-client.js'
 import { requestLink } from '../../src/server/control.js'
+import { WinglineError } from '../../src/errors.js'
 
 test('login link sets the cookie and answers 200 with a meta refresh to / (no 302); second use shows the expired page with 401', async () => {
   const o = new FakeOrca()
@@ -669,3 +670,35 @@ test('GET /auth 有效 token 与 POST /_control/link 均带安全头', async () 
   }
 })
 
+
+test('console create task: an uncertain result carries retryRequest, resending it creates no second task (real core)', async () => {
+  const o = new FakeOrca()
+  const { deps } = seedRunningTeam(o)
+  const webDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wl-web-'))
+  fs.writeFileSync(path.join(webDir, 'index.html'), '<html>INDEX</html>')
+  const srv = await createConsoleServer(deps, { port: 0, webRoot: webDir })
+  try {
+    const cookie = (await fetch(srv.loginUrl())).headers.get('set-cookie')!.split(';')[0]!
+    const base = `http://127.0.0.1:${srv.port}`
+    const { result } = (await (await fetch(`${base}/api/session`, { headers: { Cookie: cookie } })).json()) as any
+    const post = (body: object) => fetch(`${base}/api/teams/duo/tasks`, {
+      method: 'POST',
+      headers: { Cookie: cookie, Origin: base, 'X-Wingline-Token': result.csrfToken, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    o.faults.push({ method: 'taskCreate', when: 'after', error: new WinglineError('orca', 'runtime_timeout', 'timeout') })
+    const realShow = o.requestShow.bind(o)
+    o.requestShow = async () => ({ state: 'pending', receipt: null })
+    const first = await post({ title: '登录页' })
+    expect(first.status).toBe(504)
+    const retryRequest = ((await first.json()) as any).error.retryRequest as string
+    expect(retryRequest).toEqual(expect.any(String))
+    o.requestShow = realShow
+    const second = await post({ title: '登录页', retryRequest })
+    expect(second.status).toBe(200)
+    expect(o.tasks).toHaveLength(1)
+  } finally {
+    await srv.close()
+    fs.rmSync(webDir, { recursive: true })
+  }
+})

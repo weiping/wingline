@@ -37,7 +37,7 @@ test('create --post: dispatch uncertain → hint carries --retry-request; rerun 
   o.faults.push({ method: 'dispatch', when: 'before', error: new WinglineError('uncertain', 'orca_timeout', 't') }, { method: 'requestShow', when: 'before', error: new WinglineError('orca', 'runtime_unavailable', 'x') })
   const err = await createTask(deps, { team: 'duo', title: 't', post: 'checker@duo' }).catch((e) => e)
   const id = o.callsOf('taskCreate')[0]!.retryRequest as string
-  expect(err).toMatchObject({ kind: 'uncertain', hint: expect.stringContaining(`--retry-request ${id}`) })
+  expect(err).toMatchObject({ kind: 'uncertain', hint: expect.stringContaining(`--retry-request ${id}`), detail: { retryRequest: id } })
   await createTask(deps, { team: 'duo', title: 't', post: 'checker@duo', retryRequest: id })
   expect(o.tasks).toHaveLength(1)
   expect(o.tasks[0]).toMatchObject({ status: 'dispatched', assigneeHandle: 'term-c' })

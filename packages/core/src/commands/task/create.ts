@@ -70,6 +70,7 @@ function afterCreateError(deps: CommandDeps, a: CreateArgs, taskId: string, id: 
   const from = err.kind === 'uncertain' ? `（本次协调者 --from ${deps.registry.getTeam(a.team)!.coordinatorHandle}）` : ''
   return new WinglineError(err.kind, err.code, `${err.message}（任务 ${taskId} 已创建）`, {
     hint: `任务 ${taskId} 已创建但派发没有完成；重跑同一条命令会复用它：${rerunCommand(a, id)}${from}`, cause: err,
+    ...(err.kind === 'uncertain' ? { detail: { retryRequest: id } } : {}),
   })
 }
 

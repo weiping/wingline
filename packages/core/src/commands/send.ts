@@ -62,6 +62,7 @@ export async function send(deps: CommandDeps, args: { address: string; message: 
       throw new WinglineError('uncertain', 'send_unconfirmed', `消息已输入 ${args.address}，但未确认被处理，不会自动重发`, {
         hint: `先看 ${args.address} 的终端是否收到。要确认是否送达（不会重复发送）：` +
           `wl send ${args.address} <同一条消息> --retry-request ${result.requestId ?? '<ID>'}`,
+        ...(result.requestId ? { detail: { retryRequest: result.requestId } } : {}),
       })
     }
     return { address: args.address, outcome: 'delivered', handle }

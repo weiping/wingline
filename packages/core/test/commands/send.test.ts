@@ -37,6 +37,15 @@ test("an unconfirmed send names Orca's request id so the delivery can be confirm
   })
 })
 
+test('an unconfirmed send carries detail.retryRequest for the console retry', async () => {
+  const o = new FakeOrca()
+  o.sendStages = ['input_accepted']
+  await expect(send(seeded(o).deps, { address: 'checker@duo', message: 'hi' })).rejects.toMatchObject({
+    code: 'send_unconfirmed',
+    detail: { retryRequest: 'req-1' },
+  })
+})
+
 test('--retry-request is forwarded to Orca and the same ledger row is resolved once confirmed', async () => {
   const o = new FakeOrca()
   o.sendStages = ['input_accepted']

@@ -50,14 +50,17 @@ export async function refreshCoordinator(deps: CommandDeps, team: string): Promi
 
 const storedRow = (deps: CommandDeps, key: string): RequestRow => deps.registry.getRequest(key)!
 
-function uncertainError(err: unknown, hint: string): WinglineError {
+/** retryRequest 进 detail：3B 控制台据此在响应里给出“按原样重试”所需的 id（spec 3B §2.4）。 */
+function uncertainError(err: unknown, hint: string, retryRequest?: string): WinglineError {
   const e = err instanceof WinglineError ? err : undefined
-  return new WinglineError('uncertain', e?.code ?? 'outcome_unknown', e?.message ?? String(err), { hint, cause: err })
+  return new WinglineError('uncertain', e?.code ?? 'outcome_unknown', e?.message ?? String(err), {
+    hint, cause: err, ...(retryRequest ? { detail: { retryRequest } } : {}),
+  })
 }
 
 function markUncertain<A extends object, R>(x: Ctx<A, R>, err: unknown, hint: string): never {
   x.deps.registry.finishRequest(x.c.key, 'uncertain', { error: (err as WinglineError).code })
-  throw uncertainError(err, hint)
+  throw uncertainError(err, hint, x.deps.registry.getRequest(x.c.key)?.retryRequest ?? undefined)
 }
 
 /** oneShot 的 c.hint 带 --retry-request <id>；所有不确定出口都经它，缺省用 fallback。 */
