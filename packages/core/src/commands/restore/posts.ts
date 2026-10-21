@@ -28,7 +28,7 @@ export interface RestorePost {
 export const restoreKey = (team: string, post: string, gen: number, step: 'create' | 'wait' | 'notice') =>
   `restore:${team}:${post}:${gen}:${step}`
 
-/** 已完成的 restore create 中最大代数加 1；本代 create 尚未完成（中断重跑沿用原代）时不前进。终端仍活着（located）时调用方已走 kept，不会拉起新代。 */
+/** 已完成的 restore create 中最大代数加 1；本代 create 尚未完成（中断重跑沿用原代）时不前进。终端仍活着（located）时调用方走 kept 或补完上一代（pendingResume），不会拉起新代。 */
 export function restoreGen(reg: Registry, team: string, post: string, _located: boolean): number {
   let g = 0
   while (reg.getRequest(restoreKey(team, post, g, 'create'))?.state === 'done') g++
@@ -42,6 +42,53 @@ const FRESH_REFUSE = {
   shell: '岗位已退回 shell',
   unconfirmed: '岗位未确认就绪，启动包未送达',
 } as const
+
+type StepKey = (step: 'create' | 'wait' | 'notice') => string
+
+/**
+ * 上一代 restore 拉起了接回终端、却没走完（空闲等待未确认，或接回提示未发出且岗位不是 live）：
+ * 返回要补完的会话 ID 与请求键；否则 null。会话 ID 没缓存、岗位已 live、句柄对不上都不算。
+ */
+function pendingResume(reg: Registry, team: string, post: string, handle: string): { sessionId: string; rid: StepKey } | null {
+  const gen = restoreGen(reg, team, post, true) - 1
+  if (gen < 0) return null
+  const rid: StepKey = (step) => restoreKey(team, post, gen, step)
+  const row = reg.getPost(postAddress(post, team))
+  if (!row || row.handle !== handle || row.status === 'live' || !row.sessionId) return null
+  return stepDone(reg, rid('wait')) && stepDone(reg, rid('notice')) ? null : { sessionId: row.sessionId, rid }
+}
+
+/** 等接回的终端空闲 → 画面检查 → 发一次接回提示 → live。首次接回与补完共用；每步都是幂等的账本步骤。 */
+async function settleResume(
+  l: Launch, address: string, handle: string, sessionId: string, rid: StepKey, retry: string,
+): Promise<RestorePost> {
+  const { orca, registry } = l.deps
+  if (!stepDone(registry, rid('wait'))) {
+    const waited = await recorded(
+      registry, rid('wait'),
+      () => orca.terminalWait({ handle, forState: 'tui-idle', timeoutMs: WAIT_TIMEOUT_MS }),
+      (v) => v.satisfied,
+    )
+    if (!waited.confirmed) {
+      registry.setPostStatus(address, 'uncertain')
+      return { address, outcome: 'uncertain', reason: '终端未进入空闲，接回提示未发送', retry }
+    }
+  }
+  const screen = await screenGuard(l.deps, handle)
+  if (screen !== 'clear') {
+    registry.setPostStatus(address, 'live')
+    return { address, outcome: 'resumed', sessionId, noticeSkipped: `未发送接回提示（${screen}）` }
+  }
+  if (!stepDone(registry, rid('notice'))) {
+    await recorded(
+      registry, rid('notice'),
+      () => orca.terminalSend({ handle, text: RESUME_NOTICE(address), enter: true, waitSubmitSec: WAIT_SUBMIT_SEC }),
+      (v) => v.accepted,
+    )
+  }
+  registry.setPostStatus(address, 'live')
+  return { address, outcome: 'resumed', sessionId }
+}
 
 /**
  * 逐岗位判定与拉起（spec §5.2 第 2–3 步）：终端活着 → kept；
@@ -57,8 +104,14 @@ export async function restorePost(
   try {
     const located = await locatePost(orca, address)
     if (located && located.connected) {
-      registry.setPostHandle(address, located.handle)
-      registry.setPostStatus(address, 'live')
+      // 上次接回没走完（终端是 restore 拉起的、空闲等待或接回提示未定案）：补完它，而不是报 kept
+      const pending = pendingResume(registry, l.spec.name, post.id, located.handle)
+      if (pending && o.dryRun) return { address, outcome: 'resumed', sessionId: pending.sessionId }
+      if (pending) return await settleResume(l, address, located.handle, pending.sessionId, pending.rid, retry)
+      if (!o.dryRun) {
+        registry.setPostHandle(address, located.handle)
+        registry.setPostStatus(address, 'live')
+      }
       return { address, outcome: 'kept' }
     }
 
@@ -101,32 +154,8 @@ export async function restorePost(
         handle = created.value.handle
         registry.setPostHandle(address, handle)
       }
-      if (!stepDone(registry, rid('wait'))) {
-        const waited = await recorded(
-          registry, rid('wait'),
-          () => orca.terminalWait({ handle, forState: 'tui-idle', timeoutMs: WAIT_TIMEOUT_MS }),
-          (v) => v.satisfied,
-        )
-        if (!waited.confirmed) {
-          registry.setPostStatus(address, 'uncertain')
-          return { address, outcome: 'uncertain', reason: '终端未进入空闲，接回提示未发送', retry }
-        }
-      }
       registry.setSessionId(address, sessionId)
-      const screen = await screenGuard(l.deps, handle)
-      if (screen !== 'clear') {
-        registry.setPostStatus(address, 'live')
-        return { address, outcome: 'resumed', sessionId, noticeSkipped: `未发送接回提示（${screen}）` }
-      }
-      if (!stepDone(registry, rid('notice'))) {
-        await recorded(
-          registry, rid('notice'),
-          () => orca.terminalSend({ handle, text: RESUME_NOTICE(address), enter: true, waitSubmitSec: WAIT_SUBMIT_SEC }),
-          (v) => v.accepted,
-        )
-      }
-      registry.setPostStatus(address, 'live')
-      return { address, outcome: 'resumed', sessionId }
+      return await settleResume(l, address, handle, sessionId, rid, retry)
     }
 
     // fresh：与 wl up 的新建路径完全相同（新标记、启动包），醒目标注上下文已丢失

@@ -26,7 +26,7 @@ function seed(o: FakeOrca, builderOver: Partial<PostRow> = {}) {
 
 const hit = (sessionId: string) => ({ marker: 'WLS-aaaa1111', agent: 'claude', sessionId, cwd: os.tmpdir() })
 
-test('a live post is kept and nothing is written', async () => {
+test('a live post is kept with no Orca writes and no request rows', async () => {
   const s = seed(new FakeOrca())
   s.o.terminals.push({ handle: 'term-b', title: 'builder@duo', connected: true, worktreeId: 'wt-1' })
   expect(await restorePost(s.l, s.post, { dryRun: false, briefing: s.briefing })).toEqual({ address: 'builder@duo', outcome: 'kept' })
@@ -98,17 +98,39 @@ test('ambiguous → no terminal is created and candidates are listed with a --se
   expect(s.o.created).toEqual([])
 })
 
-test('terminal never becomes idle → uncertain, not resent on the next run until the ledger row resolves', async () => {
+test('terminal never becomes idle → uncertain; while it stays unsettled a rerun is uncertain again, never kept, and nothing is created twice', async () => {
   const s = seed(new FakeOrca())
   s.o.waitSatisfied = false
   s.o.sessions.push(hit('s1'))
   const first = await restorePost(s.l, s.post, { dryRun: false, briefing: s.briefing })
   expect(first.outcome).toBe('uncertain')
-  // 终端还在（connected），重跑 → kept，接回提示始终没有发出
   const second = await restorePost(s.l, s.post, { dryRun: false, briefing: s.briefing })
-  expect(second.outcome).toBe('kept')
+  expect(second.outcome).toBe('uncertain')
   expect(s.o.sent).toEqual([])
   expect(s.o.created.length).toBe(1)
+})
+
+test('an unsettled resume is finished on the rerun: wait, then the resume notice, then live — no second terminal', async () => {
+  const s = seed(new FakeOrca())
+  s.o.waitSatisfied = false
+  s.o.sessions.push(hit('s1'))
+  expect((await restorePost(s.l, s.post, { dryRun: false, briefing: s.briefing })).outcome).toBe('uncertain')
+  s.o.waitSatisfied = true
+  const second = await restorePost(s.l, s.post, { dryRun: false, briefing: s.briefing })
+  expect(second).toMatchObject({ outcome: 'resumed', sessionId: 's1' })
+  expect(s.o.sent.map((x) => x.text).join('\n')).toContain('重启后已接回本会话')
+  expect(s.o.created.length).toBe(1)
+  expect(s.registry.getPost('builder@duo')!.status).toBe('live')
+  const third = await restorePost(s.l, s.post, { dryRun: false, briefing: s.briefing })
+  expect(third.outcome).toBe('kept')
+  expect(s.o.sent.length).toBe(1)
+})
+
+test('dry run on a live post writes nothing to the registry', async () => {
+  const s = seed(new FakeOrca(), { handle: 'term-stale', status: 'uncertain' })
+  s.o.terminals.push({ handle: 'term-live', title: 'builder@duo', connected: true, worktreeId: 'wt-1' })
+  expect(await restorePost(s.l, s.post, { dryRun: true, briefing: s.briefing })).toEqual({ address: 'builder@duo', outcome: 'kept' })
+  expect(s.registry.getPost('builder@duo')).toMatchObject({ handle: 'term-stale', status: 'uncertain' })
 })
 
 test('dry run reports the would-be outcome and makes no Orca writes', async () => {
