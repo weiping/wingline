@@ -104,6 +104,14 @@ test('dead_assignee: notify with the recover command by default; with auto_recov
   for (let i = 0; i < 2; i++) { await w3.scan([{ ...h, ownerAlive: false }]); w3.c.advance(P) }
   expect(w3.ops.recoverTask).not.toHaveBeenCalled()
 })
+test('auto_recover with a dead owner: the level-2 notice is sent once and the row moves to level 2 (no repeat of the same notice next round)', async () => {
+  const w = world(DUO_YAML + 'patrol:\n  auto_recover: true\n'); const h = hit({ signal: 'dead_assignee', taskId: 'd', command: 'wl task recover d', ownerAlive: false })
+  await w.scan([h]); w.c.advance(P)
+  await w.scan([h])
+  expect(w.ops.recoverTask).not.toHaveBeenCalled()
+  expect(w.o.sent).toHaveLength(1)
+  expect(w.lvl(h)).toBe(2)
+})
 test('once-only signals (bypassed, overdue, call_uncertain) notify once and stay quiet', async () => {
   const w = world(); const h = hit({ signal: 'overdue', taskId: 't1#0', minutes: 61 })
   for (let i = 0; i < 6; i++) { await w.scan([h]); w.c.advance(P) }

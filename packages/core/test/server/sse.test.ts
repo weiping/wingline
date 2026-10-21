@@ -84,6 +84,32 @@ test('snapshot is pushed only when the hash changes', async () => {
   feeds.closeAll()
 })
 
+test('a subscriber joining a running loop gets the current snapshot at once, without waiting for a change', async () => {
+  const o = new FakeOrca()
+  const { deps } = seedRunningTeam(o)
+  const d = { ...deps, orca: cachedOrca(o) }
+  let tickSnapshot: () => Promise<void> = async () => {}
+  const feeds = new TeamFeeds(d, {
+    setTimer: ((fn: any, ms: number) => {
+      if (ms === 5000) tickSnapshot = fn
+      return 1 as any
+    }) as any,
+    clearTimer: () => {},
+  })
+  const first: string[] = []
+  const unsubFirst = await feeds.subscribe('duo', (chunk) => first.push(chunk))
+  await tickSnapshot()
+  expect(first.some((w) => w.includes('event: snapshot\n'))).toBe(true)
+
+  const second: string[] = []
+  const unsubSecond = await feeds.subscribe('duo', (chunk) => second.push(chunk))
+  expect(second.filter((w) => w.includes('event: snapshot\n'))).toHaveLength(1)
+  expect(first.filter((w) => w.includes('event: snapshot\n'))).toHaveLength(1)
+
+  unsubFirst(); unsubSecond()
+  feeds.closeAll()
+})
+
 test('timeline tick 内单次读取失败只 warn，下一次 tick 照常运行', async () => {
   const o = new FakeOrca()
   const { deps, warnings } = seedRunningTeam(o)

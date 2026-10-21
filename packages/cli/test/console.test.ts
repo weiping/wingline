@@ -40,6 +40,16 @@ test('--link without a running console is console_not_running', async () => {
   await expect(consoleCmd(deps, { link: true })).rejects.toMatchObject({ code: 'console_not_running', kind: 'input' })
 })
 
+test('foreground: a console.json that cannot be written only warns, the server still starts and stops on SIGINT', async () => {
+  const { deps, warnings, home } = mkDeps(new FakeOrca())
+  // home 指向一个普通文件：mkdir / 写 console.json 必然失败
+  const blocked = path.join(home, 'blocked')
+  fs.writeFileSync(blocked, 'x')
+  const res = await consoleCmd({ ...deps, home: blocked }, { port: 0, webRoot: webRoot(), onReady: () => { setImmediate(() => process.emit('SIGINT')) } })
+  expect(res.outcome).toBe('started')
+  expect(warnings.some((w) => w.includes('console.json'))).toBe(true)
+})
+
 test('--link with a running console prints a fresh login link', async () => {
   const { deps } = mkDeps(new FakeOrca())
   await runningConsole(deps)

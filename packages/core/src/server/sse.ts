@@ -32,6 +32,8 @@ interface TeamLoop {
   snapshotTimer: any
   pingTimer: any
   lastSnapshotHash: string | null
+  /** 最近一次推送的快照；晚加入的订阅者立即拿到它，不必等数据再变。 */
+  lastSnapshot: string | null
 }
 
 export class TeamFeeds {
@@ -71,6 +73,7 @@ export class TeamFeeds {
         snapshotTimer: null,
         pingTimer: null,
         lastSnapshotHash: null,
+        lastSnapshot: null,
       }
       this.loops.set(team, loop)
       this.startLoop(team, loop)
@@ -78,6 +81,7 @@ export class TeamFeeds {
 
     const sub: Subscriber = { write, cursor: subCursor }
     loop.subscribers.add(sub)
+    if (loop.lastSnapshot !== null) write(`event: snapshot\ndata: ${loop.lastSnapshot}\n\n`)
 
     return () => {
       const curLoop = this.loops.get(team)
@@ -146,6 +150,7 @@ export class TeamFeeds {
       const hash = crypto.createHash('sha256').update(serialized).digest('hex')
       if (hash !== loop.lastSnapshotHash) {
         loop.lastSnapshotHash = hash
+        loop.lastSnapshot = serialized
         for (const sub of loop.subscribers) {
           sub.write(`event: snapshot\ndata: ${serialized}\n\n`)
         }

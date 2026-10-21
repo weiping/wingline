@@ -131,7 +131,12 @@ export async function dispatcherDown(
   const address = addressOf(a.team)
   if (!a.close) return { address, outcome: 'noop' }
   const located = await locatePost(deps.orca, address)
-  if (!located) return { address, outcome: 'already_gone' }
+  if (!located) {
+    // 终端已经没了：进程若也死了，锁行不会有人清，状态会一直显示失联
+    const lock = deps.registry.getLock(lockKey(a.team))
+    if (lock && !pidAlive(lock.pid)) deps.registry.deleteLockOf(lockKey(a.team), lock.pid)
+    return { address, outcome: 'already_gone' }
+  }
   await deps.orca.terminalClose({ handle: located.handle })
   await clearDeadLock(deps, a.team, a.sleep ?? defaultSleep, a.pollMs ?? CLOSE_POLL_MS)
   return { address, outcome: 'closed' }

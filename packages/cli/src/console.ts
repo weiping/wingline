@@ -91,7 +91,12 @@ async function foreground(deps: CommandDeps, a: ConsoleArgs): Promise<ConsoleRes
     }
     throw err
   })
-  writeConsoleFile(deps.home, { pid: process.pid, port: srv.port, startedAt: new Date().toISOString(), controlKey: srv.controlKey })
+  try {
+    writeConsoleFile(deps.home, { pid: process.pid, port: srv.port, startedAt: new Date().toISOString(), controlKey: srv.controlKey })
+  } catch (err) {
+    // 写不进去只影响“别的 wl 进程找到这个服务”（--link / --open 复用），服务本身照常运行
+    deps.warn(`写 console.json 失败，其他 wl 进程将找不到这个控制台：${err instanceof Error ? err.message : String(err)}`)
+  }
   const ready: ConsoleResult = { outcome: 'started', url: srv.loginUrl(), port: srv.port }
   a.onReady?.(ready)
   await new Promise<void>((resolve) => {

@@ -78,6 +78,18 @@ const parseSessions = (list: string[]): Record<string, string> => {
   return out
 }
 const collect = (v: string, acc: string[]) => [...acc, v]
+
+const LOG_SOURCES = ['task', 'patrol', 'command'] as const
+/** wl log 的筛选参数；--limit 必须是正整数，--source 必须是已知来源，否则按用法错处理而不是静默读空。 */
+function logArgs(team: string, o: { task?: string; post?: string; since?: string; limit?: number; source?: string }) {
+  if (o.limit !== undefined && !(Number.isInteger(o.limit) && o.limit >= 1)) {
+    throw new WinglineError('input', 'limit_invalid', `--limit ${String(o.limit)} 无效：应为正整数`)
+  }
+  if (o.source !== undefined && !(LOG_SOURCES as readonly string[]).includes(o.source)) {
+    throw new WinglineError('input', 'source_invalid', `--source ${o.source} 无效：应为 ${LOG_SOURCES.join('/')} 之一`)
+  }
+  return { team, task: o.task, post: o.post, since: o.since, limit: o.limit, source: o.source as TimelineSource | undefined }
+}
 /** done：通过 0；gate 失败/转人工/绕过后补跑失败 1。 */
 const exitCodeOfDone = (r: { outcome: string }) => (r.outcome === 'done' ? 0 : 1)
 const PACKAGE_VERSION = (JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }).version
@@ -251,8 +263,7 @@ function registerBaseCommands(program: Command, commands: Commands, execute: Exe
     .action(async (team: string, o: {
       task?: string; post?: string; since?: string; limit?: number; source?: string; follow?: boolean; json?: boolean
     }) => {
-      const args = { team, task: o.task, post: o.post, since: o.since, limit: o.limit, source: o.source as TimelineSource | undefined }
-      if (!o.follow) return execute(!!o.json, (d) => commands.log(d, args), (r) => renderLog(r.events))
+      if (!o.follow) return execute(!!o.json, (d) => commands.log(d, logArgs(team, o)), (r) => renderLog(r.events))
       const ctl = new AbortController()
       const stop = () => ctl.abort()
       process.once('SIGINT', stop)
@@ -261,6 +272,7 @@ function registerBaseCommands(program: Command, commands: Commands, execute: Exe
         // 先把已有的事件打出来，再从那个游标往后跟；日期行与一次性输出共用同一套格式。
         return await execute(false, async (d) => {
           const print = o.json ? (e: TimelineEvent) => JSON.stringify(e) + '\n' : logPrinter()
+          const args = logArgs(team, o)
           const first = await commands.log(d, args)
           for (const e of first.events) io.stdout.write(print(e))
           await commands.followLog(d, { ...args, cursor: first.cursor }, (e) => io.stdout.write(print(e)), { signal: ctl.signal })

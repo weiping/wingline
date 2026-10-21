@@ -102,8 +102,12 @@ async function nudge(e: Env, h: SignalHit, row: PatrolStateRow): Promise<void> {
   }
 }
 
-async function autoRecover(e: Env, h: SignalHit): Promise<void> {
-  if (!h.ownerAlive) return announce(e, h, 2, noticeText(h, e.ctx.team.name))
+async function autoRecover(e: Env, h: SignalHit, row: PatrolStateRow): Promise<void> {
+  if (!h.ownerAlive) {
+    // 主人不在，没法自动恢复：直接按第 2 级通知并记为第 2 级，下一轮不会再发同一条
+    put(e, { ...row, level: 2, levelAt: e.now.toISOString(), nextDueAt: null })
+    return announce(e, h, 2, noticeText(h, e.ctx.team.name))
+  }
   try {
     await e.ops.recoverTask(e.deps, { id: h.taskId })
     event(e, h, 'recover', 'ok')
@@ -115,7 +119,7 @@ async function autoRecover(e: Env, h: SignalHit): Promise<void> {
 async function act(e: Env, h: SignalHit, level: number, row: PatrolStateRow): Promise<void> {
   const team = e.ctx.team.name
   if (level === 1) {
-    if (h.signal === 'dead_assignee') return autoRecover(e, h)
+    if (h.signal === 'dead_assignee') return autoRecover(e, h, row)
     return nudge(e, h, row)
   }
   if (level === 2) return announce(e, h, 2, noticeText(h, team))

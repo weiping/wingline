@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process'
 import { expect, test } from 'vitest'
 import { dispatcherDown, dispatcherHealth, dispatcherLaunchCommand, dispatcherUp, HEARTBEAT_STALE_MS, HEARTBEAT_TAKEOVER_MS } from '../../../src/commands/dispatcher/lifecycle.js'
 import type { Registry } from '../../../src/registry/registry.js'
@@ -79,4 +80,12 @@ test('dispatcherDown: noop without --close; closes, then already_gone; the coord
   expect(await dispatcherDown(deps, { team: 'duo', close: true })).toEqual({ address: 'dispatcher@duo', outcome: 'closed' })
   expect(await dispatcherDown(deps, { team: 'duo', close: true })).toEqual({ address: 'dispatcher@duo', outcome: 'already_gone' })
   expect(registry.getTeam('duo')!.coordinatorHandle).toBe('term-dsp')
+})
+test('dispatcherDown --close with the terminal already gone still clears a dead dispatcher lock row', async () => {
+  const o = new FakeOrca(); const { deps, registry } = seedRunningTeam(o)
+  const deadPid = spawnSync(process.execPath, ['-e', '']).pid!
+  ;(registry as unknown as { db: { prepare(s: string): { run(...a: unknown[]): void } } }).db
+    .prepare('INSERT OR REPLACE INTO locks(team, pid, at, heartbeat_at) VALUES (?, ?, ?, NULL)').run('dispatcher:duo', deadPid, new Date().toISOString())
+  expect(await dispatcherDown(deps, { team: 'duo', close: true })).toEqual({ address: 'dispatcher@duo', outcome: 'already_gone' })
+  expect(registry.getLock('dispatcher:duo')).toBeNull()
 })
