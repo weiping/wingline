@@ -702,3 +702,41 @@ test('console create task: an uncertain result carries retryRequest, resending i
     fs.rmSync(webDir, { recursive: true })
   }
 })
+
+test('a second SSE connection to the same team gets a normal event-stream response and the current snapshot', async () => {
+  const o = new FakeOrca()
+  const { deps } = seedRunningTeam(o)
+  const webDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wl-web-'))
+  fs.writeFileSync(path.join(webDir, 'index.html'), '<html>INDEX</html>')
+  const srv = await createConsoleServer(deps, { port: 0, webRoot: webDir, sse: { snapshotMs: 50 } })
+  const aborts: AbortController[] = []
+  try {
+    const cookie = (await fetch(srv.loginUrl())).headers.get('set-cookie')!.split(';')[0]!
+    const open = async () => {
+      const ac = new AbortController(); aborts.push(ac)
+      const res = await fetch(`http://127.0.0.1:${srv.port}/api/teams/duo/events`, { headers: { Cookie: cookie }, signal: ac.signal })
+      const reader = res.body!.getReader(); const dec = new TextDecoder()
+      let text = ''
+      const waitFor = async (needle: string) => {
+        const deadline = Date.now() + 3000
+        while (!text.includes(needle)) {
+          if (Date.now() > deadline) throw new Error(`timeout waiting for ${needle}; got ${text}`)
+          const r = await Promise.race([reader.read(), new Promise<null>((r) => setTimeout(() => r(null), 100))])
+          if (r && !r.done) text += dec.decode(r.value)
+        }
+      }
+      return { res, waitFor }
+    }
+    const first = await open()
+    expect(first.res.headers.get('content-type')).toContain('text/event-stream')
+    await first.waitFor('event: snapshot')
+    const second = await open()
+    expect(second.res.headers.get('content-type')).toContain('text/event-stream')
+    expect(second.res.headers.get('cache-control')).toBe('no-store')
+    await second.waitFor('event: snapshot')
+  } finally {
+    for (const ac of aborts) ac.abort()
+    await srv.close()
+    fs.rmSync(webDir, { recursive: true })
+  }
+})

@@ -65,6 +65,23 @@ test('a dead post with a found session is resumed with the resume command, notif
   expect(s.registry.getPost('builder@duo')!.status).toBe('live')
 })
 
+test('a resumed terminal that is back at a shell prompt is uncertain, not live; the rerun re-checks and finishes once the agent is up', async () => {
+  const s = seed(new FakeOrca())
+  s.o.onCreate = () => { s.o.previews.set('term-1', 'user@host ~/repo % ') }
+  s.o.sessions.push(hit('s1'))
+  const first = await restorePost(s.l, s.post, { dryRun: false, briefing: s.briefing })
+  expect(first).toMatchObject({ outcome: 'uncertain', retry: 'wl restore duo' })
+  expect(first.reason).toContain('shell')
+  expect(s.registry.getPost('builder@duo')!.status).toBe('uncertain')
+  expect(s.o.sent).toEqual([])
+  s.o.previews.set('term-1', '❯ ')
+  const second = await restorePost(s.l, s.post, { dryRun: false, briefing: s.briefing })
+  expect(second).toMatchObject({ outcome: 'resumed', sessionId: 's1' })
+  expect(s.o.sent.length).toBe(1)
+  expect(s.o.created.length).toBe(1)
+  expect(s.registry.getPost('builder@duo')!.status).toBe('live')
+})
+
 test('resume notice is skipped (outcome still resumed) when the screen is not clear', async () => {
   const s = seed(new FakeOrca())
   s.o.onCreate = () => { s.o.previews.set('term-1', 'Do you want to proceed?\n❯ 1. Yes') }

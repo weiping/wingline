@@ -81,7 +81,6 @@ export class TeamFeeds {
 
     const sub: Subscriber = { write, cursor: subCursor }
     loop.subscribers.add(sub)
-    if (loop.lastSnapshot !== null) write(`event: snapshot\ndata: ${loop.lastSnapshot}\n\n`)
 
     return () => {
       const curLoop = this.loops.get(team)
@@ -92,6 +91,15 @@ export class TeamFeeds {
         this.loops.delete(team)
       }
     }
+  }
+
+  /**
+   * 把团队当前的快照单独推给刚加入的订阅者（晚加入的连接不必等数据再变）。
+   * 必须在响应头写出之后调用；subscribe 本身不写任何内容。
+   */
+  replaySnapshot(team: string, write: (chunk: string) => void): void {
+    const snap = this.loops.get(team)?.lastSnapshot
+    if (snap) write(`event: snapshot\ndata: ${snap}\n\n`)
   }
 
   private startLoop(team: string, loop: TeamLoop): void {

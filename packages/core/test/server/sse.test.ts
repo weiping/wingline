@@ -84,7 +84,7 @@ test('snapshot is pushed only when the hash changes', async () => {
   feeds.closeAll()
 })
 
-test('a subscriber joining a running loop gets the current snapshot at once, without waiting for a change', async () => {
+test('replaySnapshot hands a joining subscriber the current snapshot without waiting for a change; subscribe itself writes nothing', async () => {
   const o = new FakeOrca()
   const { deps } = seedRunningTeam(o)
   const d = { ...deps, orca: cachedOrca(o) }
@@ -103,6 +103,8 @@ test('a subscriber joining a running loop gets the current snapshot at once, wit
 
   const second: string[] = []
   const unsubSecond = await feeds.subscribe('duo', (chunk) => second.push(chunk))
+  expect(second).toEqual([])
+  feeds.replaySnapshot('duo', (chunk) => second.push(chunk))
   expect(second.filter((w) => w.includes('event: snapshot\n'))).toHaveLength(1)
   expect(first.filter((w) => w.includes('event: snapshot\n'))).toHaveLength(1)
 

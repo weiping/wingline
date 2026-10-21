@@ -75,6 +75,11 @@ async function settleResume(
     }
   }
   const screen = await screenGuard(l.deps, handle)
+  if (screen === 'shell' || screen === 'offline') {
+    // agent 没起来（--resume 失败退回 shell）或终端已不在：不能记成 live，否则下一次重跑会报 kept
+    registry.setPostStatus(address, 'uncertain')
+    return { address, outcome: 'uncertain', reason: screen === 'shell' ? '接回后终端停在 shell，agent 没有启动' : '接回后终端已不在', retry }
+  }
   if (screen !== 'clear') {
     registry.setPostStatus(address, 'live')
     return { address, outcome: 'resumed', sessionId, noticeSkipped: `未发送接回提示（${screen}）` }
