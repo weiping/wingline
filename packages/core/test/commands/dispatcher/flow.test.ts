@@ -24,6 +24,7 @@ async function bootDispatcher(yaml = DUO_YAML) {
   return { c, o, deps, dsp, registry, specPath, st, tick }
 }
 
+// Windows + Node 24 上实测约 40 s（CI run 39444377212），全局 20 s 不够；只放宽这一条
 test('dispatcher holds the coordinator; wl up leaves it alone; a stuck checker goes observe → nudge → lead → frozen; create --post is then refused; unfreeze lists nothing to restart', async () => {
   const w = await bootDispatcher()
   expect(w.registry.getTeam('duo')!.coordinatorHandle).toBe('term-dsp')
@@ -40,7 +41,7 @@ test('dispatcher holds the coordinator; wl up leaves it alone; a stuck checker g
   expect(texts.filter(([h]) => h === builderH).some(([, t]) => String(t).includes('已冻结'))).toBe(true)
   await expect(createTask(w.deps, { team: 'duo', title: 't2', post: 'checker@duo' })).rejects.toMatchObject({ code: 'post_frozen' })
   expect(await unfreezePostCmd(w.deps, { address: 'checker@duo' })).toEqual({ skipped: [] })
-})
+}, 60_000)
 
 test('a question is relayed once, answered with wl dispatcher reply, and the waiting signal clears', async () => {
   const w = await bootDispatcher()
