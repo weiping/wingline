@@ -40,10 +40,15 @@ export function classifyPreview(preview: string): ScreenState {
 
 const FULL_WIDTH: Record<string, string> = { '`': '｀', $: '＄', ';': '；', '|': '｜', '&': '＆', '<': '＜', '>': '＞', '\\': '＼' }
 
+/** 只把 shell 元字符换成全角（spec 第 7.4 节），不动其他字符。 */
+export function shellSafe(text: string): string {
+  return text.replace(/[`$;|&<>\\]/g, (c) => FULL_WIDTH[c]!)
+}
+
 /** 外来文本插进通知前：去控制字符、换行变空格，并把 shell 元字符换成全角（spec 第 7.4 节）。 */
 export function neutralize(text: string, limit: number): string {
   const flat = text.replace(/[\r\n\u2028\u2029]/g, ' ').replace(/[\p{Cc}\p{Cf}]/gu, '')
-  const safe = flat.replace(/[`$;|&<>\\]/g, (c) => FULL_WIDTH[c]!)
+  const safe = shellSafe(flat)
   const chars = Array.from(safe)
   return chars.length > limit ? `${chars.slice(0, limit).join('')}…` : safe
 }
