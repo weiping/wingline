@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, expect, test } from 'vitest'
 import { createConsoleServer, exitCodeOf, writeConsoleFile, type CommandDeps } from '@wingline/core'
-import { consoleCmd, renderConsole } from '../src/console.js'
+import { consoleCmd, renderConsole, stopServer } from '../src/console.js'
 import { FakeOrca, mkDeps, seedRunningTeam } from '../../core/test/commands/fake-client.js'
 
 const cleanups: Array<() => Promise<void> | void> = []
@@ -154,4 +154,18 @@ test('某次轮询变慢时按墙钟提前退出，不会把 confirmMs 上界拖
     sleep: async () => { naps += 1; await new Promise((r) => setTimeout(r, 500)) },
   })).rejects.toMatchObject({ code: 'console_start_unconfirmed' })
   expect(naps).toBe(1)
+})
+
+test('stopServer removes console.json only after close has finished', async () => {
+  let cleaned = false
+  let cleanedDuringClose: boolean | undefined
+  await stopServer({ close: async () => { await new Promise((r) => setImmediate(r)); cleanedDuringClose = cleaned } }, () => { cleaned = true })
+  expect(cleanedDuringClose).toBe(false)
+  expect(cleaned).toBe(true)
+})
+
+test('stopServer still cleans up when close rejects', async () => {
+  let cleaned = false
+  await expect(stopServer({ close: async () => { throw new Error('close failed') } }, () => { cleaned = true })).rejects.toThrow('close failed')
+  expect(cleaned).toBe(true)
 })
