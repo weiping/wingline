@@ -740,3 +740,46 @@ test('a second SSE connection to the same team gets a normal event-stream respon
     fs.rmSync(webDir, { recursive: true })
   }
 })
+
+async function loggedIn(o: FakeOrca) {
+  const { deps, warnings } = seedRunningTeam(o)
+  const webDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wl-web-'))
+  fs.writeFileSync(path.join(webDir, 'index.html'), '<html>INDEX</html>')
+  const srv = await createConsoleServer(deps, { port: 0, webRoot: webDir })
+  const base = `http://127.0.0.1:${srv.port}`
+  const cookie = (await fetch(srv.loginUrl())).headers.get('set-cookie')!.split(';')[0]!
+  const { result } = (await (await fetch(`${base}/api/session`, { headers: { Cookie: cookie } })).json()) as any
+  const post = (p: string, body: object) => fetch(`${base}${p}`, {
+    method: 'POST',
+    headers: { Cookie: cookie, Origin: base, 'X-Wingline-Token': result.csrfToken, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  const get = (p: string) => fetch(`${base}${p}`, { headers: { Cookie: cookie } })
+  const close = async () => { await srv.close(); fs.rmSync(webDir, { recursive: true }) }
+  return { warnings, post, get, close }
+}
+
+test('an unexpected error in a route is answered 500 internal and logged once with method and path (spec §9)', async () => {
+  const o = new FakeOrca()
+  o.terminalList = async () => { throw new TypeError('boom') }
+  const s = await loggedIn(o)
+  try {
+    const res = await s.get('/api/teams/duo')
+    expect(res.status).toBe(500)
+    expect(((await res.json()) as any).error.kind).toBe('internal')
+    expect(s.warnings.filter((w) => w.includes('GET /api/teams/duo') && w.includes('boom'))).toHaveLength(1)
+  } finally {
+    await s.close()
+  }
+})
+
+test('an input error (400) is not logged', async () => {
+  const s = await loggedIn(new FakeOrca())
+  try {
+    const res = await s.post('/api/teams/duo/send', { post: 'builder', message: 'hi', bogus: 1 })
+    expect(res.status).toBe(400)
+    expect(s.warnings.filter((w) => w.includes('/api/teams/duo/send'))).toEqual([])
+  } finally {
+    await s.close()
+  }
+})

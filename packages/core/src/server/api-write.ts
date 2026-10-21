@@ -231,6 +231,7 @@ export function registerWriteRoutes(r: Router, cmds: WriteCommands): void {
         checkParam(key, ctx.params[key])
       }
       assertExactFields(ctx.body, spec.fields)
+      if (ctx.body.retryRequest !== undefined) checkParam('retryRequest', ctx.body.retryRequest)
       return spec.call(cmds, ctx)
     })
   }

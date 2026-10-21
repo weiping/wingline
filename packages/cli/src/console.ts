@@ -81,6 +81,18 @@ async function startInOrca(deps: CommandDeps, a: ConsoleArgs): Promise<string> {
   })
 }
 
+/**
+ * 先关服务、再删 console.json（关闭失败也删）：另一个 wl 进程读到文件时服务一定还能连上，
+ * 不会读到指向已关闭服务的文件（复审 I-3 的残余窗口）。
+ */
+export async function stopServer(srv: { close(): Promise<void> }, cleanup: () => void): Promise<void> {
+  try {
+    await srv.close()
+  } finally {
+    cleanup()
+  }
+}
+
 /** 前台运行：起服务、写 console.json，阻塞到收到 SIGINT/SIGTERM/SIGHUP 后关闭并删除自己的 console.json。 */
 async function foreground(deps: CommandDeps, a: ConsoleArgs): Promise<ConsoleResult> {
   const srv = await createConsoleServer(deps, {
@@ -102,8 +114,7 @@ async function foreground(deps: CommandDeps, a: ConsoleArgs): Promise<ConsoleRes
   await new Promise<void>((resolve) => {
     const stop = () => {
       for (const s of SIGNALS) process.off(s, stop)
-      removeConsoleFileIfMine(deps.home, process.pid)
-      void srv.close().then(resolve)
+      void stopServer(srv, () => removeConsoleFileIfMine(deps.home, process.pid)).then(resolve, resolve)
     }
     for (const s of SIGNALS) process.on(s, stop)
   })

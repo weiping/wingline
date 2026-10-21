@@ -64,7 +64,11 @@ function errorEnvelope(err: any): { ok: false; error: Record<string, unknown> } 
   }
 }
 
-function respondError(res: http.ServerResponse, err: unknown): void {
+/** spec §9：未预期的异常（非 WinglineError 或 internal）记一行日志；输入、Orca、不确定等已知错误不记。 */
+function respondError(res: http.ServerResponse, err: unknown, warn: (msg: string) => void, where: string): void {
+  if (!(err instanceof WinglineError) || err.kind === 'internal') {
+    warn(`请求 ${where} 出错：${err instanceof Error ? err.stack ?? err.message : String(err)}`)
+  }
   if (res.destroyed) return
   if (res.headersSent) {
     res.destroy()
@@ -178,6 +182,7 @@ async function handleSse(
   sess: Session | null,
   feeds: TeamFeeds,
   sseClients: Set<http.ServerResponse>,
+  warn: (msg: string) => void,
 ): Promise<void> {
   if (!sess) {
     res.writeHead(401, SECURITY_HEADERS)
@@ -213,7 +218,7 @@ async function handleSse(
     sseClients.add(res)
     feeds.replaySnapshot(team, (chunk) => res.write(chunk))
   } catch (err) {
-    respondError(res, err)
+    respondError(res, err, warn, `GET /api/teams/${team}/events`)
   }
 }
 
@@ -262,7 +267,7 @@ async function handleRouter(
     })
     writeEnvelope(res, 200, { ok: true, result })
   } catch (err) {
-    respondError(res, err)
+    respondError(res, err, serverDeps.warn, `${req.method} ${url.pathname}`)
   }
 }
 
@@ -300,7 +305,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, ctx: 
 
   const sseMatch = url.pathname.match(/^\/api\/teams\/([^/]+)\/events$/)
   if (sseMatch) {
-    await handleSse(req, res, sseMatch[1]!, sess, ctx.feeds, ctx.sseClients)
+    await handleSse(req, res, sseMatch[1]!, sess, ctx.feeds, ctx.sseClients, ctx.deps.warn)
     return
   }
 
@@ -381,7 +386,7 @@ export async function createConsoleServer(
       sseClients,
       webRoot: o.webRoot,
       version: o.version ?? 'dev',
-    }).catch((err) => respondError(res, err))
+    }).catch((err) => respondError(res, err, deps.warn, `${req.method} ${req.url?.split('?')[0] ?? ''}`))
   })
 
   serverPort = await listenServer(server, o.port ?? 0)
