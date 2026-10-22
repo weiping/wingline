@@ -70,9 +70,8 @@ export function StreamBanner() {
 export function TopBar() {
   const { state, snapshot } = useStream()
   const [label, tone] = STATE_TEXT[state]
-  const pending = snapshot
-    ? snapshot.attentionCounts.frozen + snapshot.attentionCounts.signals + snapshot.attentionCounts.questions + snapshot.attentionCounts.stale
-    : 0
+  const c = snapshot?.attentionCounts
+  const pending = c ? c.frozen + c.signals + c.questions + c.stale + (c.warnings ?? 0) : 0
   return (
     <header class="topbar">
       <Pill tone={tone}>{label}</Pill>

@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest'
-import type { TimelineEvent } from '@wingline/core'
-import { renderTimelineEvent } from '../src/output.js'
+import type { AttentionReport, TimelineEvent } from '@wingline/core'
+import { renderAttention, renderTimelineEvent } from '../src/output.js'
 
 const at = '2026-10-16T10:00:00.000Z'
 const event = (over: Partial<TimelineEvent> = {}): TimelineEvent => ({
@@ -20,4 +20,19 @@ test('a normal event keeps its columns', () => {
 
 test('an empty actor renders as the dash placeholder', () => {
   expect(renderTimelineEvent(event({ actor: '' }))).toContain('命令  -  send')
+})
+
+const report = (over: Partial<AttentionReport> = {}): AttentionReport => ({
+  team: 'duo',
+  dispatcher: { state: 'running', pid: 1, heartbeatAt: at, ageMs: 1000 } as AttentionReport['dispatcher'],
+  frozen: [{ post: 'checker@duo', reason: '卡住', frozenAt: at, skippedChildren: 0 }],
+  signals: [], questions: [], stale: [], unavailable: [], warnings: [],
+  ...over,
+})
+
+test('renderAttention prints a 告警 section first only when there are warnings', () => {
+  expect(renderAttention(report())).not.toContain('告警')
+  const out = renderAttention(report({ warnings: ['有未应用的规格草稿：/t/team.draft.yaml', 'Orca 同步已停止：/w/a'] }))
+  expect(out.startsWith('告警：\n  有未应用的规格草稿：/t/team.draft.yaml\n  Orca 同步已停止：/w/a\n')).toBe(true)
+  expect(out.indexOf('告警')).toBeLessThan(out.indexOf('冻结的岗位'))
 })

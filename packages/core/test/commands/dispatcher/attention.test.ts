@@ -1,7 +1,20 @@
+import fs from 'node:fs'
 import { expect, test } from 'vitest'
 import { attention, dispatcherStatus } from '../../../src/commands/dispatcher/attention.js'
 import { WinglineError } from '../../../src/errors.js'
+import { discardDraft, draftPathOf } from '../../../src/spec/draft.js'
 import { FakeOrca, seedRunningTeam } from '../fake-client.js'
+
+test('attention lists the draft warning when team.draft.yaml exists and drops it after discard', async () => {
+  const o = new FakeOrca(); const { deps, registry } = seedRunningTeam(o)
+  const spec = registry.getTeam('duo')!.specPath
+  expect((await attention(deps, 'duo')).warnings).toEqual([])
+  const draft = draftPathOf(spec)
+  fs.writeFileSync(draft, fs.readFileSync(spec, 'utf8'))
+  expect((await attention(deps, 'duo')).warnings).toEqual([`有未应用的规格草稿：${draft}（执行 wl down duo 后 wl up ${spec} --draft）`])
+  discardDraft(spec)
+  expect((await attention(deps, 'duo')).warnings).toEqual([])
+})
 
 test('attention lists every source explicitly, with commands, and works with the dispatcher stopped', async () => {
   const o = new FakeOrca(); const { deps, registry } = seedRunningTeam(o)

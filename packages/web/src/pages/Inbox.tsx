@@ -37,6 +37,13 @@ export function Inbox({ team }: { team: string }) {
       <header class="page-head">
         <h1>收件箱</h1>
       </header>
+      {a.warnings.length > 0 && (
+        <div class="warnings">
+          {a.warnings.map((w) => (
+            <p class="error" key={w}>{w}</p>
+          ))}
+        </div>
+      )}
       {a.dispatcher.state !== 'running' && (
         <Section title="调度员">
           <p class="error">调度员不在运行，提问转达与巡查暂停。</p>

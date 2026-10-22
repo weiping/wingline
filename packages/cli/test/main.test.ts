@@ -497,6 +497,7 @@ test('wl attention renders every section with commands; healthy dispatcher last,
       { taskId: 't1', title: 'T', reason: 'dead_assignee', owner: 'b@duo', since: null, command: 'wl task recover t1' },
     ],
     unavailable: [],
+    warnings: [],
   }
   const report = (dispatcher: AttentionReport['dispatcher']): AttentionReport => ({ ...base, dispatcher })
   const healthy = await exec(['attention', 'duo'], cmds({ attention: async () => report({ state: 'running', ageMs: 12_000 }) }))
@@ -522,10 +523,10 @@ test('wl dispatcher freeze requires --reason; hush parses --for; reply passes --
 })
 test('wl attention prints commands and marks unavailable sources', async () => {
   const r = await exec(['attention', 'duo'], cmds({ attention: async () => ({ team: 'duo', dispatcher: { state: 'stale', ageMs: 540_000 }, frozen: [], signals: [], questions: [],
-    stale: [{ taskId: 't1', title: 'T', reason: 'dead_assignee', owner: 'b@duo', since: null, command: 'wl task recover t1' }], unavailable: [] }) }))
+    stale: [{ taskId: 't1', title: 'T', reason: 'dead_assignee', owner: 'b@duo', since: null, command: 'wl task recover t1' }], unavailable: [], warnings: [] }) }))
   expect(r.out.split('\n')[0]).toContain('调度员')
   expect(r.out).toContain('wl task recover t1')
-  const u = await exec(['attention', 'duo'], cmds({ attention: async () => ({ team: 'duo', dispatcher: { state: 'running', ageMs: 12_000 }, frozen: [], signals: [], questions: [], stale: [], unavailable: ['orca: runtime_unavailable'] }) }))
+  const u = await exec(['attention', 'duo'], cmds({ attention: async () => ({ team: 'duo', dispatcher: { state: 'running', ageMs: 12_000 }, frozen: [], signals: [], questions: [], stale: [], unavailable: ['orca: runtime_unavailable'], warnings: [] }) }))
   expect(u.out).toContain('不可用（orca: runtime_unavailable）')
 })
 test('wl dispatcher unfreeze lists skipped commands; invalid --for exits 1', async () => {

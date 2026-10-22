@@ -152,6 +152,7 @@ export class TeamFeeds {
           signals: att.signals.length,
           questions: att.questions.length,
           stale: att.stale.length,
+          warnings: att.warnings.length,
         },
       }
       const serialized = JSON.stringify(data)

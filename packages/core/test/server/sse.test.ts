@@ -1,5 +1,7 @@
+import fs from 'node:fs'
 import { expect, test } from 'vitest'
 import { cursorFrom, TeamFeeds } from '../../src/server/sse.js'
+import { draftPathOf } from '../../src/spec/draft.js'
 import { cachedOrca } from '../../src/view/snapshot.js'
 import { FakeOrca, seedRunningTeam } from '../commands/fake-client.js'
 import type { LogCursor } from '../../src/commands/log.js'
@@ -187,4 +189,28 @@ test('two subscribers on one team share one loop; the loop stops when both leave
 
   unsub2()
   expect(timerCount).toBe(0)
+})
+
+test('SSE snapshot attentionCounts includes warnings', async () => {
+  const o = new FakeOrca()
+  const { deps, registry } = seedRunningTeam(o)
+  const spec = registry.getTeam('duo')!.specPath
+  fs.writeFileSync(draftPathOf(spec), fs.readFileSync(spec, 'utf8'))
+  const d = { ...deps, orca: cachedOrca(o) }
+  const writes: string[] = []
+  let tickSnapshot: () => Promise<void> = async () => {}
+  const feeds = new TeamFeeds(d, {
+    setTimer: ((fn: any, ms: number) => {
+      if (ms === 5000) tickSnapshot = fn
+      return 1 as any
+    }) as any,
+    clearTimer: () => {},
+  })
+  const unsub = await feeds.subscribe('duo', (chunk) => writes.push(chunk))
+  await tickSnapshot()
+  const frame = writes.find((w) => w.includes('event: snapshot\n'))!
+  const data = JSON.parse(frame.split('\n').find((l) => l.startsWith('data: '))!.slice(6))
+  expect(data.attentionCounts).toMatchObject({ warnings: 1 })
+  unsub()
+  feeds.closeAll()
 })

@@ -229,6 +229,7 @@ export function renderUnfreeze(r: { skipped: Array<{ taskId: string; command: st
 export function renderAttention(r: AttentionReport): string {
   const sections: string[] = []
   const dispatcher = `调度员：${dispatcherLine(r.dispatcher)?.replace('调度员：', '') ?? '从未启动'}`
+  if (r.warnings.length) sections.push(['告警：', ...r.warnings.map((w) => `  ${w}`)].join('\n'))
   if (r.dispatcher.state === 'stale') sections.push(dispatcher + `\n  重新启动：wl dispatcher up ${r.team}`)
   if (r.frozen.length) {
     sections.push(['冻结的岗位：', ...r.frozen.map((f) => `  ${f.post}  ${f.reason}（${f.frozenAt}，跳过 ${f.skippedChildren} 个子任务）  wl dispatcher unfreeze ${f.post}`)].join('\n'))

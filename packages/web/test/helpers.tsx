@@ -91,6 +91,7 @@ export const attentionOf = (over: Record<string, unknown> = {}) => ({
   questions: [],
   stale: [],
   unavailable: [],
+  warnings: [],
   ...over,
 })
 
