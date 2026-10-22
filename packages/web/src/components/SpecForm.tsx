@@ -29,6 +29,8 @@ interface FieldBase {
   onSet: FormProps['onSet']
   value: unknown
   placeholder?: string
+  /** 必填字段清空时发空串（让校验给出“不能为空”），而不是删掉这个键：删键会连带重排 YAML，而且字段位置会变。 */
+  required?: boolean
 }
 
 function Frame(p: FieldBase & { children: any; inline?: boolean }) {
@@ -58,7 +60,7 @@ function TextField(p: FieldBase) {
         disabled={p.disabled}
         onInput={(e) => {
           const v = (e.target as HTMLInputElement).value
-          p.onSet(p.path, v === '' ? null : v)
+          p.onSet(p.path, v === '' && !p.required ? null : v)
         }}
       />
     </Frame>
@@ -147,8 +149,8 @@ function PostFields({ i, post, c }: { i: number; post: any; c: Omit<FieldBase, '
   return (
     <fieldset class="card">
       <legend>岗位 {String(post?.id ?? i)}</legend>
-      <TextField {...f('id')} />
-      <TextField {...f('agent')} />
+      <TextField {...f('id')} required />
+      <TextField {...f('agent')} required />
       <TextField {...f('model')} />
       <TextField {...f('launch')} />
       <TextField {...f('worktree')} placeholder="current" />
@@ -185,7 +187,7 @@ export function SpecForm({ parsed, errors, disabled, onSet }: FormProps) {
     <form class="spec-form" onSubmit={(e) => e.preventDefault()}>
       <fieldset class="card">
         <legend>团队</legend>
-        <TextField {...c} path={['lead']} label="lead（牵头岗）" value={parsed?.lead} />
+        <TextField {...c} path={['lead']} label="lead（牵头岗）" value={parsed?.lead} required />
       </fieldset>
       {posts.map((p, i) => (
         <PostFields key={i} i={i} post={p} c={c} />

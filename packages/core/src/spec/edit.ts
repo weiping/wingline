@@ -50,18 +50,21 @@ function replaceInline(text: string, doc: Doc, path: Path, value: unknown): stri
   if (!node || !range) return null
   const inline = isScalar(node) || (isSeq(node) && node.flow)
   if (!inline) return null
+  const parent = path.length === 1 ? doc.contents : doc.getIn(path.slice(0, -1), true)
+  const inFlow = (isMap(parent) || isSeq(parent)) && parent.flow === true
   let rendered: string
   if (isPlainList(value)) rendered = flowText(value)
   else if (isPlain(value)) {
     const next = new Scalar(value)
-    if (typeof value === 'string' && isScalar(node) && typeof node.value === 'string') next.type = node.type
-    rendered = new Document(next).toString(RENDER).trimEnd()
+    // 沿用原来的引号写法；原值是空串时的引号是我们自己写的（清空必填项），不沿用
+    if (typeof value === 'string' && isScalar(node) && typeof node.value === 'string' && node.value !== '') next.type = node.type
+    // 写进 { } / [ ] 里的字符串要按 flow 上下文加引号：`c, d`、`x}` 在块上下文里是普通标量，在这里会截断或破坏语法
+    rendered = inFlow ? flowText([next]).slice(1, -1) : new Document(next).toString(RENDER).trimEnd()
   } else return null
   if (rendered.includes('\n')) return null
   const [start, valueEnd] = range
   if (start !== valueEnd) return `${text.slice(0, start)}${rendered}${text.slice(valueEnd)}`
   // 键后面什么都没写（`a:` 或 `a:   # 注释`）：值节点是空的，紧挨着冒号补 " 值"，原有的空格和注释不动
-  const parent = path.length === 1 ? doc.contents : doc.getIn(path.slice(0, -1), true)
   const pair = isMap(parent) ? pairIn(parent, path[path.length - 1]!) : undefined
   const keyEnd = (pair?.key as Node | null)?.range?.[1]
   const colon = keyEnd === undefined ? -1 : text.indexOf(':', keyEnd)
@@ -89,8 +92,18 @@ function deleteKey(text: string, doc: Doc, path: Path): string | null {
   const keyStart = (pair?.key as Node | undefined)?.range?.[0]
   if (!parent || !pair || keyStart === undefined || parent.items.length < 2) return null
   const start = lineStart(text, keyStart)
-  if (text.slice(start, keyStart).trim() !== '') return null // 键和别的内容在同一行（如 `- id: x`）
-  return text.slice(0, start) + text.slice(pairEnd(text, pair))
+  if (text.slice(start, keyStart).trim() === '') return text.slice(0, start) + text.slice(pairEnd(text, pair))
+  return deleteFirstOfItem(text, parent, pair, keyStart, start)
+}
+
+/** `- key: v` 里序列元素的第一个键：只删这个键（连同下一个键前的缩进），保留 `- ` 与元素里的其他键。 */
+function deleteFirstOfItem(text: string, parent: YAMLMap, pair: Pair, keyStart: number, lineBegin: number): string | null {
+  if (!/^\s*-\s+$/.test(text.slice(lineBegin, keyStart))) return null
+  const next = parent.items[parent.items.indexOf(pair) + 1]
+  const nextStart = (next?.key as Node | null | undefined)?.range?.[0]
+  // 下一个键必须正好在下一行行首的缩进之后，否则中间夹着别的内容，不敢删
+  if (nextStart === undefined || lineStart(text, nextStart) !== pairEnd(text, pair)) return null
+  return text.slice(0, keyStart) + text.slice(nextStart)
 }
 
 /** 沿路径往下走，返回最深的、已存在的块映射，以及路径里第一个缺失的元素下标。 */

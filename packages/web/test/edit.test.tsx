@@ -99,6 +99,22 @@ test('form and YAML views stay in sync after switching', async () => {
   await waitFor(() => expect(agentInput(container).value).toBe('gemini'))
 })
 
+test('clearing a required field (id, agent, lead) sends an empty string instead of deleting the key', async () => {
+  const s = server()
+  const { container } = render(<Edit team="duo" />)
+  await loaded(container)
+  const idInput = container.querySelector('[data-path="posts.0.id"]') as HTMLInputElement
+  fireEvent.input(idInput, { target: { value: '' } })
+  await waitFor(() => expect(s.validates()).toHaveLength(1))
+  expect(s.validates()[0]!.body.set).toEqual({ path: ['posts', 0, 'id'], value: '' })
+  // 可选字段清空仍是删除
+  const model = container.querySelector('[data-path="posts.0.model"]') as HTMLInputElement
+  fireEvent.input(model, { target: { value: 'x' } })
+  fireEvent.input(model, { target: { value: '' } })
+  await waitFor(() => expect(s.validates().length).toBeGreaterThanOrEqual(2))
+  expect(s.validates().at(-1)!.body.set).toEqual({ path: ['posts', 0, 'model'], value: null })
+})
+
 test('validate fires only after 400 ms of inactivity', async () => {
   vi.useFakeTimers()
   const s = server()

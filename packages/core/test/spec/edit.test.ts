@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { expect, test } from 'vitest'
+import { parse } from 'yaml'
 import { setField } from '../../src/spec/edit.js'
 import { validateSpecText } from '../../src/spec/load.js'
 
@@ -123,6 +124,34 @@ test('form edits on the shipped teams/duo/team.yaml change only the edited lines
   expect(removed).toEqual(['    model: opus'])
   expect(validateSpecText(text, file).errors).toEqual([])
   expect(validateSpecText(text, file).spec).toMatchObject({ patrol: { workspaceStatus: false }, posts: [{ model: 'sonnet' }, { tags: ['review'] }] })
+})
+
+test('deleting the first key of a list item removes just that key and keeps the item and every other byte', () => {
+  expect(setField(MESSY, ['posts', 0, 'id'], null)).toBe(MESSY.replace('- id: builder    # 牵头\n  agent: claude\n', '- agent: claude\n'))
+})
+
+test('emptying a required key to "" replaces only its value', () => {
+  const out = setField(MESSY, ['posts', 0, 'id'], '')
+  expect(out).toBe(MESSY.replace('id: builder    # 牵头', 'id: ""    # 牵头'))
+})
+
+test('clearing then retyping the shipped team.yaml first key keeps the file byte-identical', () => {
+  const file = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../teams/duo/team.yaml')
+  const src = fs.readFileSync(file, 'utf8')
+  const out = setField(setField(src, ['posts', 0, 'id'], ''), ['posts', 0, 'id'], 'builder')
+  expect(out).toBe(src)
+})
+
+test('a string written into a flow collection is quoted for flow context', () => {
+  const flow = 'p: {a: 1, b: x}\nq: [m, n]\n'
+  const cases: Array<[Array<string | number>, string]> = [[['p', 'b'], 'c, d'], [['p', 'b'], 'x}'], [['q', 1], 'a,b'], [['q', 0], 'x]'], [['p', 'a'], 'k: v']]
+  for (const [p, v] of cases) {
+    const parsed = parse(setField(flow, p, v)) as Record<string, any>
+    expect(parsed[p[0] as string][p[1] as never]).toBe(v)
+    // 其余元素不变
+    expect(Object.keys(parsed)).toEqual(['p', 'q'])
+  }
+  expect(setField(flow, ['p', 'b'], 'plain')).toBe('p: {a: 1, b: plain}\nq: [m, n]\n')
 })
 
 test('a nonsensical path is a spec_invalid input error, not an internal crash', () => {

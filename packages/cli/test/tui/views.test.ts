@@ -15,6 +15,23 @@ test('every rendered line is padded or cut to exactly the window width', () => {
   }
 })
 
+test('the selected row stays on screen in a long inbox and a long overview', () => {
+  const many = Array.from({ length: 40 }, (_, i) => question({ messageId: `msg-${i}`, body: `问题编号${i}` }))
+  const inbox = dataOf({ attention: attentionOf({ questions: many }) })
+  const size = { cols: 80, rows: 24 }
+  for (const selected of [0, 17, 18, 35, 39]) {
+    const lines = renderView(on('inbox', { selected }), inbox, size)
+    expect(lines).toHaveLength(24)
+    const marked = lines.filter((l) => l.startsWith('>'))
+    expect(marked).toHaveLength(1)
+    expect(marked[0]).toContain(`问题编号${selected}`)
+    expect(lines[0]).toContain('雁阵') // 页头不被卷走
+  }
+  const posts = Array.from({ length: 40 }, (_, i) => ({ address: `p${i}@duo`, agent: 'claude', status: 'live' as const, handle: null, worktree: 'c', isLead: false }))
+  const lines = renderView(on('overview', { selected: 33 }), dataOf({ posts }), size)
+  expect(lines.filter((l) => l.startsWith('>'))).toEqual([expect.stringContaining('p33@duo')])
+})
+
 test('overview shows the dispatcher line, the post table and the last 8 timeline events', () => {
   const timeline = Array.from({ length: 12 }, (_, i) => event({ id: `command:${i}`, action: `act${i}` }))
   const text = renderView(on('overview'), dataOf({ timeline }), SIZE).join('\n')

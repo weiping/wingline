@@ -274,12 +274,18 @@ async function reportDeadAssignees(l: Launch, runId: string): Promise<NonNullabl
   }
 }
 
-/** 团队名取自草稿：改名的草稿是另一个团队，不与现有团队的规格哈希比较。 */
+/**
+ * 运行中的团队不允许在线换规格：草稿里的团队名对应的团队、以及这份 spec 文件目前归属的团队，
+ * 只要有一个还在运行，就拿它登记的规格哈希去比（改了名的草稿哈希一定不同，会被拒绝）。
+ */
 function applyDraftBeforeUp(deps: CommandDeps, specPath: string): void {
   const draft = draftPathOf(specPath)
   if (!fs.existsSync(draft)) throw new WinglineError('input', 'draft_not_found', `找不到规格草稿 ${draft}`)
-  const team = deps.registry.getTeam(loadTeamSpec(draft).name)
-  applyDraft(specPath, { runningHash: team?.status === 'up' ? team.specHash : null })
+  const abs = path.resolve(specPath)
+  const named = deps.registry.getTeam(loadTeamSpec(draft).name)
+  const owner = deps.registry.listTeams().find((t) => path.resolve(t.specPath) === abs)
+  const running = [named, owner].find((t) => t?.status === 'up')
+  applyDraft(specPath, { runningHash: running ? running.specHash : null })
 }
 
 export async function up(deps: CommandDeps, args: UpArgs): Promise<UpResult> {

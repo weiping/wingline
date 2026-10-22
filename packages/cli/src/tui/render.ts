@@ -50,13 +50,21 @@ function body(s: TuiState, data: TuiData, height: number): string[] {
   return s.view === 'inbox' ? inboxBody(rows, selected, data) : timelineBody(rows, selected, s.filter, height)
 }
 
+/** 正文比可用高度长时，围绕选中行（以 `> ` 开头）取一个窗口，保证选中的那一行始终看得见。 */
+function windowAround(lines: string[], height: number): string[] {
+  if (lines.length <= height) return lines
+  const focus = Math.max(0, lines.findIndex((l) => l.startsWith('> ')))
+  const start = Math.max(0, Math.min(focus - Math.floor(height / 2), lines.length - height))
+  return lines.slice(start, start + height)
+}
+
 /** 整屏内容：每行恰好 cols 列；窗口过窄只给一行提示。输出里不含任何 ANSI 序列。 */
 export function renderView(s: TuiState, data: TuiData, size: { cols: number; rows: number }): string[] {
   if (size.cols < MIN_COLS) return ['窗口太窄']
   const head = header(s, data)
   const foot = footer(s, size.cols)
   const height = Math.max(1, size.rows - head.length - foot.length)
-  const main = body(s, data, height).slice(0, height)
+  const main = [...windowAround(body(s, data, height), height)]
   while (main.length < height) main.push('')
   return [...head, ...main, ...foot].map((l) => fit(l, size.cols))
 }

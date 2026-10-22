@@ -543,6 +543,20 @@ test('up --draft with the team still up and a different specHash refuses and tou
   expect(fs.existsSync(`${p}.bak`)).toBe(false)
   expect(fs.existsSync(draftPathOf(p))).toBe(true)
 })
+test('up --draft refuses when the draft renames a running team (the team that owns this spec path is still up)', async () => {
+  const o = new FakeOrca(); const { deps, registry } = mkDeps(o); const p = duo()
+  await up(deps, { specPath: p })
+  fs.writeFileSync(draftPathOf(p), DUO_YAML.replace('name: duo', 'name: duo2'))
+  await expect(up(deps, { specPath: p, draft: true })).rejects.toMatchObject({ kind: 'input', code: 'team_spec_changed' })
+  expect(fs.readFileSync(p, 'utf8')).toBe(DUO_YAML)
+  expect(fs.existsSync(`${p}.bak`)).toBe(false)
+  expect(fs.existsSync(draftPathOf(p))).toBe(true)
+  expect(registry.getTeam('duo2')).toBeNull()
+  // 团队已停止后，同样的改名草稿可以应用
+  registry.setTeamStatus('duo', 'stopped')
+  await up(deps, { specPath: p, draft: true })
+  expect(registry.getTeam('duo2')).toMatchObject({ status: 'up' })
+})
 test('up --draft allows a comment-only draft while the team is up', async () => {
   const o = new FakeOrca(); const { deps } = mkDeps(o); const p = duo()
   await up(deps, { specPath: p })
