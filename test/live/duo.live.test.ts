@@ -137,21 +137,27 @@ test.skipIf(process.env.WL_LIVE_CONSOLE !== '1')('console --open opens the conso
 test.skipIf(process.env.WL_LIVE_WORKSPACE_STATUS !== '1')('workspace status follows the dispatcher: a started task makes the worktree in-progress (manual confirm)', async () => {
   const { yaml, env } = sandbox()
   const worktree = process.env.WINGLINE_LIVE_WORKTREE ?? 'current'
-  const shown = () => execFileSync(defaultMakeDeps(env, () => {}).orcaPath, ['worktree', 'show', '--worktree', worktree, '--json'], { encoding: 'utf8' })
+  const orca = defaultMakeDeps(env, () => {}).orcaPath
+  const shown = () => (JSON.parse(execFileSync(orca, ['worktree', 'show', '--worktree', worktree, '--json'], { encoding: 'utf8' })) as { result: { worktree: { workspaceStatus: string; comment: string } } }).result.worktree
+  const original = shown()
+  // 先把状态预置成 todo：worktree 本来就是 in-progress 的话，看到 in-progress 说明不了什么
+  execFileSync(orca, ['worktree', 'set', '--worktree', worktree, '--workspace-status', 'todo', '--json'])
   try {
     await wl(['up', yaml, '--json'], env)
     await wl(['dispatcher', 'up', 'duo', '--json'], env)
     const created = await wl(['task', 'create', 'duo', '--title', '3C 真机：工作区状态', '--post', 'builder@duo', '--json'], env)
     expect(created.json.ok).toBe(true)
-    // 重启后第一轮只观察不写，所以要等第二个巡查周期（周期 5 分钟）
-    let seen = ''
-    for (let i = 0; i < 28 && !seen.includes('in-progress'); i++) {
+    // 重启后第一轮只观察不写（约 5 分钟），第二个巡查周期（约 10 分钟）才写：最多等 15 分钟
+    let seen = shown()
+    for (let i = 0; i < 60 && seen.workspaceStatus !== 'in-progress'; i++) {
       await new Promise((r) => setTimeout(r, 15_000))
       seen = shown()
     }
-    expect(seen).toContain('in-progress')
+    expect(seen.workspaceStatus).toBe('in-progress')
   } finally {
     await wl(['dispatcher', 'down', 'duo', '--close', '--json'], env).catch(() => {})
     await wl(['down', 'duo', '--close', '--json'], env).catch(() => {})
+    // Orca CLI 的 `--comment ""` 会被忽略，原来是空的注释只能还原成一个空格
+    execFileSync(orca, ['worktree', 'set', '--worktree', worktree, '--workspace-status', original.workspaceStatus, '--comment', original.comment === '' ? ' ' : original.comment, '--json'])
   }
-}, 900_000)
+}, 1_200_000)
