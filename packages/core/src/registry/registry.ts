@@ -190,6 +190,25 @@ export interface PatrolEvent {
   detail?: unknown
 }
 
+/** 调度员上次写进 Orca 的工作区状态与注释（3C）：只在值变化时再写，fail_count 连续失败 3 次后停手。 */
+export interface OrcaSyncRow {
+  worktree: string
+  team: string
+  status: string | null
+  comment: string | null
+  writtenAt: string | null
+  failCount: number
+}
+
+const orcaSyncRow = (r: Row): OrcaSyncRow => ({
+  worktree: r.worktree as string,
+  team: r.team as string,
+  status: r.status as string | null,
+  comment: r.comment as string | null,
+  writtenAt: r.written_at as string | null,
+  failCount: r.fail_count as number,
+})
+
 const patrolRow = (r: Row): PatrolStateRow => ({
   team: r.team as string,
   post: r.post as string,
@@ -778,6 +797,32 @@ export class Registry {
     this.db
       .prepare('INSERT INTO audit_events(team, at, actor, command, target, outcome, detail) VALUES (?, ?, ?, ?, ?, ?, ?)')
       .run(r.team, r.at ?? this.now(), r.actor, r.command, r.target, r.outcome, detail)
+  }
+
+  // —— 阶段 3C：Orca 同步状态 ——
+
+  getOrcaSync(worktree: string): OrcaSyncRow | null {
+    const r = this.db.prepare('SELECT * FROM orca_sync WHERE worktree = ?').get(worktree) as Row | undefined
+    return r ? orcaSyncRow(r) : null
+  }
+
+  putOrcaSync(s: OrcaSyncRow): void {
+    this.db
+      .prepare(
+        `INSERT INTO orca_sync(worktree, team, status, comment, written_at, fail_count) VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(worktree) DO UPDATE SET team = excluded.team, status = excluded.status, comment = excluded.comment,
+           written_at = excluded.written_at, fail_count = excluded.fail_count`,
+      )
+      .run(s.worktree, s.team, s.status, s.comment, s.writtenAt, s.failCount)
+  }
+
+  listOrcaSync(team: string): OrcaSyncRow[] {
+    return (this.db.prepare('SELECT * FROM orca_sync WHERE team = ? ORDER BY worktree').all(team) as Row[]).map(orcaSyncRow)
+  }
+
+  /** 调度员启动时调用：此前停手的 worktree 重新尝试。 */
+  resetOrcaSyncFailures(team: string): void {
+    this.db.prepare('UPDATE orca_sync SET fail_count = 0 WHERE team = ?').run(team)
   }
 
   listAudit(team: string, o: { afterId?: number; since?: string; limit?: number } = {}): AuditRow[] {

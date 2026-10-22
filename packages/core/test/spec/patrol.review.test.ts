@@ -10,7 +10,7 @@ const load = (patrol: string, platform?: NodeJS.Platform) =>
 test('an empty patrol block gives every default from spec 5.3', () => {
   expect(loadTeamSpec(mkTeam(DUO_YAML + 'patrol: {}\n')).patrol).toEqual({
     noProgressMinutes: 20, promptMinutes: 5, ownerIdleMinutes: 30, postFailureStreak: 3,
-    freezeLead: false, autoRecover: false, worktreeComment: false, notify: null,
+    freezeLead: false, autoRecover: false, worktreeComment: false, workspaceStatus: true, notify: null,
   })
 })
 
@@ -20,7 +20,7 @@ test.each([
   expect(() => load(`  ${field}: ${value}\n`)).toThrow()
 })
 
-test.each([['freeze_lead'], ['auto_recover'], ['worktree_comment']])('patrol.%s must be a boolean', (field) => {
+test.each([['freeze_lead'], ['auto_recover'], ['worktree_comment'], ['workspace_status']])('patrol.%s must be a boolean', (field) => {
   expect(() => load(`  ${field}: 'yes'\n`)).toThrow()
   expect(load(`  ${field}: true\n`).patrol).toMatchObject({ [field.replace(/_(\w)/g, (_, c: string) => c.toUpperCase())]: true })
 })

@@ -1,10 +1,17 @@
 import fs from 'node:fs'
-import { expect, test } from 'vitest'
+import { afterEach, beforeEach, expect, test } from 'vitest'
 import { cursorFrom, TeamFeeds } from '../../src/server/sse.js'
 import { draftPathOf } from '../../src/spec/draft.js'
 import { cachedOrca } from '../../src/view/snapshot.js'
-import { FakeOrca, seedRunningTeam } from '../commands/fake-client.js'
+import { FakeOrca, seedRunningTeam, setWorktreeSupport } from '../commands/fake-client.js'
 import type { LogCursor } from '../../src/commands/log.js'
+
+// 探针结论未定时 workspaceStatus 默认不支持，会多出一条“Orca 不支持”告警；这里只数草稿告警
+let restoreSupport = () => {}
+beforeEach(() => {
+  restoreSupport = setWorktreeSupport({ workspaceStatus: true, comment: true })
+})
+afterEach(() => restoreSupport())
 
 test('cursorFrom handles undefined and valid Last-Event-ID', () => {
   const start: LogCursor = { task: 10, patrol: 20, command: 30 }

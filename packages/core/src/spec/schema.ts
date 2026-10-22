@@ -44,6 +44,7 @@ const patrolSchema = z
     freeze_lead: z.boolean().default(false),
     auto_recover: z.boolean().default(false),
     worktree_comment: z.boolean().default(false),
+    workspace_status: z.boolean().default(true),
     notify: notifySchema.optional(),
   })
   .strict()

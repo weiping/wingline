@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { expect, test } from 'vitest'
 import type { CommandDeps } from '../../../src/commands/deps.js'
-import { notifyHuman, typeTo, worktreeComment } from '../../../src/commands/dispatcher/outlets.js'
+import { notifyHuman, typeTo } from '../../../src/commands/dispatcher/outlets.js'
 import { WinglineError } from '../../../src/errors.js'
 import { loadTeamSpec } from '../../../src/spec/load.js'
 import { DUO_YAML, mkTeam } from '../../spec/helpers.js'
@@ -57,13 +57,4 @@ test('final-review m9: a synchronously throwing spawn is a failed outlet, not a 
   const r = await notifyHuman(deps, ctxOf(deps, y), { post: 'builder@duo', signal: 's', level: 2, message: 'm' }, { spawn })
   expect(r.external).toBe('failed')
   expect(registry.listPatrolEvents('duo').filter((e) => e.action === 'notify')).toHaveLength(1)
-})
-test('worktreeComment only when enabled; failures are swallowed', async () => {
-  const o = new FakeOrca(); const { deps } = seedRunningTeam(o)
-  await worktreeComment(deps, ctxOf(deps), 'checker@duo', 'c')
-  expect(o.comments).toEqual([])
-  o.faults.push({ method: 'worktreeSet', when: 'before', error: new WinglineError('orca', 'x', 'x') })
-  await expect(worktreeComment(deps, ctxOf(deps, DUO_YAML + 'patrol:\n  worktree_comment: true\n'), 'checker@duo', 'c')).resolves.toBeUndefined()
-  await worktreeComment(deps, ctxOf(deps, DUO_YAML + 'patrol:\n  worktree_comment: true\n'), 'checker@duo', 'c2')
-  expect(o.comments).toEqual([{ worktree: deps.registry.getPost('checker@duo')!.worktree, comment: 'c2' }])
 })

@@ -1,5 +1,6 @@
 import fs from 'node:fs'
 import { WinglineError } from '../../errors.js'
+import { ORCA_WORKTREE_SUPPORT } from '../../orca/client.js'
 import type { PatrolStateRow, QuestionRow } from '../../registry/registry.js'
 import { draftPathOf } from '../../spec/draft.js'
 import { loadTeamSpec, type TeamSpec } from '../../spec/load.js'
@@ -25,11 +26,17 @@ export interface AttentionReport {
 const DAY_MS = 24 * 3_600_000
 
 /** spec 第 6.5 节：由规格文件、注册表与常量推导，条件成立期间一直显示。 */
-export function warningsOf(deps: CommandDeps, team: string, _spec: TeamSpec | null): string[] {
+export function warningsOf(deps: CommandDeps, team: string, spec: TeamSpec | null): string[] {
   const specPath = deps.registry.getTeam(team)?.specPath
   if (!specPath) return []
   const draft = draftPathOf(specPath)
-  return fs.existsSync(draft) ? [`有未应用的规格草稿：${draft}（执行 wl down ${team} 后 wl up ${specPath} --draft）`] : []
+  const out = fs.existsSync(draft) ? [`有未应用的规格草稿：${draft}（执行 wl down ${team} 后 wl up ${specPath} --draft）`] : []
+  if (spec?.patrol.workspaceStatus && !ORCA_WORKTREE_SUPPORT.workspaceStatus) out.push('Orca 不支持工作区状态：patrol.workspace_status 不起作用')
+  if (spec?.patrol.worktreeComment && !ORCA_WORKTREE_SUPPORT.comment) out.push('Orca 不支持卡片注释：patrol.worktree_comment 不起作用')
+  for (const s of deps.registry.listOrcaSync(team)) {
+    if (s.failCount >= 3) out.push(`Orca 同步已停止：${s.worktree}（连续 3 次失败，重启调度员后重试）`)
+  }
+  return out
 }
 
 function specOf(deps: CommandDeps, team: string): TeamSpec | null {

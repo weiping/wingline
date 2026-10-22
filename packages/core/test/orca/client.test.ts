@@ -264,6 +264,16 @@ test('reply / workerList / worktreeSet argv and mapping', async () => {
   expect(calls[2]).toEqual(['worktree', 'set', '--worktree', 'id:w', '--comment', 'c'])
 })
 
+test('worktreeSet passes --workspace-status and --comment only when given', async () => {
+  const { client, calls } = clientWith({ 'worktree set': { worktree: {} } })
+  await client.worktreeSet({ worktree: 'path:/w', status: 'in-review' })
+  await client.worktreeSet({ worktree: 'path:/w', status: 'todo', comment: 'a\nb' })
+  expect(calls[0]).toEqual(['worktree', 'set', '--worktree', 'path:/w', '--workspace-status', 'in-review'])
+  expect(calls[1]).toEqual(['worktree', 'set', '--worktree', 'path:/w', '--comment', 'a\nb', '--workspace-status', 'todo'])
+  await expect(client.worktreeSet({ worktree: 'path:/w' })).rejects.toMatchObject({ kind: 'internal' })
+  expect(calls).toHaveLength(2)
+})
+
 test('workerList tolerates a worker without projection', async () => {
   const { client } = clientWith({ 'orchestration worker-list': { workers: [{ dispatchId: 'ctx-1', taskId: 't1', dispatchStatus: 'dispatched' }] } })
   expect(await client.workerList({ run: 'r' })).toEqual([{ dispatchId: 'ctx-1', taskId: 't1', terminalHandle: null, dispatchStatus: 'dispatched', attention: [], liveness: null }])

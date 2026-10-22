@@ -34,6 +34,8 @@ export interface PatrolSpec {
   freezeLead: boolean
   autoRecover: boolean
   worktreeComment: boolean
+  /** 同步岗位所在 worktree 的工作区状态（默认开）；取默认值不进规格哈希。 */
+  workspaceStatus: boolean
   notify: { webhook: string } | { command: string[] } | null
 }
 
@@ -45,6 +47,7 @@ export const DEFAULT_PATROL: PatrolSpec = {
   freezeLead: false,
   autoRecover: false,
   worktreeComment: false,
+  workspaceStatus: true,
   notify: null,
 }
 
@@ -197,6 +200,7 @@ function patrolOf(raw: RawTeam['patrol'], platform: NodeJS.Platform, at: Located
     freezeLead: raw.freeze_lead,
     autoRecover: raw.auto_recover,
     worktreeComment: raw.worktree_comment,
+    workspaceStatus: raw.workspace_status,
     notify: !n ? null : n.webhook ? { webhook: n.webhook } : { command: n.command! },
   }
 }

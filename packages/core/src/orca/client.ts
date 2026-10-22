@@ -5,6 +5,18 @@ import type { CheckMessage, CheckResult, OrcaClient, OrchestrationTask, RequestS
 /** terminal wait 自带超时；进程级超时多留一点余量，避免先于 Orca 自己的超时回执杀掉它。 */
 const WAIT_PROCESS_SLACK_MS = 15_000
 
+/**
+ * `orca worktree set` 里哪些东西真机验证过（3C 探针，见 spikes/REPORT.md）。探针还没在真机上跑过：
+ * 工作区状态按“不支持”处理（开关打开时 wl attention 会提示），注释沿用 2B 已用的 --comment。
+ * 跑完探针后只改这里的三个值和 WORKSPACE_STATUS_FLAG。
+ */
+export const ORCA_WORKTREE_SUPPORT: { workspaceStatus: boolean; comment: boolean; commentMax: number | null } = {
+  workspaceStatus: false,
+  comment: true,
+  commentMax: null,
+}
+const WORKSPACE_STATUS_FLAG = '--workspace-status'
+
 interface RawTerminal {
   handle: string
   tabId: string
@@ -226,7 +238,14 @@ function inboxMethods(runner: OrcaRunner): Pick<OrcaClient, 'check' | 'reply' | 
       }))
     },
     async worktreeSet(a) {
-      await runner.json(['worktree', 'set', '--worktree', a.worktree, '--comment', a.comment])
+      if (a.comment === undefined && a.status === undefined) {
+        throw new WinglineError('internal', 'internal', 'worktreeSet 至少要带 comment 或 status')
+      }
+      await runner.json([
+        'worktree', 'set', '--worktree', a.worktree,
+        ...(a.comment !== undefined ? ['--comment', a.comment] : []),
+        ...(a.status !== undefined ? [WORKSPACE_STATUS_FLAG, a.status] : []),
+      ])
     },
   }
 }
