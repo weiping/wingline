@@ -9,6 +9,7 @@ import { escalateTask, recoverTask, resolveGate } from '../commands/task/escalat
 import { reassignTask } from '../commands/task/claim.js'
 import { freezePostCmd, hushCmd, unfreezePostCmd, unhushCmd } from '../commands/dispatcher/controls.js'
 import { dispatcherReply } from '../commands/dispatcher/inbox.js'
+import { discardDraftCmd, saveSpecCmd } from '../commands/spec.js'
 
 export interface WriteCommands {
   send: typeof send
@@ -22,6 +23,8 @@ export interface WriteCommands {
   hushCmd: typeof hushCmd
   unhushCmd: typeof unhushCmd
   dispatcherReply: typeof dispatcherReply
+  saveSpecCmd: typeof saveSpecCmd
+  discardDraftCmd: typeof discardDraftCmd
 }
 
 export interface WriteRouteSpec {
@@ -123,6 +126,24 @@ export const WRITE_ROUTES: WriteRouteSpec[] = [
       return cmds.dispatcherReply(ctx.deps, { team: ctx.params.team!, messageId: ctx.params.messageId!, body, again })
     },
   },
+  {
+    pattern: '/api/teams/:team/spec',
+    check: ['team'],
+    fields: ['yaml', 'baseHash', 'running', 'retryRequest'],
+    call: async (cmds, ctx) => {
+      const { yaml, baseHash, running } = ctx.body
+      checkParam('yaml', yaml)
+      if (baseHash !== null) checkParam('baseHash', baseHash)
+      if (typeof running !== 'boolean') throw new WinglineError('input', 'invalid_param', '参数 running 不合法')
+      return cmds.saveSpecCmd(ctx.deps, { team: ctx.params.team!, yaml, baseHash, running })
+    },
+  },
+  {
+    pattern: '/api/teams/:team/spec/discard-draft',
+    check: ['team'],
+    fields: ['retryRequest'],
+    call: async (cmds, ctx) => cmds.discardDraftCmd(ctx.deps, { team: ctx.params.team! }),
+  },
 ]
 
 const ofAddress = (a: { address: string }) => a.address.split('@')[1] ?? '-'
@@ -193,9 +214,26 @@ export const CONSOLE_AUDIT: AuditTable<WriteCommands> = {
     target: (a) => a.messageId,
     summary: (a) => ({ body: a.body, again: a.again }),
   },
+  // 不记 yaml 正文：参数侧只留 baseHash / running，结果侧留 wrote / hash
+  saveSpecCmd: {
+    command: 'spec save',
+    team: (a) => a.team,
+    target: (_a, ctx) => (ctx.result as { path?: string } | undefined)?.path ?? null,
+    summary: (a, ctx) => {
+      const r = ctx.result as { wrote?: string; hash?: string } | undefined
+      // 哈希只留前 16 位：完整的 64 位会被审计摘要的 60 字符上限截断
+      return { baseHash: a.baseHash?.slice(0, 16), running: a.running, wrote: r?.wrote, hash: r?.hash?.slice(0, 16) }
+    },
+  },
+  discardDraftCmd: {
+    command: 'spec discard-draft',
+    team: (a) => a.team,
+    summary: (_a, ctx) => ({ discarded: (ctx.result as { discarded?: boolean } | undefined)?.discarded }),
+  },
 }
 
-export function consoleCommands(): WriteCommands {
+/** 控制台用 `console:`，TUI 用 `tui:`；两者共用同一张审计表，执行者都是 human。 */
+export function auditedWriteCommands(prefix: 'console:' | 'tui:'): WriteCommands {
   const raw: WriteCommands = {
     send,
     createTask,
@@ -208,9 +246,13 @@ export function consoleCommands(): WriteCommands {
     hushCmd,
     unhushCmd,
     dispatcherReply,
+    saveSpecCmd,
+    discardDraftCmd,
   }
-  return auditedCommands(raw, CONSOLE_AUDIT, { prefix: 'console:', actor: 'human' })
+  return auditedCommands(raw, CONSOLE_AUDIT, { prefix, actor: 'human' })
 }
+
+export const consoleCommands = (): WriteCommands => auditedWriteCommands('console:')
 
 function assertExactFields(body: any, allowed: readonly string[]): void {
   if (!body || typeof body !== 'object' || Array.isArray(body)) {

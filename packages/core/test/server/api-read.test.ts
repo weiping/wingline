@@ -1,8 +1,10 @@
+import fs from 'node:fs'
 import { expect, test } from 'vitest'
 import { Router, statusOf } from '../../src/server/http.js'
 import { registerReadRoutes } from '../../src/server/api-read.js'
+import { draftPathOf } from '../../src/spec/draft.js'
 import { cachedOrca } from '../../src/view/snapshot.js'
-import { FakeOrca, seedRunningTeam } from '../commands/fake-client.js'
+import { FakeOrca, seedRunningTeam, setWorktreeSupport } from '../commands/fake-client.js'
 import { WinglineError } from '../../src/errors.js'
 
 test('statusOf maps input/orca/uncertain/internal to 400/502/504/500', () => {
@@ -38,6 +40,24 @@ test('GET /api/teams lists every team with post summary, dispatcher state and at
     dispatcher: expect.anything(),
     attentionCount: expect.any(Number),
   })
+})
+
+test('GET /api/teams attentionCount counts warnings like the top bar does', async () => {
+  const restore = setWorktreeSupport({ workspaceStatus: true, comment: true })
+  try {
+    const o = new FakeOrca()
+    const { deps, registry } = seedRunningTeam(o)
+    const spec = registry.getTeam('duo')!.specPath
+    const d = { ...deps, orca: cachedOrca(o) }
+    const r = new Router()
+    registerReadRoutes(r)
+    const count = async () => ((await r.match('GET', '/api/teams')!.h({ deps: d, params: {}, query: new URLSearchParams(), body: null })) as any).teams[0].attentionCount
+    const before = await count()
+    fs.writeFileSync(draftPathOf(spec), fs.readFileSync(spec, 'utf8'))
+    expect(await count()).toBe(before + 1)
+  } finally {
+    restore()
+  }
 })
 
 test('GET /api/teams/:team/tasks passes status/tags/stale through', async () => {

@@ -12,6 +12,7 @@ import { advancePatrol, PATROL_INTERVAL_MS, type PatrolOps } from './advance.js'
 import { processBatch } from './inbox.js'
 import { HEARTBEAT_TAKEOVER_MS } from './lifecycle.js'
 import type { OutletIo } from './outlets.js'
+import { syncOrca } from './orca-sync.js'
 import { detectSignals, syncCursors, takeSnapshot } from './signals.js'
 
 export const CHECK_WAIT_MS = 60_000
@@ -136,6 +137,8 @@ function checkedSpec(spec: TeamSpec, team: TeamRow): TeamSpec {
 /** spec 为 null 表示启动时没有拿到可用规格（已由 loadStartupSpec 记过事件）。传入的规格也会核对哈希。 */
 export function initialState(deps: CommandDeps, team: TeamRow, spec: TeamSpec | null): LoopState {
   const now = deps.now()
+  // 调度员（重新）启动：此前因连续失败而停手的 Orca 同步重新尝试（3C spec 第 6.4 节）
+  deps.registry.resetOrcaSyncFailures(team.name)
   let usable = spec
   let failureLogged = spec === null
   if (spec) {
@@ -250,7 +253,9 @@ async function scan(deps: CommandDeps, st: LoopState, spec: TeamSpec, opts: Loop
     syncCursors(deps, team, [...snap.streakAfterCursor.keys()], snap)
     beat(deps, team, st.locked)
     const hits = detectSignals(snap, spec, deps.registry.listPatrolState(team))
-    await advancePatrol(deps, ctx, hits, { observeOnly: st.observeOnlyNextScan, ops: opts.ops, io: opts.io })
+    const round = { failed: new Set<string>() }
+    await advancePatrol(deps, ctx, hits, { observeOnly: st.observeOnlyNextScan, ops: opts.ops, io: opts.io, round })
+    await syncOrca(deps, ctx, snap, { observeOnly: st.observeOnlyNextScan, round })
     deps.registry.appendPatrolEvent({ team, action: 'scan', outcome: 'ok', detail: { hits: hits.length } })
   } catch (err) {
     if (err instanceof WinglineError && err.code === 'dispatcher_superseded') throw err

@@ -158,7 +158,7 @@ test('an empty reviewed_by next to a hands_to is not a conflict (nothing is revi
 })
 
 test('patrol defaults; custom values parse', () => {
-  expect(loadTeamSpec(mkTeam(DUO_YAML)).patrol).toEqual({ noProgressMinutes: 20, promptMinutes: 5, ownerIdleMinutes: 30, postFailureStreak: 3, freezeLead: false, autoRecover: false, worktreeComment: false, notify: null })
+  expect(loadTeamSpec(mkTeam(DUO_YAML)).patrol).toEqual({ noProgressMinutes: 20, promptMinutes: 5, ownerIdleMinutes: 30, postFailureStreak: 3, freezeLead: false, autoRecover: false, worktreeComment: false, workspaceStatus: true, notify: null })
   const y = DUO_YAML + 'patrol:\n  no_progress_minutes: 5\n  freeze_lead: true\n  notify:\n    webhook: https://example.invalid/h\n'
   expect(loadTeamSpec(mkTeam(y)).patrol).toMatchObject({ noProgressMinutes: 5, freezeLead: true, notify: { webhook: 'https://example.invalid/h' } })
   expect(loadTeamSpec(mkTeam(DUO_YAML + "patrol:\n  notify:\n    command: ['/usr/bin/notify', '-m']\n")).patrol.notify).toEqual({ command: ['/usr/bin/notify', '-m'] })

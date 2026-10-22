@@ -214,3 +214,27 @@ test('post detail shows the terminal preview as plain text, never as markup', as
   expect(container.querySelector('script')).toBeNull()
   expect(getByText('<script>alert(1)</script>', { selector: 'pre' })).toBeTruthy()
 })
+
+test('inbox shows warnings above the sections', async () => {
+  stubEventSource()
+  mockApi({
+    'GET /api/session': () => ({ csrfToken: 'tok', version: '1', teams: ['duo'] }),
+    'GET /api/teams/duo/attention': () => attentionOf({ warnings: ['有未应用的规格草稿：/t/team.draft.yaml（执行 wl down duo 后 wl up /t/team.yaml --draft）'] }),
+  })
+  const { findByText, container } = render(withStream('duo', <Inbox team="duo" />))
+  const warning = await findByText(/有未应用的规格草稿/)
+  const firstSection = container.querySelector('section')!
+  expect(warning.compareDocumentPosition(firstSection) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+})
+
+test('overview shows the pending-draft notice when attention.warnings has one', async () => {
+  stubEventSource()
+  mockApi({
+    'GET /api/session': () => ({ csrfToken: 'tok', version: '1', teams: ['duo'] }),
+    'GET /api/teams/duo': () => teamOf(),
+    'GET /api/teams/duo/attention': () => attentionOf({ warnings: ['有未应用的规格草稿：/t/team.draft.yaml（执行 wl down duo 后 wl up /t/team.yaml --draft）'] }),
+    'GET /api/teams/duo/log?limit=20': () => ({ events: [] }),
+  })
+  const { findByText } = render(withStream('duo', <Overview team="duo" />))
+  expect(await findByText(/有未应用的规格草稿/)).toBeTruthy()
+})

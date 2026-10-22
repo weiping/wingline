@@ -5,7 +5,8 @@ import type { CommandDeps } from '../deps.js'
 import { doneTask } from '../task/done.js'
 import { recoverTask } from '../task/escalate.js'
 import { sanitizeQuote } from './inbox.js'
-import { notifyHuman, typeTo, worktreeComment, type OutletIo } from './outlets.js'
+import { notifyHuman, typeTo, type OutletIo } from './outlets.js'
+import { syncWorktreeForPost, type SyncRound } from './orca-sync.js'
 import { LADDERS, type SignalHit } from './signals.js'
 
 export const PATROL_INTERVAL_MS = 300_000
@@ -23,6 +24,10 @@ interface Env {
   now: Date
   ops: PatrolOps
   io: OutletIo
+  /** 重启后第一轮：只观察，不对 Orca 写任何东西（清除行也不例外）。 */
+  observeOnly: boolean
+  /** 这一轮巡查里已经写失败的 worktree（和轮末的 syncOrca 共用，同一轮只计一次失败）。 */
+  round?: SyncRound
 }
 
 const ms = (iso: string | null) => (iso ? Date.parse(iso) : 0)
@@ -82,12 +87,12 @@ async function clearRow(e: Env, row: PatrolStateRow): Promise<void> {
   const at = e.now.toISOString()
   put(e, { ...row, clearedAt: at, lastNudgedAt: null })
   event(e, row, 'cleared')
-  if (row.level >= 2) await worktreeComment(e.deps, e.ctx, row.post, `雁阵：${row.post} 已恢复（${at}）`)
+  if (row.level >= 2 && !e.observeOnly) await syncWorktreeForPost(e.deps, e.ctx, row.post, e.round)
 }
 
 async function announce(e: Env, h: SignalHit, level: number, message: string): Promise<void> {
   await notifyHuman(e.deps, e.ctx, { post: h.post, signal: h.signal, taskId: h.taskId, level, message, command: h.command }, e.io)
-  await worktreeComment(e.deps, e.ctx, h.post, `雁阵：${h.post} ${h.signal}（${e.now.toISOString()}）`)
+  await syncWorktreeForPost(e.deps, e.ctx, h.post, e.round)
 }
 
 /** 第 1 级提示；岗位其实停在提示上时，把 no_progress 改判为 waiting_approval。 */
@@ -181,9 +186,9 @@ export async function advancePatrol(
   deps: CommandDeps,
   ctx: { team: TeamRow; spec: TeamSpec },
   hits: SignalHit[],
-  o: { observeOnly: boolean; ops?: PatrolOps; io?: OutletIo },
+  o: { observeOnly: boolean; ops?: PatrolOps; io?: OutletIo; round?: SyncRound },
 ): Promise<void> {
-  const e: Env = { deps, ctx, now: deps.now(), ops: o.ops ?? { doneTask, recoverTask }, io: o.io ?? {} }
+  const e: Env = { deps, ctx, now: deps.now(), ops: o.ops ?? { doneTask, recoverTask }, io: o.io ?? {}, observeOnly: o.observeOnly, round: o.round }
   const rows = new Map(deps.registry.listPatrolState(ctx.team.name).map((r) => [keyOf(r.post, r.signal, r.taskId), r]))
   const hitKeys = new Set(hits.map((h) => keyOf(h.post, h.signal, h.taskId)))
   for (const [k, r] of rows) {

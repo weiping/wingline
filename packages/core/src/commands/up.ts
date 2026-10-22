@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { checkBriefingLimit, renderBriefing } from '../brief/render.js'
 import { WinglineError } from '../errors.js'
+import { applyDraft, draftPathOf } from '../spec/draft.js'
 import { specHash } from '../spec/hash.js'
 import { loadTeamSpec, type PostSpec } from '../spec/load.js'
 import { postAddress, preflight, requestId, type CommandDeps } from './deps.js'
@@ -15,6 +16,8 @@ export interface UpArgs {
   specPath: string
   adoptRun?: string
   newRun?: boolean
+  /** 先把同目录的 team.draft.yaml 校验、备份并替换为正式规格，再照常 up。 */
+  draft?: boolean
 }
 
 export type RunOutcome = 'created' | 'adopted' | 'kept' | 'reclaimed' | 'deferred' | 'failed' | 'uncertain' | 'ambiguous' | 'lost'
@@ -271,7 +274,27 @@ async function reportDeadAssignees(l: Launch, runId: string): Promise<NonNullabl
   }
 }
 
+/**
+ * 运行中的团队不允许在线换规格：草稿里的团队名对应的团队、以及这份 spec 文件目前归属的团队，
+ * 只要有一个还在运行，就拿它登记的规格哈希去比（改了名的草稿哈希一定不同，会被拒绝）。
+ */
+function applyDraftBeforeUp(deps: CommandDeps, specPath: string): void {
+  const draft = draftPathOf(specPath)
+  if (!fs.existsSync(draft)) {
+    const applied = fs.existsSync(`${specPath}.bak`) ? `发现 ${specPath}.bak，草稿多半已经应用过。` : ''
+    throw new WinglineError('input', 'draft_not_found', `找不到规格草稿 ${draft}`, {
+      hint: `${applied}如果上一次 wl up --draft 是在应用草稿之后才失败的，草稿其实已经生效，直接执行 wl up ${specPath} 重试即可`,
+    })
+  }
+  const abs = path.resolve(specPath)
+  const named = deps.registry.getTeam(loadTeamSpec(draft).name)
+  const owner = deps.registry.listTeams().find((t) => path.resolve(t.specPath) === abs)
+  const running = [named, owner].find((t) => t?.status === 'up')
+  applyDraft(specPath, { runningHash: running ? running.specHash : null })
+}
+
 export async function up(deps: CommandDeps, args: UpArgs): Promise<UpResult> {
+  if (args.draft) applyDraftBeforeUp(deps, args.specPath)
   const spec = loadTeamSpec(args.specPath)
   const hash = specHash(spec)
   const briefings = new Map(spec.posts.map((p) => [p.id, renderBriefing(spec, p.id)]))

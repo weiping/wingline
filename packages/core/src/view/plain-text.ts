@@ -8,8 +8,9 @@ export function plainText(s: string): string {
   res = res.replace(/\x1b\[[0-9:;<=>?]*[ -/]*[@-~]/g, '')
   // 单独的 ESC 组合 (例如 \x1b(B 等)
   res = res.replace(/\x1b[@-Z\\-_]/g, '')
-  // \r\n 归一为 \n，保留 \t, \n，去除其余控制字符 ([\x00-\x08\x0b-\x1f\x7f])
+  // \r\n 归一为 \n，保留 \t, \n，去除其余控制字符：C0 ([\x00-\x08\x0b-\x1f])、DEL 与 C1 ([\x7f-\x9f])。
+  // C1 里的 0x9b（CSI）、0x9d（OSC）等，UTF-8 编码后 VTE / xterm 这类终端照样当控制序列执行，所以也要剥。
   res = res.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
-  res = res.replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '')
+  res = res.replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, '')
   return res
 }

@@ -1,0 +1,26 @@
+{
+  "worktree": {
+    "id": "repo-fixture::/path/to/repo",
+    "identity": {
+      "key": "wt2:local:fixture",
+      "executionHostId": "local",
+      "instanceId": "fixture"
+    },
+    "repoId": "repo-fixture",
+    "hostId": "local",
+    "path": "/path/to/repo",
+    "head": "0000000000000000000000000000000000000000",
+    "branch": "refs/heads/main",
+    "isBare": false,
+    "isMainWorktree": true,
+    "displayName": "main",
+    "displayNameMode": "automatic",
+    "comment": "builder：空闲",
+    "isArchived": false,
+    "isUnread": false,
+    "isPinned": false,
+    "workspaceStatus": "in-progress",
+    "parentWorktreeId": null,
+    "childWorktreeIds": []
+  }
+}

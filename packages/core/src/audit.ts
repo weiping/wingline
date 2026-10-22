@@ -15,8 +15,8 @@ export interface AuditEntry<A> {
   team: (a: A, ctx: AuditCtx) => string
   /** 任务创建这类只有结果里才有 id 的命令，从 ctx.result 取。 */
   target?: (a: A, ctx: AuditCtx) => string | null
-  /** 只放位置参数与开关；正文类字段会在写入前统一 clip。 */
-  summary?: (a: A) => Record<string, unknown>
+  /** 只放位置参数与开关；正文类字段会在写入前统一 clip。ctx.result 可取结果侧的字段。 */
+  summary?: (a: A, ctx: AuditCtx) => Record<string, unknown>
   /** 返回 true 就不写这一行（如 restore --dry-run）。 */
   skip?: (a: A) => boolean
 }
@@ -72,8 +72,8 @@ async function write(deps: CommandDeps, entry: AuditEntry<any>, a: any, outcome:
     } catch {
       // Orca 不可达：记 unknown
     }
-    const detail = entry.summary ? summaryOf(entry.summary(a)) : undefined
     const ctx: AuditCtx = { deps, result, failed: outcome !== 'ok' }
+    const detail = entry.summary ? summaryOf(entry.summary(a, ctx)) : undefined
     deps.registry.appendAudit({
       team: entry.team(a, ctx),
       actor,

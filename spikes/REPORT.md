@@ -501,3 +501,149 @@ macOS 真机（Orca 1.4.224）以**本机 claude × 2**（builder 与 checker �
 - 结果通过：关闭 builder 终端后 `wl restore duo`，builder 为 `resumed`（`sessionId` 为 UUID、终端 handle 已更换），屏幕里出现重启前发的标记 `WLS-LIVE-…` 和 `[雁阵] 重启后已接回本会话`，agent 确认仍是 builder@duo。测试后无残留 duo 终端。
 - 本机 claude 不在屏幕上画会话 ID（Linux 的会话头部会画会话文件路径），第一次跑因断言“屏幕含 sessionId”失败；live 用例改为断言标记在屏幕上（标记只存在于原会话，比会话 ID 更能证明接回的是原会话）。
 - **仍未覆盖**：`/private` cwd 前缀（本次 worktree 在 `/Users/...`，不经过 `/private`，仍只有单测）；codex 接回（留 3D）；整机或 Orca 桌面端真重启。
+
+## 3C 探针：工作区状态与注释（2026-10-22，macOS，Orca 1.4.237）
+
+探针 `spikes/worktree-status.ts` 依次设置 `todo`/`in-progress`/`in-review`/`completed` 并用 `worktree show --json` 读回，再测 `--comment` 的多行、长度与清空，最后还原。运行方式：
+
+```
+WINGLINE_SPIKE_WORKTREE=<专用测试 worktree 选择器> pnpm tsx spikes/worktree-status.ts
+```
+
+本次对象是 Orca 里唯一登记的 wingline worktree（`path:/Users/liuweiping/workspace/dev/wingline`，原状态 `in-progress`、注释为空）。
+
+**实测结论：成立**
+- 状态参数：`orca worktree set --worktree <选择器> --workspace-status <id>`（`--help` 也写明默认列 `todo`/`in-progress`/`in-review`/`completed`，自定义状态用其配置的 id）。四个取值全部设置成功，`worktree show --json` 的 `worktree.workspaceStatus` 都能读回。
+- 注释：`--comment` 支持多行；600 与 5000 字符都原样写入并读回（实际上限没测出来，至少 5000，比我们自己的 500 上限宽）。中文以及 `⚠`、`❄` 标记原样往返。
+- **空串清不掉注释**：`--comment ""`、`--comment=` 都被 CLI 当成“没给这个参数”而忽略（退出码 0，注释不变）；`--comment null` 会把字面量 `null` 写进去。唯一能“看起来清空”的办法是写单个空格。雁阵从不写空注释，所以不受影响；探针还原原本为空的注释时也用单个空格。
+- `worktree set --json` 回执是 `{ worktree: {…, workspaceStatus, comment, …} }`，已脱敏存为 `test/fixtures/receipts/worktree-set.json`。
+- 用雁阵自己的 `createOrcaClient().worktreeSet({ worktree: "path:…", status, comment })` 再往返了一次（状态 + 带 `⚠ ❄` 标记的两行注释），读回完全一致。
+
+**据此的改动**：`packages/core/src/orca/client.ts` 的 `ORCA_WORKTREE_SUPPORT` 改为 `{ workspaceStatus: true, comment: true, commentMax: null }`（`commentMax` 留 `null`：实测上限 ≥ 5000，我们自己的 500 上限更紧）；参数名 `--workspace-status` 与计划一致，无需改。
+
+**遗留**：探针第一次运行时脚本只会用空串还原注释，结果在这个 worktree 上留下了 600 个 `x`；已手动清掉，并把脚本改成用单个空格还原。这个 worktree 的注释现在是一个空格（CLI 做不到比这更“空”；要彻底清空请在 Orca 界面里改卡片注释）。
+
+## 3C 真机验证：调度员 → Orca 界面、`wl tui`（2026-10-22，macOS，Orca 1.4.237）
+
+用占位进程（`node -e "process.stdin.resume()"`，不启动真 agent）起一个 duo 团队，工作区是 Orca 里登记的 wingline worktree；`patrol.worktree_comment: true`，其余默认。结束后关调度员、关团队、还原 worktree 的状态与注释。
+
+**调度员持续运行 → Orca 界面状态**：把 worktree 状态预置成 `todo`，`wl up` → `wl dispatcher up` → 给 builder 派一个任务。
+- 第一轮巡查（约 T+5 分钟，重启后只观察）：状态仍是 `todo`，符合“首轮不写”。
+- 第二轮巡查（T+611 秒）：状态变为 `in-progress`，注释变为 `builder：3C 真机：工作区状态（进行中，第 1 轮）` 换行 `checker：空闲`。
+- 因此默认跳过的 live 用例要等第二个巡查周期（约 10 分钟），不能只等一个周期；已改成最多等 15 分钟，并先预置 `todo`。
+
+**`wl tui` 在真实伪终端里（Python `pty`，100×30）对着上面这个活团队**，21 项全部通过：进入备用屏幕并显示岗位与任务标题；`2` `3` `?` `1` 切换视图与帮助；Enter → 菜单 → 冻结 → 输入理由 → 确认 `y`，`wl attention` 里看到冻结、`wl log` 里有 `tui: dispatcher freeze` 审计行；再通过 TUI 解冻；窗口缩到 30 列显示“窗口太窄”并整屏重绘、恢复后回到正常；`q` 退出码 0；最后输出是 `\x1b[?25h\x1b[?1049l`；全程没有输出任何 OSC 序列；退出后终端回到 cooked 模式（ICANON、ECHO 都开）。
+
+**未覆盖**：真实 agent（claude / codex）参与的场景；多个团队共用一个 worktree 的真机场景（只有单测）；Windows 终端。
+
+## 3C 真机验证（续）：真实 agent、多个团队共用一个 worktree（2026-10-22，macOS，Orca 1.4.237，claude 2.1.308，codex-cli 0.163.0）
+
+对象是两个一次性的 Orca worktree（`wl-e2e-multi`、`wl-e2e-agents`，验证后已删除），没有动 wingline 主 worktree。agent 在终端里用 `env PATH=<含 wl 的目录>:$PATH WINGLINE_HOME=<临时目录> WINGLINE_ORCA=<orca> <agent>` 启动，这样它们执行的 `wl …` 找得到 `wl`，也读写同一个临时注册表。
+
+**真实 claude（`--permission-mode acceptEdits --allowedTools "Bash(wl:*),…"`）：通过**
+- 启动包被接受，岗位自我介绍后空闲；没有出现信任目录弹窗。
+- `wl send` 返回 `delivered`（观察到它开始处理）。
+- 任务 `task create --post builder@rt`：`notified`，它自己执行 `wl task start` / `wl task done`，约 20 秒结束，结果 `succeeded`；审计里的执行者是 `builder@rt`（隐式身份解析在真实终端里可用）。
+- 完整干活：按任务新建了 `e2e-hello.txt`（只此一个文件变化），`wl task done` 成功，约 30 秒。
+
+**真实 codex：能用，但有几个要写进文档的坑**
+- 默认 `-s workspace-write -a never` 下，`wl` 访问 Orca 得到 `orca:runtime_access_denied`；审计里这条命令的执行者是 `unknown`。加 `-c sandbox_workspace_write.network_access=true` 后 `orca status` 能通；但 `wl` 还要往 `WINGLINE_HOME/logs` 与注册表写，沙箱外目录被拒（`EPERM`），补 `writable_roots` 后又遇到 Orca 读取 `orca-environments.json` 的错误，没有继续深挖。
+- 免沙箱（`--dangerously-bypass-approvals-and-sandbox`，范围限定在一次性 worktree）下一切正常：收到启动包、`wl send` 给 builder 报到、执行 `wl task start/done`、在 `e2e-hello.txt` 末尾追加 `checked by checker`，约 20 秒结束。
+- codex 在免沙箱启动时会弹“Hooks need review（6 个 hooks 新增或变更）”对话框，岗位不会就绪，`wl up` 返回 `uncertain`（“岗位未确认就绪，启动包未送达”）。按 Esc 跳过（等于不信任）后再执行一次 `wl up` 即可。
+- 没有收到具体任务时，codex 会自己找事做（开始审查仓库代码）。简报里没有“没有任务就等着”的约束，后续可以加一句。
+
+**多个团队共用一个 worktree（占位进程，`duo` + `trio`，同一个注册表）：发现问题 → 已修复并复测**
+- 修复前：`duo`（有进行中的任务）在 06:57:47 写入 `in-progress`，2 秒后空闲的 `trio` 写入 `completed` 与自己的两行“空闲”注释，覆盖了前者；之后没有任何团队的值再变化，Orca 一直显示 `completed`。原因是 Orca 上一个 worktree 只有一个状态、一条注释，后写的盖掉先写的。
+- 修复：每个团队仍记录自己算出的值（用来判断自己有没有变化）；写给 Orca 的是并上其他团队之后的值——只算“登记为 up 且调度员正在运行”的其他团队，状态取最高优先级，注释每行加 `[团队名] ` 前缀。
+- 复测（新的一次性 worktree，同样的场景）：第二轮巡查后（T+605 秒）Orca 上是 `in-progress`，注释为 `[duo] builder：…（进行中，第 1 轮）` / `[duo] checker：空闲` / `[trio] builder：空闲` / `[trio] checker：空闲`；第三轮两个团队都扫描了，没有再写，值稳定。`orca_sync` 里两个团队各自记着自己的值（`duo` 为 `in-progress`，`trio` 为 `completed`）。
+- 局限：一个团队停止后，Orca 上它那部分要等其他团队下一次值变化才会更新。
+
+**未覆盖**：agent 停在权限确认框上时巡查信号的真机表现（`waiting_approval`）、长时间运行的任务期间 Orca 状态保持 `in-progress`（占位进程已验证，真 agent 的任务太短，巡查看到的都是空闲）、Windows。
+
+**留下的痕迹**：`~/.claude.json` 里多了一条 `wl-e2e-agents` 路径的项目记录（claude 自己写的，无害，可手动删除）。
+
+## 3C 真机验证（续二）：权限确认框信号、真 agent 长任务
+
+两个真 claude（`builder` 为 lead，`checker` 默认权限），`prompt_minutes: 1`，调度员正常运行，一次性 worktree。第一次运行中途磁盘被写满（调度员心跳在约 100 秒后停止），作废；下面是第二次。
+
+**权限确认框 → `waiting_approval`（已验证）**
+- `checker` 第一次执行 `wl task start` 停在 claude 的确认框上（`Do you want to proceed? ❯ 1. Yes … 4. No`）。Orca 返回给调度员的屏幕内容经 `classifyPreview` 判为 `at_prompt`。
+- 第一轮巡查记录 level 0（只记录），下一轮升到 level 2：通知了 lead（`notify_lead ok`），再下一轮重复通知一次（梯度 `repeat`）。
+- Orca 注释里 `checker` 那行出现 `⚠ 等待批准`（开跑后 649 秒，即第二轮巡查）。
+- 真 claude 的 lead 收到 `[雁阵] checker@rt2 停在确认或选择提示上…` 后只汇报、没有替它批准。
+
+**长任务期间状态（部分验证）**
+- `builder` 真的执行了 7 次 `sleep 110` 并 `wl task done`（约 899 秒时已 `completed`）。
+- Orca 状态在第二轮巡查（649 秒）首次写成 `in-progress`，之后一直没变；`builder` 做完后注释里它那行变成“空闲”（961 秒）。
+- 局限：`checker` 的任务一直卡着，状态本来就该是 `in-progress`，所以这次不能证明“只有一个长任务时状态保持 in-progress、做完翻回 completed”。
+
+**没有验证到**
+- 批准后信号被清除、`⚠` 消失：脚本的批准动作（`orca terminal send --text "" --enter`）没有生效（任务仍是 `dispatched`，信号一直在 level 2），原因没有查，且脚本把错误丢掉了。
+- 单个长任务做完后状态回落到 `completed`。
+
+**未解释的现象**
+- 开跑后约 30 秒，两个新任务各记了一条 `escalation / notify_lead / unconfirmed`，岗位显示为“未知岗位”。没有深查，也不确定此前几轮真机里是否出现过。
+
+## 3C 真机验证（续三）：批准动作与单任务长跑
+
+团队 `rt3`，两个真 claude，调度员正常运行，磁盘全程 11–12G。
+
+**测试环境的坑（不是 wingline 的缺陷）**
+- 会话重启后，从带有 `ORCA_TERMINAL_HANDLE` 的 shell 运行 `wl up`，Orca 会拒绝它代表 builder 终端认领或新建 run（`This terminal is attested as … and cannot act as …`），任务建不出来。去掉 `ORCA_TERMINAL_HANDLE` / `ORCA_AGENT_LAUNCH_TOKEN` / `ORCA_AGENT_LAUNCH` 后恢复正常。重启前为什么没有这个问题，没有逐一核实。
+- 团队 `rt2` 在 Orca 里留有旧 run 和未完成的任务，没有清理。
+
+**已再次看到的**
+- `checker` 停在权限确认框，约开跑后 615 秒 `waiting_approval` 升到 level 2；调度员先 `observe`，之后两次 `notify_lead ok`；lead（真 claude）只汇报，没有代批。
+- `builder` 的长任务（9 次 `sleep 110`）做完，任务状态变为 `completed`（约 1124 秒）；做完后 Orca 注释里 builder 那行变成“空闲”。
+
+**没有验证到的**
+- 批准后信号清除、`⚠ 等待批准` 消失：脚本分两步发送了 `1` 和回车，Orca 两次都返回 `accepted: true, bytesWritten: 1`。发送 `1` 后屏幕一度变成空提示符（`manual mode on`），发送回车后确认框又出现；`checker` 的任务一直停在 `dispatched`，信号一直在 level 2。传输是通的，但按键对 claude 确认框的实际效果没有弄清。
+- 单任务长跑：`checker` 的任务始终没完成，整个团队的状态因此一直是 `in-progress`，无法单独证明“只剩一个长任务时保持 in-progress、做完翻回 completed”。
+- 状态在开跑后约 10 分钟才从 `todo` 变成 `in-progress`；这期间任务何时真正开始没有记录，不能据此判断是否延迟。
+
+## 3C 真机验证（续四）：批准动作查清，信号清除与长任务收尾已验证
+
+团队 `rt4`，两个真 claude，调度员正常运行，`prompt_minutes: 1`，磁盘全程 11G。脚本进程去掉了 `ORCA_TERMINAL_HANDLE` 等身份变量（原因见续三）。
+
+**续三“批准没生效”的原因：测试脚本只批了一次**
+- `checker`（默认权限）依次弹出三个独立的确认框：`wl task start`、`wl task show`、`wl task done`。只发数字 `1`（不发回车）即可批掉当前这个框；脚本每次看到框就批一次，批三次后 `checker` 回复“完成”，任务变为 `completed`。
+- 这不是 wingline 的缺陷。续二、续三里任务一直卡着，是因为脚本只批了第一个框。
+
+**已验证**
+- 批准后信号清除：任务完成于 03:33:09，调度员在 03:37:02 记录 `cleared`；03:37:10 的采样里 `signals` 为 `[]`，Orca 注释里 `checker` 那行的 `⚠ 等待批准` 消失，变成“空闲”。任务完成到清除间隔约 4 分钟（等到下一轮巡查），未核对是否符合设计的巡查间隔。
+- 只剩一个长任务时的状态：`checker` 空闲后，工作区状态保持 `in-progress`；`builder` 的长任务 03:39:38 变为 `completed`，工作区状态在 03:42:39 翻成 `completed`，注释变为“builder：空闲 checker：空闲”。长任务完成到状态翻转约 3 分钟。
+- lead（真 claude）全程没有代批，并在收尾汇报里写明 `checker` 仍在等待批准、需要人处理。
+
+**状态约 10 分钟才变成 `in-progress`：已查清，是设计行为，不是 bug**
+- 调度员只在每次巡查扫描末尾同步 Orca 状态（3C spec §6.4），巡查周期固定 `PATROL_INTERVAL_MS = 300_000`（2B spec：实际间隔 5–6 分钟），与 `patrol.prompt_minutes` 无关；任务派发（`wl task create`）本身不触发同步。
+- 重启（含首次启动）后第一轮只观察，不对 Orca 写任何东西（3C spec §6.4，`observeOnlyNextScan`）。
+- rt4 的实际扫描时间（UTC）：19:26:55（首轮，只观察）→ 19:31:59（第一次写，状态变 `in-progress`，对应日志 03:32:10）→ 19:37:02（信号 `cleared`）→ 19:42:32（状态翻 `completed`）。所以刚启动的团队，状态要 ≈ 10 分钟（首轮扫描 + 观察轮）才第一次写成 `in-progress`；之后每次变化最多滞后一个周期（≈ 5–6 分钟）。上面测到的“清除约 4 分钟”“翻转约 3 分钟”都落在这个范围内。
+- 影响：新启动的团队前 ≈ 10 分钟 Orca 里显示 `todo`，即使任务已在跑。如果要求“长任务期间一直显示 `in-progress`”，这 10 分钟是缺口；是否缩短首轮或在派发时触发同步，是产品取舍，尚未改动。
+- 已处理：派发成功后、`wl task done` 收尾后立刻同步一次（`syncAfterChange`，见 3C spec §6.4），验证结果见续五、续六。
+
+**另一个未核实的现象**
+- 本轮第一次 `notify_lead` 的结果是 `unconfirmed`，之前几轮是 `ok`；当时 lead 正在处理上一条消息。没有核实 lead 是否因此漏收，只看到它事后的汇报里提到了 `checker` 在等批准。
+
+## 3C 真机验证（续五）：派发时立即同步
+
+改动：`dispatchTo` 返回 `dispatched` 后调用 `syncAfterChange`（`packages/core/src/commands/dispatcher/orca-sync.ts`），覆盖 `wl task create --post`、`wl task start`、`wl task recover`、完成后派发后续子任务。条件：团队为 `up` 且本团队调度员正在运行；排队不触发；永不抛出。单元测试 `packages/core/test/commands/task/dispatch-sync.test.ts`（8 个）；全量 106 个文件 1458 个用例通过，`pnpm typecheck` 通过。
+
+真机（团队 `rt5`，两个真 claude，调度员运行，`worktree_comment: true`）：
+- 04:09:52 创建并派发两个任务；`orca_sync` 记录的写入时间 04:09:50（UTC 20:09:50，见下方 UTC 对照），第一次采样（任务创建后 1 秒）工作区状态已是 `in-progress`，注释里两个岗位各一行“进行中，第 1 轮”。此前同样场景要约 10 分钟（615–650 秒）。
+- 此时调度员一次巡查都还没跑（`patrol_events` 为空），写入来自命令行进程的派发时同步。
+- 局限：本次只验证了派发这一个触发点的真机行为；`start` / `recover` / 子任务派发只有单元测试（`start` 有），没有真机；任务完成、信号清除仍按巡查周期（≈ 5–6 分钟）同步，没有改动。
+
+（时间对照：脚本日志为本地时间 UTC+8，`orca_sync.written_at` 为 UTC，二者相差 8 小时。）
+
+## 3C 真机验证（续六）：`wl task done` 收尾后立即同步
+
+改动：`proceed`（`packages/core/src/commands/task/done.ts`）在 `finishVerdict`、`logTask` 之后调用 `syncAfterChange`（结局为 `done` 或 `escalated`）。必须放在判定收尾之后：`in-review` 要求判定已结束且收尾类型是送审，单元测试 `done-sync.test.ts` 里送审场景的写入序列是 `in-progress`（派发评审子任务时）→ `in-review`（收尾后）。gate 失败、重放、没有调度员都不写。函数从 `syncOnDispatch` 改名为 `syncAfterChange`（派发与 done 共用）。
+
+测试：新增 `done-sync.test.ts` 6 个用例；全量 107 个文件 1464 个用例通过，`pnpm typecheck` 通过。
+
+真机（团队 `rt6`，真 claude，调度员运行）：
+- 04:16:30 创建并派发一个短任务，第一次采样（+0 秒）工作区状态 `in-progress`。
+- 04:16:40（+10 秒）claude 自己跑完 `wl task start` / `wl task done`，工作区状态与任务状态同为 `completed`；`orca_sync` 写入时间 20:16:39（UTC）。
+- 期间调度员的 `patrol_events` 只有 `inbox` / `check_ok`，没有一次 `scan`：两次写入都来自命令行进程。此前“任务完成 → 状态翻转”要等下一轮巡查，实测约 3 分钟。
+
+局限：真机只验证了不带 `links` 的 `done`（落到 `completed`）；送审（`in-review`）、`escalated` 只有单元测试，没有真机。信号清除、冻结等仍按巡查周期同步。

@@ -1,7 +1,8 @@
 import { expect, test } from 'vitest'
 import { WinglineError } from '../../src/errors.js'
-import { createOrcaClient } from '../../src/orca/client.js'
+import { createOrcaClient, ORCA_WORKTREE_SUPPORT } from '../../src/orca/client.js'
 import type { OrcaRunner, RunOptions } from '../../src/orca/run.js'
+import { fixture } from '../fixture.js'
 
 function clientWith(results: Record<string, unknown>, text = '') {
   const calls: string[][] = []
@@ -262,6 +263,26 @@ test('reply / workerList / worktreeSet argv and mapping', async () => {
   expect(calls[1]).toEqual(['orchestration', 'worker-list', '--run', 'run-1'])
   await client.worktreeSet({ worktree: 'id:w', comment: 'c' })
   expect(calls[2]).toEqual(['worktree', 'set', '--worktree', 'id:w', '--comment', 'c'])
+})
+
+test('worktreeSet accepts the real (sanitised) receipt and the probed support constant matches it', async () => {
+  const receipt = fixture('worktree-set')
+  const { client, calls } = clientWith({ 'worktree set': receipt })
+  await expect(client.worktreeSet({ worktree: 'path:/path/to/repo', status: 'in-progress', comment: receipt.worktree.comment })).resolves.toBeUndefined()
+  expect(calls[0]).toEqual(['worktree', 'set', '--worktree', 'path:/path/to/repo', '--comment', 'builder：空闲', '--workspace-status', 'in-progress'])
+  // 3C 探针（macOS Orca 1.4.237）：四个状态都能设置并读回，注释多行且至少 5000 字符
+  expect(ORCA_WORKTREE_SUPPORT).toEqual({ workspaceStatus: true, comment: true, commentMax: null })
+  expect(['todo', 'in-progress', 'in-review', 'completed']).toContain(receipt.worktree.workspaceStatus)
+})
+
+test('worktreeSet passes --workspace-status and --comment only when given', async () => {
+  const { client, calls } = clientWith({ 'worktree set': { worktree: {} } })
+  await client.worktreeSet({ worktree: 'path:/w', status: 'in-review' })
+  await client.worktreeSet({ worktree: 'path:/w', status: 'todo', comment: 'a\nb' })
+  expect(calls[0]).toEqual(['worktree', 'set', '--worktree', 'path:/w', '--workspace-status', 'in-review'])
+  expect(calls[1]).toEqual(['worktree', 'set', '--worktree', 'path:/w', '--comment', 'a\nb', '--workspace-status', 'todo'])
+  await expect(client.worktreeSet({ worktree: 'path:/w' })).rejects.toMatchObject({ kind: 'internal' })
+  expect(calls).toHaveLength(2)
 })
 
 test('workerList tolerates a worker without projection', async () => {

@@ -1,3 +1,6 @@
+/** Orca worktree 的工作区状态（`orca worktree set` 的状态参数，取值以 3C 探针为准）。 */
+export type WorkspaceStatus = 'todo' | 'in-progress' | 'in-review' | 'completed'
+
 /** title 是标签页的自定义标题（terminal create --title）；有界面时取自布局，无界面时取终端自己的 title。 */
 export interface TerminalSummary {
   handle: string
@@ -117,7 +120,8 @@ export interface OrcaClient {
   check(a: { terminal: string; run: string; ack?: string; wait?: boolean; timeoutMs?: number }): Promise<CheckResult>
   reply(a: { id: string; body: string; run: string; from: string }): Promise<{ messageId: string; duplicate: boolean }>
   workerList(a: { run: string }): Promise<WorkerView[]>
-  worktreeSet(a: { worktree: string; comment: string }): Promise<void>
+  /** comment 与 status 至少给一个；缺省的不改。 */
+  worktreeSet(a: { worktree: string; comment?: string; status?: WorkspaceStatus }): Promise<void>
   /** query 原样作为一个参数（调用方负责加引号实现精确搜索）。 */
   search(a: { query: string; agent: string; environment?: string }): Promise<SearchHit[]>
   /** 在 Orca 内置浏览器里打开一个页面（3B 控制台的 --open）。 */

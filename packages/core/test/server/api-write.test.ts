@@ -1,6 +1,10 @@
+import fs from 'node:fs'
 import { expect, test } from 'vitest'
 import { Router } from '../../src/server/http.js'
+import { draftPathOf, fileHash } from '../../src/spec/draft.js'
+import { DUO_YAML } from '../spec/helpers.js'
 import {
+  auditedWriteCommands,
   CONSOLE_AUDIT,
   consoleCommands,
   registerWriteRoutes,
@@ -36,6 +40,10 @@ function sampleRequest(pattern: string): { path: string; body: Record<string, un
       return { path: '/api/teams/duo/posts/builder/unhush', body: {} }
     case '/api/teams/:team/questions/:messageId/reply':
       return { path: '/api/teams/duo/questions/msg-1/reply', body: { body: 'answer' } }
+    case '/api/teams/:team/spec':
+      return { path: '/api/teams/duo/spec', body: { yaml: 'version: 1\n', baseHash: null, running: true } }
+    case '/api/teams/:team/spec/discard-draft':
+      return { path: '/api/teams/duo/spec/discard-draft', body: {} }
     default:
       throw new Error(`unknown pattern ${pattern}`)
   }
@@ -59,6 +67,8 @@ function makeRecordingCmds() {
     hushCmd: record('hushCmd', {}) as any,
     unhushCmd: record('unhushCmd', {}) as any,
     dispatcherReply: record('dispatcherReply', {}) as any,
+    saveSpecCmd: record('saveSpecCmd', { wrote: 'draft', path: '/t/team.draft.yaml', hash: 'h' }) as any,
+    discardDraftCmd: record('discardDraftCmd', { discarded: false }) as any,
   }
   const audited = auditedCommands(raw, CONSOLE_AUDIT, { prefix: 'console:', actor: 'human' })
   return { cmds: audited, calls, raw }
@@ -363,7 +373,7 @@ test('gates resolve 的 reassign=123（非字符串） → 400 invalid_param', a
   })
 })
 
-test('retryRequest 下传契约：仅 send、createTask、escalateTask 下传，其余 8 条不向下传', async () => {
+test('retryRequest 下传契约：仅 send、createTask、escalateTask 下传，其余 10 条不向下传', async () => {
   const o = new FakeOrca()
   const { deps } = seedRunningTeam(o)
   deps.registry.insertTaskExt({ taskId: 'task-1', team: 'duo', tags: [], kind: 'work' })
@@ -396,6 +406,70 @@ test('retryRequest 下传契约：仅 send、createTask、escalateTask 下传，
   expect(calls.hushCmd!.at(-1)?.retryRequest).toBeUndefined()
   expect(calls.unhushCmd!.at(-1)?.retryRequest).toBeUndefined()
   expect(calls.dispatcherReply!.at(-1)?.retryRequest).toBeUndefined()
+  expect(calls.saveSpecCmd!.at(-1)?.retryRequest).toBeUndefined()
+  expect(calls.discardDraftCmd!.at(-1)?.retryRequest).toBeUndefined()
+})
+
+function realSpecHarness(over: { running?: boolean } = {}) {
+  const o = new FakeOrca()
+  const { deps, registry } = seedRunningTeam(o)
+  if (over.running === false) registry.setTeamStatus('duo', 'stopped')
+  const d = { ...deps, orca: cachedOrca(o) }
+  const r = new Router()
+  registerWriteRoutes(r, consoleCommands())
+  const specPath = registry.getTeam('duo')!.specPath
+  const post = (path: string, body: unknown) => {
+    const route = r.match('POST', path)!
+    return route.h({ deps: d, params: route.params, query: new URLSearchParams(), body }) as Promise<any>
+  }
+  return { post, deps, specPath }
+}
+
+const NEW_YAML = DUO_YAML.replace('model: opus', 'model: sonnet')
+
+test('POST spec writes the draft for a running team; the audit row has the console: prefix and no yaml', async () => {
+  const { post, deps, specPath } = realSpecHarness()
+  const res = await post('/api/teams/duo/spec', { yaml: NEW_YAML, baseHash: null, running: true })
+  expect(res).toMatchObject({ wrote: 'draft', path: draftPathOf(specPath) })
+  expect(fs.readFileSync(draftPathOf(specPath), 'utf8')).toBe(NEW_YAML)
+  const row = deps.registry.listAudit('duo').at(-1)!
+  expect(row.command).toBe('console: spec save')
+  expect(row.actor).toBe('human')
+  expect(JSON.stringify(row)).not.toContain('sonnet')
+  expect(JSON.stringify(row)).toContain(res.hash.slice(0, 16))
+})
+
+test('POST spec: 409-class spec_conflict on stale baseHash and when running differs; spec_invalid carries detail.errors', async () => {
+  const { post, specPath } = realSpecHarness()
+  fs.writeFileSync(draftPathOf(specPath), `${DUO_YAML}# x\n`)
+  await expect(post('/api/teams/duo/spec', { yaml: NEW_YAML, baseHash: null, running: true })).rejects.toMatchObject({ code: 'spec_conflict' })
+  await expect(post('/api/teams/duo/spec', { yaml: NEW_YAML, baseHash: fileHash(specPath), running: false })).rejects.toMatchObject({ code: 'spec_conflict' })
+  const bad = await post('/api/teams/duo/spec', { yaml: DUO_YAML.replace('lead: builder', 'lead: ghost'), baseHash: fileHash(draftPathOf(specPath)), running: true }).catch((e) => e)
+  expect(bad).toMatchObject({ code: 'spec_invalid', detail: { errors: [{ code: 'lead_unknown' }] } })
+})
+
+test('POST spec rejects a non-string yaml and a non-boolean running before calling the command', async () => {
+  const { post } = realSpecHarness()
+  await expect(post('/api/teams/duo/spec', { yaml: 1, baseHash: null, running: true })).rejects.toMatchObject({ code: 'invalid_param' })
+  await expect(post('/api/teams/duo/spec', { yaml: NEW_YAML, baseHash: null, running: 'yes' })).rejects.toMatchObject({ code: 'invalid_param' })
+  await expect(post('/api/teams/duo/spec', { yaml: NEW_YAML, baseHash: 5, running: true })).rejects.toMatchObject({ code: 'invalid_param' })
+})
+
+test('discard-draft returns { discarded } and is audited', async () => {
+  const { post, deps, specPath } = realSpecHarness()
+  expect(await post('/api/teams/duo/spec/discard-draft', {})).toEqual({ discarded: false })
+  fs.writeFileSync(draftPathOf(specPath), NEW_YAML)
+  expect(await post('/api/teams/duo/spec/discard-draft', {})).toEqual({ discarded: true })
+  expect(deps.registry.listAudit('duo').map((r) => r.command)).toEqual(['console: spec discard-draft', 'console: spec discard-draft'])
+})
+
+test("auditedWriteCommands('tui:') writes audit rows with the tui: prefix", async () => {
+  const o = new FakeOrca()
+  const { deps, registry } = seedRunningTeam(o)
+  const cmds = auditedWriteCommands('tui:')
+  await cmds.discardDraftCmd(deps, { team: 'duo' })
+  expect(registry.listAudit('duo').at(-1)).toMatchObject({ command: 'tui: spec discard-draft', actor: 'human' })
+  expect(consoleCommands).toBeTypeOf('function')
 })
 
 function routeHarness(pattern: string) {

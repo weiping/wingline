@@ -72,6 +72,21 @@ test('after three failures the stream checks the session; a 401 stops it in clos
   expect(await findLabel(getByText, '已断开')).toBeTruthy()
 })
 
+test('the top bar count includes warnings', async () => {
+  stubEventSource()
+  const { getByLabelText } = render(
+    <StreamProvider team="duo">
+      <TopBar />
+    </StreamProvider>,
+  )
+  const src = FakeEventSource.instances[0]!
+  act(() => {
+    src.open()
+    src.emit('snapshot', { team: 'duo', posts: [], dispatcher: 'running', attentionCounts: { frozen: 1, signals: 0, questions: 0, stale: 0, warnings: 2 } })
+  })
+  await waitFor(() => expect(getByLabelText('待办').textContent).toContain('待办 3'))
+})
+
 async function findLabel(getByText: (t: string) => HTMLElement, text: string): Promise<HTMLElement> {
   return waitFor(() => getByText(text))
 }

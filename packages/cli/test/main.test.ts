@@ -49,6 +49,7 @@ const cmds = (over: Partial<Commands> = {}): Commands => ({
   unhushCmd: async () => { throw new Error('未注入：unhushCmd') },
   dispatcherReply: async () => { throw new Error('未注入：dispatcherReply') },
   attention: async () => { throw new Error('未注入：attention') },
+  tui: async () => { throw new Error('未注入：tui') },
   ...over,
 })
 const exec = (argv: string[], c: Commands = cmds()) => {
@@ -58,7 +59,7 @@ const exec = (argv: string[], c: Commands = cmds()) => {
 
 /** Commands 里允许只读、不进审计表的字段（新增命令忘了登记时下面那条测试会失败）。 */
 // console 只起本地服务、开标签页，不改团队状态，所以不进审计表
-const READ_COMMANDS = ['ps', 'listTasks', 'listStale', 'showTask', 'runDispatcherLoop', 'dispatcherStatus', 'attention', 'log', 'followLog', 'console']
+const READ_COMMANDS = ['ps', 'listTasks', 'listStale', 'showTask', 'runDispatcherLoop', 'dispatcherStatus', 'attention', 'log', 'followLog', 'console', 'tui']
 
 test('every write command is in the audit table and no read command is', () => {
   expect(Object.keys(AUDIT).sort()).toEqual([...WRITE_COMMANDS].sort())
@@ -185,6 +186,14 @@ test('up passes --adopt-run / --new-run through; ambiguous exits 1, lost exits 2
   expect((await exec(['up', 'x', '--adopt-run', 'run-9'], mk('ambiguous'))).code).toBe(1)
   expect((await exec(['up', 'x', '--new-run'], mk('lost'))).code).toBe(2)
   expect(seen).toEqual([expect.objectContaining({ adoptRun: 'run-9' }), expect.objectContaining({ newRun: true })])
+})
+
+test('up --draft passes draft: true through; without it draft is not set', async () => {
+  const seen: unknown[] = []
+  const c = cmds({ up: async (_d, a) => { seen.push(a); return { team: 'duo', posts: [] } } })
+  await exec(['up', 'x', '--draft'], c)
+  await exec(['up', 'x'], c)
+  expect(seen).toEqual([expect.objectContaining({ specPath: 'x', draft: true }), expect.objectContaining({ specPath: 'x', draft: false })])
 })
 
 test('--adopt-run and --new-run are mutually exclusive (usage error, exit 1, up not called)', async () => {
@@ -497,6 +506,7 @@ test('wl attention renders every section with commands; healthy dispatcher last,
       { taskId: 't1', title: 'T', reason: 'dead_assignee', owner: 'b@duo', since: null, command: 'wl task recover t1' },
     ],
     unavailable: [],
+    warnings: [],
   }
   const report = (dispatcher: AttentionReport['dispatcher']): AttentionReport => ({ ...base, dispatcher })
   const healthy = await exec(['attention', 'duo'], cmds({ attention: async () => report({ state: 'running', ageMs: 12_000 }) }))
@@ -522,10 +532,10 @@ test('wl dispatcher freeze requires --reason; hush parses --for; reply passes --
 })
 test('wl attention prints commands and marks unavailable sources', async () => {
   const r = await exec(['attention', 'duo'], cmds({ attention: async () => ({ team: 'duo', dispatcher: { state: 'stale', ageMs: 540_000 }, frozen: [], signals: [], questions: [],
-    stale: [{ taskId: 't1', title: 'T', reason: 'dead_assignee', owner: 'b@duo', since: null, command: 'wl task recover t1' }], unavailable: [] }) }))
+    stale: [{ taskId: 't1', title: 'T', reason: 'dead_assignee', owner: 'b@duo', since: null, command: 'wl task recover t1' }], unavailable: [], warnings: [] }) }))
   expect(r.out.split('\n')[0]).toContain('调度员')
   expect(r.out).toContain('wl task recover t1')
-  const u = await exec(['attention', 'duo'], cmds({ attention: async () => ({ team: 'duo', dispatcher: { state: 'running', ageMs: 12_000 }, frozen: [], signals: [], questions: [], stale: [], unavailable: ['orca: runtime_unavailable'] }) }))
+  const u = await exec(['attention', 'duo'], cmds({ attention: async () => ({ team: 'duo', dispatcher: { state: 'running', ageMs: 12_000 }, frozen: [], signals: [], questions: [], stale: [], unavailable: ['orca: runtime_unavailable'], warnings: [] }) }))
   expect(u.out).toContain('不可用（orca: runtime_unavailable）')
 })
 test('wl dispatcher unfreeze lists skipped commands; invalid --for exits 1', async () => {

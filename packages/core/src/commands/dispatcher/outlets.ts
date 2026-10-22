@@ -104,14 +104,3 @@ export async function notifyHuman(deps: CommandDeps, ctx: Ctx, n: HumanNotice, i
   })
   return { lead: toLead, external }
 }
-
-/** patrol.worktree_comment 开启时给该岗位的 worktree 写一条注释；失败只记事件。 */
-export async function worktreeComment(deps: CommandDeps, ctx: Ctx, post: string, text: string): Promise<void> {
-  if (!ctx.spec.patrol.worktreeComment) return
-  try {
-    await deps.orca.worktreeSet({ worktree: deps.registry.getPost(post)!.worktree, comment: text })
-  } catch (err) {
-    const code = (err as { code?: string }).code ?? 'error'
-    deps.registry.appendPatrolEvent({ team: ctx.team.name, post, action: 'worktree_comment', outcome: `failed:${code}` })
-  }
-}

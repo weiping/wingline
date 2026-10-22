@@ -1,5 +1,6 @@
 import { WinglineError } from '../../src/errors.js'
-import type { CheckMessage, CheckResult, OrcaClient, OrchestrationTask, RequestShowState, RunSummary, SendResult, TerminalSummary, TerminalView, WorkerView } from '../../src/orca/types.js'
+import type { CheckMessage, CheckResult, OrcaClient, OrchestrationTask, RequestShowState, RunSummary, SendResult, TerminalSummary, TerminalView, WorkerView, WorkspaceStatus } from '../../src/orca/types.js'
+import { ORCA_WORKTREE_SUPPORT } from '../../src/orca/client.js'
 import { loadTeamSpec } from '../../src/spec/load.js'
 import { specHash } from '../../src/spec/hash.js'
 import { DUO_YAML, mkTeam } from '../spec/helpers.js'
@@ -65,7 +66,8 @@ export class FakeOrca implements OrcaClient {
   generation = 1
   deliveries = new Map<string, { gen: number; ids: string[]; acked: boolean }>()
   questions = new Map<string, { dispatchId: string; taskId: string; asker: string; answered: boolean }>()
-  comments: Array<{ worktree: string; comment: string }> = []
+  /** worktreeSet 的每次调用原样记下（comment、status 都可能缺省）。 */
+  comments: Array<{ worktree: string; comment?: string; status?: string }> = []
   onCheck?: (a: Args) => void | Promise<void>
   /** 为真时下一次 check 返回 connectionLost: true 的空批并复位。 */
   connectionLostOnce = false
@@ -313,7 +315,7 @@ export class FakeOrca implements OrcaClient {
     })
   }
 
-  async worktreeSet(a: { worktree: string; comment: string }): Promise<void> {
+  async worktreeSet(a: { worktree: string; comment?: string; status?: WorkspaceStatus }): Promise<void> {
     this.observe('worktreeSet', a)
     this.comments.push({ ...a })
   }
@@ -330,7 +332,7 @@ export class FakeOrca implements OrcaClient {
     return { path: this.worktreePaths.get(a.worktree) ?? os.tmpdir() }
   }
 
-  async version() { this.calls.push('version'); return this.versionText }
+  async version() { this.calls.push('version'); this.takeFault('version', 'before', {}); return this.versionText }
   async status() { this.calls.push('status'); return { reachable: this.reachable } }
   async tabCreate(a: { url: string; worktree: string }): Promise<{ browserPageId: string }> {
     this.read('tabCreate', a)
@@ -429,4 +431,11 @@ export function seedRunningTeam(o: FakeOrca, over: Partial<CommandDeps> & { yaml
   }
   o.terminals.push({ handle: 'coord-1', title: 'zsh', connected: true, worktreeId: 'wt-1' })
   return made
+}
+
+/** 临时改写 `orca worktree set` 的探针结论（模块级常量），返回还原函数；配合 beforeEach / afterEach 使用。 */
+export function setWorktreeSupport(s: Partial<typeof ORCA_WORKTREE_SUPPORT>): () => void {
+  const saved = { ...ORCA_WORKTREE_SUPPORT }
+  Object.assign(ORCA_WORKTREE_SUPPORT, s)
+  return () => Object.assign(ORCA_WORKTREE_SUPPORT, saved)
 }

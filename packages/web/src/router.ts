@@ -8,11 +8,14 @@ export type Route =
   | { name: 'task'; team: string; id: string }
   | { name: 'post'; team: string; post: string }
   | { name: 'log'; team: string }
+  | { name: 'edit'; team: string }
+  | { name: 'settings' }
   | { name: 'notfound' }
 
-/** 路由表见 spec 第 7 节：/t/:team 下六个页面，/ 为团队列表。 */
+/** 路由表见 spec 第 7 节：/t/:team 下的页面，/ 为团队列表，/settings 为关于与诊断。 */
 export function matchRoute(path: string): Route {
   if (path === '/' || path === '') return { name: 'home' }
+  if (path === '/settings') return { name: 'settings' }
   const dec = (s: string): string | null => {
     try {
       return decodeURIComponent(s)
@@ -25,6 +28,7 @@ export function matchRoute(path: string): Route {
     [/^\/t\/([^/]+)\/inbox$/, (m) => (dec(m[1]!) === null ? null : { name: 'inbox', team: dec(m[1]!)! })],
     [/^\/t\/([^/]+)\/tasks$/, (m) => (dec(m[1]!) === null ? null : { name: 'board', team: dec(m[1]!)! })],
     [/^\/t\/([^/]+)\/log$/, (m) => (dec(m[1]!) === null ? null : { name: 'log', team: dec(m[1]!)! })],
+    [/^\/t\/([^/]+)\/edit$/, (m) => (dec(m[1]!) === null ? null : { name: 'edit', team: dec(m[1]!)! })],
     [
       /^\/t\/([^/]+)\/tasks\/([^/]+)$/,
       (m) => (dec(m[1]!) === null || dec(m[2]!) === null ? null : { name: 'task', team: dec(m[1]!)!, id: dec(m[2]!)! }),

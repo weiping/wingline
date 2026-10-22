@@ -79,7 +79,7 @@ export class Router {
 export function statusOf(err: unknown): number {
   if (err instanceof WinglineError) {
     switch (err.kind) {
-      case 'input': return 400
+      case 'input': return err.code === 'spec_conflict' ? 409 : 400
       case 'orca': return 502
       case 'uncertain': return 504
       case 'internal': return 500

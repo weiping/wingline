@@ -71,6 +71,11 @@ export function Overview({ team }: { team: string }) {
         <h1>{team}</h1>
         <span class="muted small">Run {v.runId ?? '—'}</span>
       </header>
+      {(attn.data?.warnings ?? []).map((w) => (
+        <p class="banner" role="status" key={w}>
+          {w}
+        </p>
+      ))}
       <DispatcherCard d={v.dispatcher} team={team} />
       <Section title="岗位" count={v.posts.length}>
         <div class="cards">

@@ -11,7 +11,7 @@ export interface TeamSnapshot {
   team: string
   posts: PsRow[]
   dispatcher: string
-  attentionCounts: { frozen: number; signals: number; questions: number; stale: number }
+  attentionCounts: { frozen: number; signals: number; questions: number; stale: number; warnings: number }
 }
 
 interface Handlers {

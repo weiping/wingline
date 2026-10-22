@@ -22,7 +22,7 @@ export const AUDIT: AuditTable<Commands> = {
   up: {
     command: 'up',
     team: byResult,
-    summary: (a) => ({ adoptRun: a.adoptRun, newRun: a.newRun }),
+    summary: (a) => ({ adoptRun: a.adoptRun, newRun: a.newRun, draft: a.draft }),
   },
   down: {
     command: 'down',

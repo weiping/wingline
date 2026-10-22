@@ -4,7 +4,7 @@ import type { SignalHit } from '../../../src/commands/dispatcher/signals.js'
 import { WinglineError } from '../../../src/errors.js'
 import { loadTeamSpec } from '../../../src/spec/load.js'
 import { DUO_YAML } from '../../spec/helpers.js'
-import { clock, FakeOrca, seedRunningTeam } from '../fake-client.js'
+import { clock, FakeOrca, seedRunningTeam, setWorktreeSupport } from '../fake-client.js'
 
 const hit = (over: Partial<SignalHit> = {}): SignalHit => ({ post: 'checker@duo', signal: 'no_progress', taskId: 't1', minutes: 25, ...over })
 function world(yaml = DUO_YAML) {
@@ -123,8 +123,33 @@ test('gate_streak skips the nudge: observed → notify → freeze', async () => 
   expect(w.o.sent.map((s) => s.handle)).toEqual(['term-b', 'term-b'])
   expect(w.registry.getFrozen('checker@duo')).toMatchObject({ signal: 'gate_streak' })
 })
-test("worktree_comment: levels 2 and 3 annotate the post's worktree, recovery annotates again", async () => {
-  const w = world(DUO_YAML + 'patrol:\n  worktree_comment: true\n'); const h = hit({ signal: 'waiting_approval' })
-  await w.scan([h]); w.c.advance(P); await w.scan([h]); await w.scan([])
-  expect(w.o.comments.map((x) => x.comment)).toEqual([expect.stringContaining('waiting_approval'), expect.stringContaining('已恢复')])
+test('an observe-only scan that clears a level-2 row does not write to Orca (first scan after a restart)', async () => {
+  const restore = setWorktreeSupport({ workspaceStatus: true, comment: true, commentMax: null })
+  try {
+    const w = world(DUO_YAML + 'patrol:\n  worktree_comment: true\n'); const h = hit({ signal: 'waiting_approval' })
+    await w.scan([h]); w.c.advance(P); await w.scan([h])
+    const written = w.o.comments.length
+    expect(written).toBeGreaterThan(0)
+    await w.scan([], true)
+    expect(w.registry.getPatrolState('duo', h.post, h.signal, h.taskId)?.clearedAt).toEqual(expect.any(String))
+    expect(w.o.comments).toHaveLength(written)
+    await w.scan([])
+    expect(w.o.comments).toHaveLength(written) // 已经清除的行不会再写；下一轮 syncOrca 才负责把注释算回来
+  } finally {
+    restore()
+  }
+})
+test('advance notifications go through syncWorktreeForPost instead of overwriting the comment', async () => {
+  const restore = setWorktreeSupport({ workspaceStatus: false, comment: true, commentMax: null })
+  try {
+    const w = world(DUO_YAML + 'patrol:\n  worktree_comment: true\n'); const h = hit({ signal: 'waiting_approval' })
+    await w.scan([h]); w.c.advance(P); await w.scan([h]); await w.scan([])
+    // 第 2 级通知：整段注释带上 ⚠；恢复后再算一次，⚠ 消失。每岗位一行，通知不再覆盖整段
+    expect(w.o.comments.map((x) => x.comment)).toEqual([
+      'builder：空闲\nchecker：空闲 ⚠ 等待批准',
+      'builder：空闲\nchecker：空闲',
+    ])
+  } finally {
+    restore()
+  }
 })

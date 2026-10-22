@@ -5,6 +5,7 @@ import { requestId } from '../../src/commands/deps.js'
 import { gateCwd } from '../../src/commands/task/gate-exec.js'
 import { up } from '../../src/commands/up.js'
 import { renderBriefing } from '../../src/brief/render.js'
+import { draftPathOf } from '../../src/spec/draft.js'
 import { specHash } from '../../src/spec/hash.js'
 import { loadTeamSpec } from '../../src/spec/load.js'
 import { WinglineError } from '../../src/errors.js'
@@ -521,4 +522,63 @@ test('2-b: a terminal list failure while pinning does not abort wl up: per-post 
   expect(r.posts.map((x) => x.outcome)).toEqual(['already_live', 'already_live'])
   expect(registry.getPost('builder@duo')!.worktree).toBe('path:/repo/a')
   expect(registry.getPost('checker@duo')!.worktree).toBe('path:/repo/a')
+})
+test('up --draft applies the draft then launches', async () => {
+  const o = new FakeOrca(); const { deps } = mkDeps(o); const p = duo()
+  const edited = DUO_YAML.replace('model: opus', 'model: sonnet')
+  fs.writeFileSync(draftPathOf(p), edited)
+  const r = await up(deps, { specPath: p, draft: true })
+  expect(r.posts.map((x) => x.outcome)).toEqual(['launched', 'launched'])
+  expect(fs.readFileSync(p, 'utf8')).toBe(edited)
+  expect(fs.readFileSync(`${p}.bak`, 'utf8')).toBe(DUO_YAML)
+  expect(fs.existsSync(draftPathOf(p))).toBe(false)
+  expect(o.created[0]!.command).toBe('claude --model sonnet')
+})
+test('up --draft with the team still up and a different specHash refuses and touches nothing', async () => {
+  const o = new FakeOrca(); const { deps } = mkDeps(o); const p = duo()
+  await up(deps, { specPath: p })
+  fs.writeFileSync(draftPathOf(p), DUO_YAML.replace('model: opus', 'model: sonnet'))
+  await expect(up(deps, { specPath: p, draft: true })).rejects.toMatchObject({ code: 'team_spec_changed' })
+  expect(fs.readFileSync(p, 'utf8')).toBe(DUO_YAML)
+  expect(fs.existsSync(`${p}.bak`)).toBe(false)
+  expect(fs.existsSync(draftPathOf(p))).toBe(true)
+})
+test('up --draft refuses when the draft renames a running team (the team that owns this spec path is still up)', async () => {
+  const o = new FakeOrca(); const { deps, registry } = mkDeps(o); const p = duo()
+  await up(deps, { specPath: p })
+  fs.writeFileSync(draftPathOf(p), DUO_YAML.replace('name: duo', 'name: duo2'))
+  await expect(up(deps, { specPath: p, draft: true })).rejects.toMatchObject({ kind: 'input', code: 'team_spec_changed' })
+  expect(fs.readFileSync(p, 'utf8')).toBe(DUO_YAML)
+  expect(fs.existsSync(`${p}.bak`)).toBe(false)
+  expect(fs.existsSync(draftPathOf(p))).toBe(true)
+  expect(registry.getTeam('duo2')).toBeNull()
+  // 团队已停止后，同样的改名草稿可以应用
+  registry.setTeamStatus('duo', 'stopped')
+  await up(deps, { specPath: p, draft: true })
+  expect(registry.getTeam('duo2')).toMatchObject({ status: 'up' })
+})
+test('up --draft allows a comment-only draft while the team is up', async () => {
+  const o = new FakeOrca(); const { deps } = mkDeps(o); const p = duo()
+  await up(deps, { specPath: p })
+  fs.writeFileSync(draftPathOf(p), `${DUO_YAML}# 只改注释\n`)
+  const r = await up(deps, { specPath: p, draft: true })
+  expect(r.posts.map((x) => x.outcome)).toEqual(['already_live', 'already_live'])
+  expect(fs.readFileSync(p, 'utf8')).toContain('只改注释')
+})
+test('draft_not_found tells you the draft may already have been applied when a .bak is lying next to the spec', async () => {
+  const o = new FakeOrca(); const { deps } = mkDeps(o); const p = duo()
+  const plain = await up(deps, { specPath: p, draft: true }).catch((e) => e)
+  expect(plain.hint).toContain('wl up')
+  expect(plain.hint).not.toContain('.bak')
+  fs.writeFileSync(`${p}.bak`, DUO_YAML)
+  const withBak = await up(deps, { specPath: p, draft: true }).catch((e) => e)
+  expect(withBak).toMatchObject({ code: 'draft_not_found' })
+  expect(withBak.hint).toContain('.bak')
+  expect(withBak.hint).toContain(`wl up ${p}`)
+})
+test('up --draft without a draft fails with draft_not_found (input error) before any Orca call', async () => {
+  const o = new FakeOrca(); const { deps } = mkDeps(o)
+  const err = await up(deps, { specPath: duo(), draft: true }).catch((e) => e)
+  expect(err).toMatchObject({ kind: 'input', code: 'draft_not_found' })
+  expect(o.calls).toEqual([])
 })

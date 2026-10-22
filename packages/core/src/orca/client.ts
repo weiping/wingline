@@ -5,6 +5,19 @@ import type { CheckMessage, CheckResult, OrcaClient, OrchestrationTask, RequestS
 /** terminal wait 自带超时；进程级超时多留一点余量，避免先于 Orca 自己的超时回执杀掉它。 */
 const WAIT_PROCESS_SLACK_MS = 15_000
 
+/**
+ * `orca worktree set` 里哪些东西真机验证过（3C 探针 spikes/worktree-status.ts，结论见 spikes/REPORT.md，macOS Orca 1.4.237）：
+ * - `--workspace-status` 取 todo / in-progress / in-review / completed，`worktree show --json` 的 `workspaceStatus` 能读回；
+ * - `--comment` 支持多行，至少能写 5000 字符（比我们自己的 500 上限宽，所以 commentMax 留 null）；
+ * - 注意：`--comment ""` 会被当成没给参数而忽略，没有办法用空串清空注释（我们从不写空注释）。
+ */
+export const ORCA_WORKTREE_SUPPORT: { workspaceStatus: boolean; comment: boolean; commentMax: number | null } = {
+  workspaceStatus: true,
+  comment: true,
+  commentMax: null,
+}
+const WORKSPACE_STATUS_FLAG = '--workspace-status'
+
 interface RawTerminal {
   handle: string
   tabId: string
@@ -226,7 +239,14 @@ function inboxMethods(runner: OrcaRunner): Pick<OrcaClient, 'check' | 'reply' | 
       }))
     },
     async worktreeSet(a) {
-      await runner.json(['worktree', 'set', '--worktree', a.worktree, '--comment', a.comment])
+      if (a.comment === undefined && a.status === undefined) {
+        throw new WinglineError('internal', 'internal', 'worktreeSet 至少要带 comment 或 status')
+      }
+      await runner.json([
+        'worktree', 'set', '--worktree', a.worktree,
+        ...(a.comment !== undefined ? ['--comment', a.comment] : []),
+        ...(a.status !== undefined ? [WORKSPACE_STATUS_FLAG, a.status] : []),
+      ])
     },
   }
 }

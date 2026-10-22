@@ -190,6 +190,25 @@ export interface PatrolEvent {
   detail?: unknown
 }
 
+/** 调度员上次写进 Orca 的工作区状态与注释（3C）：只在值变化时再写，fail_count 连续失败 3 次后停手。 */
+export interface OrcaSyncRow {
+  worktree: string
+  team: string
+  status: string | null
+  comment: string | null
+  writtenAt: string | null
+  failCount: number
+}
+
+const orcaSyncRow = (r: Row): OrcaSyncRow => ({
+  worktree: r.worktree as string,
+  team: r.team as string,
+  status: r.status as string | null,
+  comment: r.comment as string | null,
+  writtenAt: r.written_at as string | null,
+  failCount: r.fail_count as number,
+})
+
 const patrolRow = (r: Row): PatrolStateRow => ({
   team: r.team as string,
   post: r.post as string,
@@ -287,6 +306,11 @@ export class Registry {
     db.exec('PRAGMA foreign_keys = ON')
     Registry.migrate(db)
     return new Registry(db, o.now ?? (() => new Date()))
+  }
+
+  /** 已执行的迁移数量（PRAGMA user_version）。 */
+  schemaVersion(): number {
+    return (this.db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version
   }
 
   private static migrate(db: DatabaseSync): void {
@@ -773,6 +797,38 @@ export class Registry {
     this.db
       .prepare('INSERT INTO audit_events(team, at, actor, command, target, outcome, detail) VALUES (?, ?, ?, ?, ?, ?, ?)')
       .run(r.team, r.at ?? this.now(), r.actor, r.command, r.target, r.outcome, detail)
+  }
+
+  // —— 阶段 3C：Orca 同步状态 ——
+
+  /** 键是 (worktree, team)：两个团队共用一个 worktree 时各记各的，不会互相覆盖。 */
+  getOrcaSync(worktree: string, team: string): OrcaSyncRow | null {
+    const r = this.db.prepare('SELECT * FROM orca_sync WHERE worktree = ? AND team = ?').get(worktree, team) as Row | undefined
+    return r ? orcaSyncRow(r) : null
+  }
+
+  putOrcaSync(s: OrcaSyncRow): void {
+    this.db
+      .prepare(
+        `INSERT INTO orca_sync(worktree, team, status, comment, written_at, fail_count) VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(worktree, team) DO UPDATE SET status = excluded.status, comment = excluded.comment,
+           written_at = excluded.written_at, fail_count = excluded.fail_count`,
+      )
+      .run(s.worktree, s.team, s.status, s.comment, s.writtenAt, s.failCount)
+  }
+
+  /** 同一个 worktree 上所有团队各自最近一次算出的值（调用方自己筛掉没在运行的团队）。 */
+  listOrcaSyncOf(worktree: string): OrcaSyncRow[] {
+    return (this.db.prepare('SELECT * FROM orca_sync WHERE worktree = ? ORDER BY team').all(worktree) as Row[]).map(orcaSyncRow)
+  }
+
+  listOrcaSync(team: string): OrcaSyncRow[] {
+    return (this.db.prepare('SELECT * FROM orca_sync WHERE team = ? ORDER BY worktree').all(team) as Row[]).map(orcaSyncRow)
+  }
+
+  /** 调度员启动时调用：此前停手的 worktree 重新尝试。 */
+  resetOrcaSyncFailures(team: string): void {
+    this.db.prepare('UPDATE orca_sync SET fail_count = 0 WHERE team = ?').run(team)
   }
 
   listAudit(team: string, o: { afterId?: number; since?: string; limit?: number } = {}): AuditRow[] {

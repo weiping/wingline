@@ -7,10 +7,12 @@ export class ApiError extends Error {
   readonly hint?: string
   readonly retry?: string
   readonly retryRequest?: string
+  /** 服务端只外露 detail.errors（规格校验错误列表）。 */
+  readonly detail?: { errors?: Array<{ path: Array<string | number>; code: string; message: string; line: number | null }> }
 
   constructor(
     status: number,
-    body: { kind: string; code: string; message: string; hint?: string; retry?: string; retryRequest?: string },
+    body: { kind: string; code: string; message: string; hint?: string; retry?: string; retryRequest?: string; detail?: ApiError['detail'] },
   ) {
     super(body.message)
     this.name = 'ApiError'
@@ -20,10 +22,11 @@ export class ApiError extends Error {
     this.hint = body.hint
     this.retry = body.retry
     this.retryRequest = body.retryRequest
+    this.detail = body.detail
   }
 }
 
-interface ErrorBody { kind: string; code: string; message: string; hint?: string; retry?: string; retryRequest?: string }
+interface ErrorBody { kind: string; code: string; message: string; hint?: string; retry?: string; retryRequest?: string; detail?: ApiError['detail'] }
 type Envelope<T> = { ok: true; result: T } | { ok: false; error: ErrorBody }
 
 let csrf: Promise<string> | null = null

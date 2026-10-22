@@ -87,7 +87,7 @@
 - `errors`：至多一条（第 4.1 节）。`code` 沿用 `loadTeamSpec` 抛出的错误码（`spec_invalid`、`links_unknown_post`、`file_missing`、`field_removed` 等；YAML 语法错误也是 `spec_invalid`），`path` 为字段路径（语法错误时为空数组），`line` 为行号或 `null`。
 - `preview`：`planSpecChange` 的结果；`errors` 非空时为 `null`。
 - `set`：`{ path: Array<string | number>, value }`。给出时服务端先用 Document API 把这一处写回 `yaml`（保留注释与顺序；`value` 为 `null` 表示删除该字段），再校验并返回新的 `yaml` 与 `parsed`；表单的每次修改都走这里。`yaml` 有语法错误时不能 `set`，返回 400 `spec_invalid`。
-- `yaml` 字段上限 **48 KB**（按 UTF-8 字节计），超出 → 400 `spec_too_large`；整个请求体仍受 3B 的 64 KB 上限约束（超出 413）。
+- `yaml` 字段上限 **48 KB**（按 UTF-8 字节计），超出 → 400 `spec_too_large`。其他写接口的请求体仍受 3B 的 64 KB 上限约束（超出 413）；保存与校验规格这两个接口放宽到 `48 KB × 6 + 4 KB`（JSON 里换行等字符要转义，最坏每字节变 6 字节），否则 40 KB 出头的 yaml 会先撞 413 而得不到 `spec_too_large`。
 - 路由登记：
   - 保存与丢弃草稿是写接口，登记在 `api-write.ts` 的 `WRITE_ROUTES`、`WriteCommands`、`CONSOLE_AUDIT` 三处。`fields` 必须含 `retryRequest`（`test.each(WRITE_ROUTES)` 的要求）；两个命令天然幂等（第 4.3 节的“内容已相同即成功”，丢弃不存在的草稿即成功），`retryRequest` 只做格式校验，不另存。命令形态为 `(deps, a) => Promise<…>`，由 `commands/spec.ts` 的 `saveSpecCmd`、`discardDraftCmd` 包装 `draft.ts` 的同步函数，并按 `a.team` 从注册表取 `specPath`（团队未登记 → `team_unknown`）。审计摘要只记 `wrote`、`path` 与哈希，不记 YAML 内容。
   - `GET …/spec`、`GET /api/about` 与 `validate` 放在新文件 `server/api-spec.ts`，在 `index.ts` 的 `buildRouter` 中注册。`validate` 虽是 POST，但不写文件、不进审计；它和其他 POST 一样经过 3B 的 Origin 与 CSRF 校验。
@@ -154,7 +154,13 @@
 - 失败 → `fail_count + 1`，记一条 `patrol_events`（`action = orca_sync`，`outcome = failed`，`detail = { worktree, error: <错误码> }`），下一轮重试；`fail_count ≥ 3` 的 worktree 停止尝试。
 - 停止期间，`wl attention` 的 `warnings` 列出“Orca 同步已停止：<worktree>（连续 3 次失败，重启调度员后重试）”。该条从 `orca_sync` 推导，停止期间一直显示。
 - 调度员启动时把本团队所有 `orca_sync` 行的 `fail_count` 清零（`resetOrcaSyncFailures(team)`），从而“重启后重新尝试”。
-- 重启后第一轮只观察（2B 的 `observeOnlyNextScan`）同样适用：首轮只计算不写入，也不更新 `orca_sync`。
+- **命令行改变任务状态后立即同步**：除了巡查扫描末尾，命令行进程在两类时刻立刻重算该岗位所在 worktree 并按同一规则写入（`syncAfterChange`），不等下一轮巡查：① 派发成功（`dispatchTo` 返回 `dispatched`，覆盖 `wl task create --post`、`wl task start`、`wl task recover`、完成后派发后续子任务），否则新启动的团队要等“首轮只观察 + 一个巡查周期”约 10 分钟才第一次写出 `in-progress`；② `wl task done` 收尾（`proceed` 里 `finishVerdict` 之后，结局是 `done` 或 `escalated`），必须在判定收尾之后，因为 `in-review` 要求判定已结束且收尾类型是送审。条件：团队登记为 `up` 且本团队的调度员正在运行（没有调度员就没人负责之后清除，宁可不写）；排队（`queued`）、gate 失败、重放（判定早已收尾）不触发；不受“首轮只观察”约束（那条管调度员刚启动、不了解现状的情形）；永不抛出，写失败照常记 `fail_count` 与 `orca_sync` 事件，不影响命令。信号清除、冻结等其他变化仍按巡查周期同步。
+- 重启后第一轮只观察（2B 的 `observeOnlyNextScan`）同样适用：首轮不对 Orca 写任何东西（包括巡查清除信号时触发的重算），也不更新 `orca_sync`。
+- `orca_sync` 按 `(worktree, team)` 记录各团队**自己算出的值**（用来判断自己有没有变化）。Orca 里一个 worktree 只有一个状态和一条注释，所以写给 Orca 的是**并上其他团队之后**的值：
+  - 参与合并的只有“登记为 up 且调度员正在运行”的其他团队（已停止或调度员不在的团队不参与，免得旧值一直顶着）；用它们记录里最近一次算出的值。
+  - 状态取各团队里优先级最高的（`in-review` > `in-progress` > `todo` > `completed`）。
+  - 注释：只有自己时原样；有别的团队也在同步注释时，每行加 `[团队名] ` 前缀，按团队名排序，各方算出同一份结果，超长同样截断并以 `…` 结尾。
+  - 一个团队自己的值没变就不写；它变了就写并上其他团队后的值。团队停止后 Orca 上它那部分要等其他团队下一次值变化才会更新。
 - 某项开关为 `false` 或探针判定不支持时，调用里不带该参数；两项都不带时不调用。
 - 调度员不在运行时不同步；README 写明“Orca 界面上的状态需要调度员在运行”。
 - 2B 的 `worktree_comment` 原先在通知时写注释的路径（`outlets.ts` 的 `worktreeComment`）改为调用本节的同一写入函数，不再单独写：通知不再覆盖整段注释，而是体现为该岗位一行末尾的信号标记。
@@ -229,12 +235,13 @@ wl tui [team]
 
 ```sql
 CREATE TABLE orca_sync (
-  worktree TEXT PRIMARY KEY,
+  worktree TEXT NOT NULL,
   team TEXT NOT NULL,
   status TEXT,
   comment TEXT,
   written_at TEXT,
-  fail_count INTEGER NOT NULL DEFAULT 0
+  fail_count INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (worktree, team)
 );
 ```
 
@@ -308,6 +315,8 @@ packages/cli/src/tui/                  # screen.ts（备用屏幕、差分、恢
 | 宽字符宽度计算与终端实际显示不一致 | 表格错位 | `cellWidth` 按 Unicode 东亚宽度表实现并测试；截断留 1 列余量 |
 
 ## 修订记录
+
+- **2026-10-22 探针结论**（macOS，Orca 1.4.237，详见 `spikes/REPORT.md`）：第 3 节两项都成立。`orca worktree set --workspace-status <id>`，取值 `todo`/`in-progress`/`in-review`/`completed`，`worktree show --json` 的 `workspaceStatus` 能读回；`--comment` 支持多行、至少 5000 字符，所以 `ORCA_WORKTREE_SUPPORT = { workspaceStatus: true, comment: true, commentMax: null }`（我们自己的 500 上限更紧）。补充一条：`--comment ""` 会被 Orca CLI 忽略，没有办法用空串清空注释（雁阵从不写空注释）。
 
 - **2026-10-21 复审**：阶段 3A/3B 落地后核对出 5 处前提失效（`warnings` 字段不存在、`posts.worktree` 是选择器、写路由三处登记、TUI 复用写命令表、`postWorkspaceStatus` 的输入不够）。
 - **2026-10-22 复审**：上述 5 条已并入正文（第 6.5、6.3、4.4、7.3、6.2 节），不再单列。同时补充：保存的 `running` / `baseHash` 冲突规则与重发幂等（第 4.3 节）、`spec_too_large` 与 48 KB 上限（第 4.4 节）、`validate` 的路由位置、`--draft` 比较规格哈希而非文件哈希（第 4.5 节）、`about` 为异步（第 5 节）、探针结论的常量与告警（第 3 节）、`fail_count` 在调度员启动时清零（第 6.4 节）、TUI 外部文本复用 `plainText`（第 7.5 节）。

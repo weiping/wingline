@@ -34,6 +34,8 @@ export interface PatrolSpec {
   freezeLead: boolean
   autoRecover: boolean
   worktreeComment: boolean
+  /** 同步岗位所在 worktree 的工作区状态（默认开）；取默认值不进规格哈希。 */
+  workspaceStatus: boolean
   notify: { webhook: string } | { command: string[] } | null
 }
 
@@ -45,6 +47,7 @@ export const DEFAULT_PATROL: PatrolSpec = {
   freezeLead: false,
   autoRecover: false,
   worktreeComment: false,
+  workspaceStatus: true,
   notify: null,
 }
 
@@ -66,6 +69,9 @@ const MODEL_FLAG_AGENTS = new Set(['claude', 'codex'])
 
 type Path = Array<string | number>
 
+/** 校验错误的字段路径与行号；不放进 WinglineError，保持抛出的错误与原来完全一致。 */
+const locations = new WeakMap<WinglineError, { path: Path; line: number | null }>()
+
 class Located {
   constructor(
     private readonly file: string,
@@ -85,26 +91,24 @@ class Located {
   fail(code: string, p: Path, msg: string, hint?: string): never {
     const line = this.line(p)
     const where = line === undefined ? this.file : `${this.file} 第 ${line} 行`
-    throw new WinglineError('input', code, `${where}：${msg}`, { hint })
+    const err = new WinglineError('input', code, `${where}：${msg}`, { hint })
+    locations.set(err, { path: p, line: line ?? null })
+    throw err
   }
 }
 
 const toPosix = (p: string) => p.replace(/\\/g, '/')
 
-function parseYaml(specPath: string): { raw: unknown; at: Located } {
-  let source: string
-  try {
-    source = fs.readFileSync(specPath, 'utf8')
-  } catch (cause) {
-    throw new WinglineError('input', 'spec_not_found', `读不到团队规格 ${specPath}`, { cause })
-  }
+function parseYamlText(source: string, specPath: string): { raw: unknown; at: Located } {
   const lines = new LineCounter()
   const doc = parseDocument(source, { lineCounter: lines })
   const at = new Located(specPath, doc, lines)
   const err = doc.errors[0]
   if (err) {
     const line = err.linePos?.[0]?.line
-    throw new WinglineError('input', 'spec_invalid', `${specPath}${line ? ` 第 ${line} 行` : ''}：${err.message}`)
+    const e = new WinglineError('input', 'spec_invalid', `${specPath}${line ? ` 第 ${line} 行` : ''}：${err.message}`)
+    locations.set(e, { path: [], line: line ?? null })
+    throw e
   }
   return { raw: doc.toJS(), at }
 }
@@ -196,6 +200,7 @@ function patrolOf(raw: RawTeam['patrol'], platform: NodeJS.Platform, at: Located
     freezeLead: raw.freeze_lead,
     autoRecover: raw.auto_recover,
     worktreeComment: raw.worktree_comment,
+    workspaceStatus: raw.workspace_status,
     notify: !n ? null : n.webhook ? { webhook: n.webhook } : { command: n.command! },
   }
 }
@@ -213,10 +218,47 @@ function resolveFile(dir: string, rel: string, at: Located, p: Path): string {
   return abs
 }
 
+export type SpecError = { path: Array<string | number>; code: string; message: string; line: number | null }
+
+/** 从字符串校验团队规格；文件引用相对 specPath 所在目录解析。错误至多一条（遇到第一处即停）。 */
+export function validateSpecText(
+  text: string,
+  specPath: string,
+  o: { platform?: NodeJS.Platform } = {},
+): { spec: TeamSpec | null; parsed: unknown | null; errors: SpecError[] } {
+  const abs = path.resolve(specPath)
+  const toError = (e: unknown): SpecError => {
+    if (!(e instanceof WinglineError)) throw e
+    const at = locations.get(e)
+    return { path: at?.path ?? [], code: e.code, message: e.message, line: at?.line ?? null }
+  }
+  let parsed: { raw: unknown; at: Located }
+  try {
+    parsed = parseYamlText(text, abs)
+  } catch (e) {
+    return { spec: null, parsed: null, errors: [toError(e)] }
+  }
+  try {
+    return { spec: specFromRaw(parsed.raw, parsed.at, abs, o.platform ?? process.platform), parsed: parsed.raw, errors: [] }
+  } catch (e) {
+    return { spec: null, parsed: parsed.raw, errors: [toError(e)] }
+  }
+}
+
 export function loadTeamSpec(specPath: string, o: { platform?: NodeJS.Platform } = {}): TeamSpec {
   const abs = path.resolve(specPath)
+  let source: string
+  try {
+    source = fs.readFileSync(abs, 'utf8')
+  } catch (cause) {
+    throw new WinglineError('input', 'spec_not_found', `读不到团队规格 ${abs}`, { cause })
+  }
+  const { raw, at } = parseYamlText(source, abs)
+  return specFromRaw(raw, at, abs, o.platform ?? process.platform)
+}
+
+function specFromRaw(raw: unknown, at: Located, abs: string, platform: NodeJS.Platform): TeamSpec {
   const dir = path.dirname(abs)
-  const { raw, at } = parseYaml(abs)
   const team = validate(raw, at)
   crossCheck(team, at)
   return {
@@ -247,7 +289,7 @@ export function loadTeamSpec(specPath: string, o: { platform?: NodeJS.Platform }
         maxMinutes: team.budgets.task.max_minutes ?? null,
       },
     },
-    patrol: patrolOf(team.patrol, o.platform ?? process.platform, at),
+    patrol: patrolOf(team.patrol, platform, at),
     dir,
     specPath: abs,
   }

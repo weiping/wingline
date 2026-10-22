@@ -9,6 +9,8 @@ import {
   type TimelineEvent, type TimelineSource,
 } from '@wingline/core'
 import { consoleCmd, renderConsole, renderReady } from './console.js'
+import { tuiCmd } from './tui/command.js'
+import type { TuiIo } from './tui/types.js'
 import { AUDIT } from './audit-table.js'
 import verified from './verified.json' with { type: 'json' }
 import {
@@ -21,6 +23,8 @@ export interface RunIO {
   stdout: Writable
   stderr: Writable
   env: NodeJS.ProcessEnv
+  /** 只有 wl tui 用；缺省取 process.stdin。 */
+  stdin?: NodeJS.ReadableStream
 }
 
 export interface Commands {
@@ -55,13 +59,14 @@ export interface Commands {
   unhushCmd: typeof unhushCmd
   dispatcherReply: typeof dispatcherReply
   attention: typeof attention
+  tui: typeof tuiCmd
 }
 
 const rawCommands: Commands = {
   up, ps, send, down, restore, log: readTimeline, followLog: followTimeline, createTask, listTasks, listStale, showTask, claimTask, releaseTask, reassignTask, startTask, planTask, doneTask,
   escalateTask, resolveGate, recoverTask, dispatcherUp, dispatcherDown, runDispatcherLoop, dispatcherStatus, freezePostCmd, unfreezePostCmd,
   hushCmd, unhushCmd, dispatcherReply, attention,
-  console: consoleCmd,
+  console: consoleCmd, tui: tuiCmd,
 }
 /** 表里登记过的写命令每执行一次写一行审计（spec 6.2）。 */
 const realCommands: Commands = auditedCommands(rawCommands, AUDIT)
@@ -230,15 +235,19 @@ function registerTaskCommands(program: Command, commands: Commands, execute: Exe
 function registerBaseCommands(program: Command, commands: Commands, execute: Execute, io: RunIO): void {
   program.command('up <team.yaml>').description('拉起团队的全部岗位').option('--json', '输出 JSON')
     .option('--adopt-run <id>', '找回指定的 Run').option('--new-run', '丢弃旧 Run，新建一个')
-    .action((specPath: string, o: { json?: boolean; adoptRun?: string; newRun?: boolean }) =>
+    .option('--draft', '先把同目录的 team.draft.yaml 应用为正式规格（旧规格备份为 .bak）')
+    .action((specPath: string, o: { json?: boolean; adoptRun?: string; newRun?: boolean; draft?: boolean }) =>
       execute(!!o.json, async (d) => {
         if (o.adoptRun && o.newRun) throw new WinglineError('input', 'run_flags_conflict', '--adopt-run 与 --new-run 互斥')
-        return commands.up(d, { specPath, adoptRun: o.adoptRun, newRun: o.newRun })
+        return commands.up(d, { specPath, adoptRun: o.adoptRun, newRun: o.newRun, draft: !!o.draft })
       }, (r) => renderUp(r, { newRun: o.newRun }), exitCodeOfUp))
   program.command('ps [team]').description('查看岗位状态').option('--json', '输出 JSON')
     .action((team: string | undefined, o: { json?: boolean }) => execute(!!o.json, (d) => commands.ps(d, { team }), renderPs))
   program.command('attention <team>').description('需要人处理的事项汇总').option('--json', '输出 JSON')
     .action((team: string, o: { json?: boolean }) => execute(!!o.json, (d) => commands.attention(d, team), renderAttention))
+  program.command('tui [team]').description('终端里的团队视图：总览、收件箱、时间线，可处理待办')
+    .action((team: string | undefined) =>
+      execute(false, (d) => commands.tui(d, { team, io: { stdin: io.stdin ?? process.stdin, stdout: io.stdout } as unknown as TuiIo }), () => ''))
   program.command('send <post@team> <message>').description('给岗位发消息').option('--json', '输出 JSON')
     .option('--retry-request <id>', '确认上次未确认的发送：传入当时报告的 Orca 请求 ID，消息须与原来完全相同，不会重复发送')
     .action((address: string, message: string, o: { json?: boolean; retryRequest?: string }) =>

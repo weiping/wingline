@@ -130,3 +130,34 @@ test.skipIf(process.env.WL_LIVE_CONSOLE !== '1')('console --open opens the conso
   expect(res.result.outcome).toBe('opened')
   console.log(`\n>>> 请在 Orca 里确认控制台标签页已打开，看完后手动关闭 console@wingline 终端：${res.result.url}\n`)
 }, 300_000)
+
+// 3C 真机用例（默认跳过，需人工确认）：调度员运行时给 builder 派一个任务，一个巡查周期后 worktree 的工作区状态应为 in-progress。
+// 前提：Orca 版本在已验证范围内（工作区状态参数已在 1.4.237 上验证，ORCA_WORKTREE_SUPPORT.workspaceStatus 为 true）。
+// 运行：WL_LIVE_WORKSPACE_STATUS=1 WINGLINE_LIVE_WORKTREE=<Orca worktree 选择器> pnpm test:live -t "workspace status"
+test.skipIf(process.env.WL_LIVE_WORKSPACE_STATUS !== '1')('workspace status follows the dispatcher: a started task makes the worktree in-progress (manual confirm)', async () => {
+  const { yaml, env } = sandbox()
+  const worktree = process.env.WINGLINE_LIVE_WORKTREE ?? 'current'
+  const orca = defaultMakeDeps(env, () => {}).orcaPath
+  const shown = () => (JSON.parse(execFileSync(orca, ['worktree', 'show', '--worktree', worktree, '--json'], { encoding: 'utf8' })) as { result: { worktree: { workspaceStatus: string; comment: string } } }).result.worktree
+  const original = shown()
+  // 先把状态预置成 todo：worktree 本来就是 in-progress 的话，看到 in-progress 说明不了什么
+  execFileSync(orca, ['worktree', 'set', '--worktree', worktree, '--workspace-status', 'todo', '--json'])
+  try {
+    await wl(['up', yaml, '--json'], env)
+    await wl(['dispatcher', 'up', 'duo', '--json'], env)
+    const created = await wl(['task', 'create', 'duo', '--title', '3C 真机：工作区状态', '--post', 'builder@duo', '--json'], env)
+    expect(created.json.ok).toBe(true)
+    // 重启后第一轮只观察不写（约 5 分钟），第二个巡查周期（约 10 分钟）才写：最多等 15 分钟
+    let seen = shown()
+    for (let i = 0; i < 60 && seen.workspaceStatus !== 'in-progress'; i++) {
+      await new Promise((r) => setTimeout(r, 15_000))
+      seen = shown()
+    }
+    expect(seen.workspaceStatus).toBe('in-progress')
+  } finally {
+    await wl(['dispatcher', 'down', 'duo', '--close', '--json'], env).catch(() => {})
+    await wl(['down', 'duo', '--close', '--json'], env).catch(() => {})
+    // Orca CLI 的 `--comment ""` 会被忽略，原来是空的注释只能还原成一个空格
+    execFileSync(orca, ['worktree', 'set', '--worktree', worktree, '--workspace-status', original.workspaceStatus, '--comment', original.comment === '' ? ' ' : original.comment, '--json'])
+  }
+}, 1_200_000)

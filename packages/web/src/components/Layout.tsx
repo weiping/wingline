@@ -13,6 +13,7 @@ export const NAV: NavTarget[] = [
   { label: '收件箱', sub: '/inbox' },
   { label: '任务看板', sub: '/tasks' },
   { label: '时间线', sub: '/log' },
+  { label: '编辑', sub: '/edit' },
 ]
 
 const STATE_TEXT = { live: ['实时', 'ok'], reconnecting: ['重连中', 'warn'], closed: ['已断开', 'bad'] } as const
@@ -49,6 +50,11 @@ export function Layout(props: { teams: string[]; team: string | null; children: 
             ))}
           </nav>
         )}
+        <nav class="side-foot">
+          <Link href="/settings" class="nav-link">
+            关于
+          </Link>
+        </nav>
       </aside>
       <div class="main">{props.children}</div>
     </div>
@@ -70,9 +76,8 @@ export function StreamBanner() {
 export function TopBar() {
   const { state, snapshot } = useStream()
   const [label, tone] = STATE_TEXT[state]
-  const pending = snapshot
-    ? snapshot.attentionCounts.frozen + snapshot.attentionCounts.signals + snapshot.attentionCounts.questions + snapshot.attentionCounts.stale
-    : 0
+  const c = snapshot?.attentionCounts
+  const pending = c ? c.frozen + c.signals + c.questions + c.stale + (c.warnings ?? 0) : 0
   return (
     <header class="topbar">
       <Pill tone={tone}>{label}</Pill>

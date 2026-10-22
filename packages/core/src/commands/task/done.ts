@@ -2,6 +2,7 @@ import { WinglineError } from '../../errors.js'
 import type { DoneVerdictRow, TaskExtRow, TeamRow } from '../../registry/registry.js'
 import type { PostSpec, TeamSpec } from '../../spec/load.js'
 import type { CommandDeps } from '../deps.js'
+import { syncAfterChange } from '../dispatcher/orca-sync.js'
 import { locatePost } from '../locate.js'
 import { announce, dispatchTo, taskSpec, type Delivery } from './dispatch.js'
 import { isPostFrozen } from './frozen.js'
@@ -240,6 +241,8 @@ async function proceed(c: Ctx, v: DoneVerdictRow): Promise<DoneResult> {
   }
   c.deps.registry.finishVerdict(c.id, v.epoch, result)
   logTask(c.deps, { team: c.team.name, taskId: c.id, actor: c.actor, action: v.verdict === 'escalate' ? 'escalate' : 'done', detail: result.closure })
+  // 判定收尾之后才算 in-review（postWorkspaceStatus 要求判定已结束），所以放在 finishVerdict 之后
+  await syncAfterChange(c.deps, c.team.name, c.actor.address)
   return result
 }
 
