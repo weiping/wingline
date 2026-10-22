@@ -501,3 +501,13 @@ macOS 真机（Orca 1.4.224）以**本机 claude × 2**（builder 与 checker �
 - 结果通过：关闭 builder 终端后 `wl restore duo`，builder 为 `resumed`（`sessionId` 为 UUID、终端 handle 已更换），屏幕里出现重启前发的标记 `WLS-LIVE-…` 和 `[雁阵] 重启后已接回本会话`，agent 确认仍是 builder@duo。测试后无残留 duo 终端。
 - 本机 claude 不在屏幕上画会话 ID（Linux 的会话头部会画会话文件路径），第一次跑因断言“屏幕含 sessionId”失败；live 用例改为断言标记在屏幕上（标记只存在于原会话，比会话 ID 更能证明接回的是原会话）。
 - **仍未覆盖**：`/private` cwd 前缀（本次 worktree 在 `/Users/...`，不经过 `/private`，仍只有单测）；codex 接回（留 3D）；整机或 Orca 桌面端真重启。
+
+## 3C 探针：工作区状态与注释（脚本已写，真机结论待补）
+
+探针 `spikes/worktree-status.ts` 依次设置 `todo`/`in-progress`/`in-review`/`completed` 并用 `worktree show` 读回，再测 `--comment` 的多行、600 字符与清空。运行方式：
+
+```
+WINGLINE_SPIKE_WORKTREE=<专用测试 worktree 选择器> pnpm tsx spikes/worktree-status.ts
+```
+
+**状态：未在真机上运行**（本次执行环境无法对真实 Orca 的 worktree 做写入）。结论待补；在此之前 Task 6 按计划的默认值实现：`ORCA_WORKTREE_SUPPORT = { workspaceStatus: false, comment: true, commentMax: null }`，状态参数名暂用 `--workspace-status`。真机跑出结果后只需修改 `orca/client.ts` 的该常量与参数名，并存回执 `test/fixtures/receipts/worktree-set.json`。
