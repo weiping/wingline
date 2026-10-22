@@ -522,3 +522,16 @@ WINGLINE_SPIKE_WORKTREE=<专用测试 worktree 选择器> pnpm tsx spikes/worktr
 **据此的改动**：`packages/core/src/orca/client.ts` 的 `ORCA_WORKTREE_SUPPORT` 改为 `{ workspaceStatus: true, comment: true, commentMax: null }`（`commentMax` 留 `null`：实测上限 ≥ 5000，我们自己的 500 上限更紧）；参数名 `--workspace-status` 与计划一致，无需改。
 
 **遗留**：探针第一次运行时脚本只会用空串还原注释，结果在这个 worktree 上留下了 600 个 `x`；已手动清掉，并把脚本改成用单个空格还原。这个 worktree 的注释现在是一个空格（CLI 做不到比这更“空”；要彻底清空请在 Orca 界面里改卡片注释）。
+
+## 3C 真机验证：调度员 → Orca 界面、`wl tui`（2026-10-22，macOS，Orca 1.4.237）
+
+用占位进程（`node -e "process.stdin.resume()"`，不启动真 agent）起一个 duo 团队，工作区是 Orca 里登记的 wingline worktree；`patrol.worktree_comment: true`，其余默认。结束后关调度员、关团队、还原 worktree 的状态与注释。
+
+**调度员持续运行 → Orca 界面状态**：把 worktree 状态预置成 `todo`，`wl up` → `wl dispatcher up` → 给 builder 派一个任务。
+- 第一轮巡查（约 T+5 分钟，重启后只观察）：状态仍是 `todo`，符合“首轮不写”。
+- 第二轮巡查（T+611 秒）：状态变为 `in-progress`，注释变为 `builder：3C 真机：工作区状态（进行中，第 1 轮）` 换行 `checker：空闲`。
+- 因此默认跳过的 live 用例要等第二个巡查周期（约 10 分钟），不能只等一个周期；已改成最多等 15 分钟，并先预置 `todo`。
+
+**`wl tui` 在真实伪终端里（Python `pty`，100×30）对着上面这个活团队**，21 项全部通过：进入备用屏幕并显示岗位与任务标题；`2` `3` `?` `1` 切换视图与帮助；Enter → 菜单 → 冻结 → 输入理由 → 确认 `y`，`wl attention` 里看到冻结、`wl log` 里有 `tui: dispatcher freeze` 审计行；再通过 TUI 解冻；窗口缩到 30 列显示“窗口太窄”并整屏重绘、恢复后回到正常；`q` 退出码 0；最后输出是 `\x1b[?25h\x1b[?1049l`；全程没有输出任何 OSC 序列；退出后终端回到 cooked 模式（ICANON、ECHO 都开）。
+
+**未覆盖**：真实 agent（claude / codex）参与的场景；多个团队共用一个 worktree 的真机场景（只有单测）；Windows 终端。
