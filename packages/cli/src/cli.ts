@@ -230,10 +230,11 @@ function registerTaskCommands(program: Command, commands: Commands, execute: Exe
 function registerBaseCommands(program: Command, commands: Commands, execute: Execute, io: RunIO): void {
   program.command('up <team.yaml>').description('拉起团队的全部岗位').option('--json', '输出 JSON')
     .option('--adopt-run <id>', '找回指定的 Run').option('--new-run', '丢弃旧 Run，新建一个')
-    .action((specPath: string, o: { json?: boolean; adoptRun?: string; newRun?: boolean }) =>
+    .option('--draft', '先把同目录的 team.draft.yaml 应用为正式规格（旧规格备份为 .bak）')
+    .action((specPath: string, o: { json?: boolean; adoptRun?: string; newRun?: boolean; draft?: boolean }) =>
       execute(!!o.json, async (d) => {
         if (o.adoptRun && o.newRun) throw new WinglineError('input', 'run_flags_conflict', '--adopt-run 与 --new-run 互斥')
-        return commands.up(d, { specPath, adoptRun: o.adoptRun, newRun: o.newRun })
+        return commands.up(d, { specPath, adoptRun: o.adoptRun, newRun: o.newRun, draft: !!o.draft })
       }, (r) => renderUp(r, { newRun: o.newRun }), exitCodeOfUp))
   program.command('ps [team]').description('查看岗位状态').option('--json', '输出 JSON')
     .action((team: string | undefined, o: { json?: boolean }) => execute(!!o.json, (d) => commands.ps(d, { team }), renderPs))

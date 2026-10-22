@@ -330,7 +330,7 @@ export class FakeOrca implements OrcaClient {
     return { path: this.worktreePaths.get(a.worktree) ?? os.tmpdir() }
   }
 
-  async version() { this.calls.push('version'); return this.versionText }
+  async version() { this.calls.push('version'); this.takeFault('version', 'before', {}); return this.versionText }
   async status() { this.calls.push('status'); return { reachable: this.reachable } }
   async tabCreate(a: { url: string; worktree: string }): Promise<{ browserPageId: string }> {
     this.read('tabCreate', a)

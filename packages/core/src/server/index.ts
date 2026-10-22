@@ -8,6 +8,7 @@ import { Auth, checkHost, checkWrite, safeEqual, sessionCookie } from './auth.js
 import { assertWebBuilt, SECURITY_HEADERS, serveStatic } from './static.js'
 import { checkParam, type Handler, Router, statusOf, writeEnvelope } from './http.js'
 import { registerReadRoutes } from './api-read.js'
+import { registerSpecRoutes } from './api-spec.js'
 import { consoleCommands, registerWriteRoutes } from './api-write.js'
 import { TeamFeeds } from './sse.js'
 
@@ -17,6 +18,7 @@ export * from './auth.js'
 export * from './static.js'
 export * from './http.js'
 export * from './api-read.js'
+export * from './api-spec.js'
 export * from './api-write.js'
 export * from './sse.js'
 export * from './control.js'
@@ -60,6 +62,8 @@ function errorEnvelope(err: any): { ok: false; error: Record<string, unknown> } 
       hint: err?.hint,
       retry: err?.hint,
       retryRequest: err?.detail?.retryRequest,
+      // 规格校验错误列表（字段路径、行号）供编辑器标注；其余 detail 不外露
+      ...(Array.isArray(err?.detail?.errors) ? { detail: { errors: err.detail.errors } } : {}),
     },
   }
 }
@@ -318,9 +322,10 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, ctx: 
   serveStatic(ctx.webRoot, url.pathname, res)
 }
 
-function buildRouter(_serverDeps: CommandDeps & { orca: CachedOrca }): Router {
+function buildRouter(version: string): Router {
   const router = new Router()
   registerReadRoutes(router)
+  registerSpecRoutes(router, { version })
   registerWriteRoutes(router, consoleCommands())
   return router
 }
@@ -367,7 +372,7 @@ export async function createConsoleServer(
   const controlKey = crypto.randomBytes(32).toString('base64url')
   const cached = cachedOrca(deps.orca)
   const serverDeps = { ...deps, orca: cached }
-  const router = buildRouter(serverDeps)
+  const router = buildRouter(o.version ?? 'dev')
   const feeds = new TeamFeeds(serverDeps, o.sse)
   const sseClients = new Set<http.ServerResponse>()
 

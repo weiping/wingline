@@ -289,6 +289,11 @@ export class Registry {
     return new Registry(db, o.now ?? (() => new Date()))
   }
 
+  /** 已执行的迁移数量（PRAGMA user_version）。 */
+  schemaVersion(): number {
+    return (this.db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version
+  }
+
   private static migrate(db: DatabaseSync): void {
     const current = (db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version
     if (current > MIGRATIONS.length) {

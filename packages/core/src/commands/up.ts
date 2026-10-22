@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { checkBriefingLimit, renderBriefing } from '../brief/render.js'
 import { WinglineError } from '../errors.js'
+import { applyDraft, draftPathOf } from '../spec/draft.js'
 import { specHash } from '../spec/hash.js'
 import { loadTeamSpec, type PostSpec } from '../spec/load.js'
 import { postAddress, preflight, requestId, type CommandDeps } from './deps.js'
@@ -15,6 +16,8 @@ export interface UpArgs {
   specPath: string
   adoptRun?: string
   newRun?: boolean
+  /** 先把同目录的 team.draft.yaml 校验、备份并替换为正式规格，再照常 up。 */
+  draft?: boolean
 }
 
 export type RunOutcome = 'created' | 'adopted' | 'kept' | 'reclaimed' | 'deferred' | 'failed' | 'uncertain' | 'ambiguous' | 'lost'
@@ -271,7 +274,16 @@ async function reportDeadAssignees(l: Launch, runId: string): Promise<NonNullabl
   }
 }
 
+/** 团队名取自草稿：改名的草稿是另一个团队，不与现有团队的规格哈希比较。 */
+function applyDraftBeforeUp(deps: CommandDeps, specPath: string): void {
+  const draft = draftPathOf(specPath)
+  if (!fs.existsSync(draft)) throw new WinglineError('input', 'draft_not_found', `找不到规格草稿 ${draft}`)
+  const team = deps.registry.getTeam(loadTeamSpec(draft).name)
+  applyDraft(specPath, { runningHash: team?.status === 'up' ? team.specHash : null })
+}
+
 export async function up(deps: CommandDeps, args: UpArgs): Promise<UpResult> {
+  if (args.draft) applyDraftBeforeUp(deps, args.specPath)
   const spec = loadTeamSpec(args.specPath)
   const hash = specHash(spec)
   const briefings = new Map(spec.posts.map((p) => [p.id, renderBriefing(spec, p.id)]))

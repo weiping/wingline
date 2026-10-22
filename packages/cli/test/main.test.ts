@@ -187,6 +187,14 @@ test('up passes --adopt-run / --new-run through; ambiguous exits 1, lost exits 2
   expect(seen).toEqual([expect.objectContaining({ adoptRun: 'run-9' }), expect.objectContaining({ newRun: true })])
 })
 
+test('up --draft passes draft: true through; without it draft is not set', async () => {
+  const seen: unknown[] = []
+  const c = cmds({ up: async (_d, a) => { seen.push(a); return { team: 'duo', posts: [] } } })
+  await exec(['up', 'x', '--draft'], c)
+  await exec(['up', 'x'], c)
+  expect(seen).toEqual([expect.objectContaining({ specPath: 'x', draft: true }), expect.objectContaining({ specPath: 'x', draft: false })])
+})
+
 test('--adopt-run and --new-run are mutually exclusive (usage error, exit 1, up not called)', async () => {
   let called = 0
   const r = await exec(['up', 'x', '--adopt-run', 'run-9', '--new-run'], cmds({ up: async () => { called++; return { team: 'duo', posts: [] } } }))
