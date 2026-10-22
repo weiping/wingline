@@ -294,7 +294,7 @@ patrol:
 - **claude**：`--permission-mode acceptEdits --allowedTools "Bash(wl:*)"` 够用——岗位能直接执行 `wl task start/done/send`，不弹确认。
 - **codex**：默认的 `workspace-write` 沙箱会挡住 `wl` 对 Orca 和注册表的访问（`runtime_access_denied` / `EPERM`），岗位里的 `wl` 命令跑不通；需要在 `launch` 里放开沙箱（例如 `--dangerously-bypass-approvals-and-sandbox`，只建议用在一次性工作区）。首次启动可能弹“Hooks need review”，岗位不会就绪、`wl up` 返回 `uncertain`；在终端里跳过它后再执行一次 `wl up`。
 - 岗位在自己的终端里执行 `wl` 时用的是默认数据目录；如果你的 `WINGLINE_HOME` 不是默认值，要在 `launch` 里用 `env WINGLINE_HOME=… <agent>` 带上，否则岗位读写的不是同一个注册表。
-- 多个团队共用一个 worktree 时，Orca 上只有一个状态和一条注释，后写入的团队会盖掉先写入的（已知问题，见 REPORT）。
+- 多个团队共用一个 worktree 时，Orca 上只有一个状态和一条注释：雁阵会把这个 worktree 上其他在运行团队的最近值合并进来（状态取最高优先级，注释每行加 `[团队名]` 前缀）。团队停止后它那部分要等其他团队下一次值变化才更新。
 
 ## `team.yaml` 字段速查
 
