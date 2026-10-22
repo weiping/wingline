@@ -14,6 +14,14 @@ export class LineInput {
     return this.chars.join('')
   }
 
+  /** reduce 是纯函数：按键作用在副本上。 */
+  clone(): LineInput {
+    const c = new LineInput(this.prompt)
+    c.chars = [...this.chars]
+    c.pos = this.pos
+    return c
+  }
+
   feed(k: Key): 'continue' | 'submit' | 'cancel' {
     if (k.name === 'enter') return 'submit'
     if (k.name === 'escape') return 'cancel'

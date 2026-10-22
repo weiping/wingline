@@ -1,4 +1,9 @@
-import type { Writable } from 'node:stream'
+/** Screen 只需要能写字符串、知道窗口大小。 */
+export interface ScreenOut {
+  write(s: string): unknown
+  columns: number
+  rows: number
+}
 
 const ENTER = '\x1b[?1049h\x1b[?25l'
 const LEAVE = '\x1b[?25h\x1b[?1049l'
@@ -11,7 +16,7 @@ export class Screen {
   private restored = false
   private clearNext = false
 
-  constructor(private readonly out: Writable & { columns: number; rows: number }) {}
+  constructor(private readonly out: ScreenOut) {}
 
   enter(): void {
     this.out.write(ENTER)
