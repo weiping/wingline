@@ -87,7 +87,7 @@
 - `errors`：至多一条（第 4.1 节）。`code` 沿用 `loadTeamSpec` 抛出的错误码（`spec_invalid`、`links_unknown_post`、`file_missing`、`field_removed` 等；YAML 语法错误也是 `spec_invalid`），`path` 为字段路径（语法错误时为空数组），`line` 为行号或 `null`。
 - `preview`：`planSpecChange` 的结果；`errors` 非空时为 `null`。
 - `set`：`{ path: Array<string | number>, value }`。给出时服务端先用 Document API 把这一处写回 `yaml`（保留注释与顺序；`value` 为 `null` 表示删除该字段），再校验并返回新的 `yaml` 与 `parsed`；表单的每次修改都走这里。`yaml` 有语法错误时不能 `set`，返回 400 `spec_invalid`。
-- `yaml` 字段上限 **48 KB**（按 UTF-8 字节计），超出 → 400 `spec_too_large`；整个请求体仍受 3B 的 64 KB 上限约束（超出 413）。
+- `yaml` 字段上限 **48 KB**（按 UTF-8 字节计），超出 → 400 `spec_too_large`。其他写接口的请求体仍受 3B 的 64 KB 上限约束（超出 413）；保存与校验规格这两个接口放宽到 `48 KB × 6 + 4 KB`（JSON 里换行等字符要转义，最坏每字节变 6 字节），否则 40 KB 出头的 yaml 会先撞 413 而得不到 `spec_too_large`。
 - 路由登记：
   - 保存与丢弃草稿是写接口，登记在 `api-write.ts` 的 `WRITE_ROUTES`、`WriteCommands`、`CONSOLE_AUDIT` 三处。`fields` 必须含 `retryRequest`（`test.each(WRITE_ROUTES)` 的要求）；两个命令天然幂等（第 4.3 节的“内容已相同即成功”，丢弃不存在的草稿即成功），`retryRequest` 只做格式校验，不另存。命令形态为 `(deps, a) => Promise<…>`，由 `commands/spec.ts` 的 `saveSpecCmd`、`discardDraftCmd` 包装 `draft.ts` 的同步函数，并按 `a.team` 从注册表取 `specPath`（团队未登记 → `team_unknown`）。审计摘要只记 `wrote`、`path` 与哈希，不记 YAML 内容。
   - `GET …/spec`、`GET /api/about` 与 `validate` 放在新文件 `server/api-spec.ts`，在 `index.ts` 的 `buildRouter` 中注册。`validate` 虽是 POST，但不写文件、不进审计；它和其他 POST 一样经过 3B 的 Origin 与 CSRF 校验。
@@ -154,7 +154,8 @@
 - 失败 → `fail_count + 1`，记一条 `patrol_events`（`action = orca_sync`，`outcome = failed`，`detail = { worktree, error: <错误码> }`），下一轮重试；`fail_count ≥ 3` 的 worktree 停止尝试。
 - 停止期间，`wl attention` 的 `warnings` 列出“Orca 同步已停止：<worktree>（连续 3 次失败，重启调度员后重试）”。该条从 `orca_sync` 推导，停止期间一直显示。
 - 调度员启动时把本团队所有 `orca_sync` 行的 `fail_count` 清零（`resetOrcaSyncFailures(team)`），从而“重启后重新尝试”。
-- 重启后第一轮只观察（2B 的 `observeOnlyNextScan`）同样适用：首轮只计算不写入，也不更新 `orca_sync`。
+- 重启后第一轮只观察（2B 的 `observeOnlyNextScan`）同样适用：首轮不对 Orca 写任何东西（包括巡查清除信号时触发的重算），也不更新 `orca_sync`。
+- `orca_sync` 按 `(worktree, team)` 记录：两个团队共用一个 worktree 时各记各的上次写入值，不会互相覆盖；同一 worktree 上谁的值先变谁先写。
 - 某项开关为 `false` 或探针判定不支持时，调用里不带该参数；两项都不带时不调用。
 - 调度员不在运行时不同步；README 写明“Orca 界面上的状态需要调度员在运行”。
 - 2B 的 `worktree_comment` 原先在通知时写注释的路径（`outlets.ts` 的 `worktreeComment`）改为调用本节的同一写入函数，不再单独写：通知不再覆盖整段注释，而是体现为该岗位一行末尾的信号标记。
@@ -229,12 +230,13 @@ wl tui [team]
 
 ```sql
 CREATE TABLE orca_sync (
-  worktree TEXT PRIMARY KEY,
+  worktree TEXT NOT NULL,
   team TEXT NOT NULL,
   status TEXT,
   comment TEXT,
   written_at TEXT,
-  fail_count INTEGER NOT NULL DEFAULT 0
+  fail_count INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (worktree, team)
 );
 ```
 

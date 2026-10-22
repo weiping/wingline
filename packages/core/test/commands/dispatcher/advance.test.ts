@@ -123,6 +123,22 @@ test('gate_streak skips the nudge: observed → notify → freeze', async () => 
   expect(w.o.sent.map((s) => s.handle)).toEqual(['term-b', 'term-b'])
   expect(w.registry.getFrozen('checker@duo')).toMatchObject({ signal: 'gate_streak' })
 })
+test('an observe-only scan that clears a level-2 row does not write to Orca (first scan after a restart)', async () => {
+  const restore = setWorktreeSupport({ workspaceStatus: true, comment: true, commentMax: null })
+  try {
+    const w = world(DUO_YAML + 'patrol:\n  worktree_comment: true\n'); const h = hit({ signal: 'waiting_approval' })
+    await w.scan([h]); w.c.advance(P); await w.scan([h])
+    const written = w.o.comments.length
+    expect(written).toBeGreaterThan(0)
+    await w.scan([], true)
+    expect(w.registry.getPatrolState('duo', h.post, h.signal, h.taskId)?.clearedAt).toEqual(expect.any(String))
+    expect(w.o.comments).toHaveLength(written)
+    await w.scan([])
+    expect(w.o.comments).toHaveLength(written) // 已经清除的行不会再写；下一轮 syncOrca 才负责把注释算回来
+  } finally {
+    restore()
+  }
+})
 test('advance notifications go through syncWorktreeForPost instead of overwriting the comment', async () => {
   const restore = setWorktreeSupport({ workspaceStatus: false, comment: true, commentMax: null })
   try {

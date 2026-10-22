@@ -152,7 +152,7 @@ function composeGroup(deps: CommandDeps, ctx: Ctx, tasks: TaskRow[], addresses: 
 
 /** 只在值变化时写；失败记 fail_count 与事件，连续 MAX_FAILS 次后停手（调度员重启时清零）。 */
 async function writeGroup(deps: CommandDeps, ctx: Ctx, worktree: string, want: { status?: WorkspaceStatus; comment?: string }): Promise<void> {
-  const prev = deps.registry.getOrcaSync(worktree)
+  const prev = deps.registry.getOrcaSync(worktree, ctx.team.name)
   if ((prev?.failCount ?? 0) >= MAX_FAILS) return
   const change = {
     ...(want.status !== undefined && want.status !== prev?.status ? { status: want.status } : {}),

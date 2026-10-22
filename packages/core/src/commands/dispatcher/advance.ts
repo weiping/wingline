@@ -24,6 +24,8 @@ interface Env {
   now: Date
   ops: PatrolOps
   io: OutletIo
+  /** 重启后第一轮：只观察，不对 Orca 写任何东西（清除行也不例外）。 */
+  observeOnly: boolean
 }
 
 const ms = (iso: string | null) => (iso ? Date.parse(iso) : 0)
@@ -83,7 +85,7 @@ async function clearRow(e: Env, row: PatrolStateRow): Promise<void> {
   const at = e.now.toISOString()
   put(e, { ...row, clearedAt: at, lastNudgedAt: null })
   event(e, row, 'cleared')
-  if (row.level >= 2) await syncWorktreeForPost(e.deps, e.ctx, row.post)
+  if (row.level >= 2 && !e.observeOnly) await syncWorktreeForPost(e.deps, e.ctx, row.post)
 }
 
 async function announce(e: Env, h: SignalHit, level: number, message: string): Promise<void> {
@@ -184,7 +186,7 @@ export async function advancePatrol(
   hits: SignalHit[],
   o: { observeOnly: boolean; ops?: PatrolOps; io?: OutletIo },
 ): Promise<void> {
-  const e: Env = { deps, ctx, now: deps.now(), ops: o.ops ?? { doneTask, recoverTask }, io: o.io ?? {} }
+  const e: Env = { deps, ctx, now: deps.now(), ops: o.ops ?? { doneTask, recoverTask }, io: o.io ?? {}, observeOnly: o.observeOnly }
   const rows = new Map(deps.registry.listPatrolState(ctx.team.name).map((r) => [keyOf(r.post, r.signal, r.taskId), r]))
   const hitKeys = new Set(hits.map((h) => keyOf(h.post, h.signal, h.taskId)))
   for (const [k, r] of rows) {

@@ -148,6 +148,33 @@ test('GET /api without a session is 401; POST with a session but no csrf is 403'
   }
 })
 
+test('spec routes accept a newline-heavy yaml whose JSON form exceeds 64 KB; over 48 KB of yaml is spec_too_large, not 413', async () => {
+  const o = new FakeOrca()
+  const { deps } = seedRunningTeam(o)
+  const webDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wl-web-'))
+  fs.writeFileSync(path.join(webDir, 'index.html'), '<html>INDEX</html>')
+  const srv = await createConsoleServer(deps, { port: 0, webRoot: webDir })
+  try {
+    const cookie = (await fetch(srv.loginUrl())).headers.get('set-cookie')!.split(';')[0]!
+    const { result } = (await (await fetch(`http://127.0.0.1:${srv.port}/api/session`, { headers: { Cookie: cookie } })).json()) as any
+    const post = (yaml: string) =>
+      fetch(`http://127.0.0.1:${srv.port}/api/teams/duo/spec/validate`, {
+        method: 'POST',
+        headers: { Cookie: cookie, Origin: `http://127.0.0.1:${srv.port}`, 'X-Wingline-Token': result.csrfToken, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ yaml }),
+      })
+    const lines = (n: number) => '#\n'.repeat(n) // 每行 2 字节，JSON 里 `\n` 要转义，变成 3 字节
+    const ok = await post(lines(22 * 1024)) // 44 KB 文本（< 48 KB）→ 约 66 KB 的 JSON（> 64 KB）
+    expect(ok.status).toBe(200)
+    const tooLarge = await post(lines(25 * 1024)) // 50 KB > 48 KB
+    expect(tooLarge.status).toBe(400)
+    expect(((await tooLarge.json()) as any).error.code).toBe('spec_too_large')
+  } finally {
+    await srv.close()
+    fs.rmSync(webDir, { recursive: true })
+  }
+})
+
 test('a POST body over 64 KB is 413 body_too_large', async () => {
   const o = new FakeOrca()
   const { deps } = seedRunningTeam(o)

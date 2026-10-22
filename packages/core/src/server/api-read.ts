@@ -32,7 +32,8 @@ async function teamSummary(ctx: HandlerContext, name: string) {
     att.frozen.length +
     att.signals.length +
     att.questions.length +
-    att.stale.length
+    att.stale.length +
+    att.warnings.length
   return {
     name,
     postsCount: posts.length,

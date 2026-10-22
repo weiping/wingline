@@ -69,7 +69,7 @@ export const MIGRATIONS: readonly string[] = [
   CREATE INDEX audit_events_team_at ON audit_events(team, at);
   `,
   `
-  CREATE TABLE orca_sync (worktree TEXT PRIMARY KEY, team TEXT NOT NULL, status TEXT, comment TEXT, written_at TEXT,
-    fail_count INTEGER NOT NULL DEFAULT 0);
+  CREATE TABLE orca_sync (worktree TEXT NOT NULL, team TEXT NOT NULL, status TEXT, comment TEXT, written_at TEXT,
+    fail_count INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (worktree, team));
   `,
 ]

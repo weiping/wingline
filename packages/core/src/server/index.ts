@@ -81,7 +81,18 @@ function respondError(res: http.ServerResponse, err: unknown, warn: (msg: string
   }
 }
 
-async function readBody(req: http.IncomingMessage): Promise<{ body: unknown; tooLarge: boolean }> {
+const BODY_LIMIT = 64 * 1024
+/**
+ * 规格的 yaml 字段上限是 48 KB（按 UTF-8 字节），但 JSON 里换行等要转义，最坏每字节变 2 到 6 字节，
+ * 所以保存 / 校验规格的请求体不能套 64 KB 的通用上限，否则 40 KB 出头的 yaml 会先撞 413。
+ * 超过 48 KB 的 yaml 由 spec_too_large 拒绝；这里的上限只防止读入无限大的请求体。
+ */
+const SPEC_BODY_LIMIT = 48 * 1024 * 6 + 4096
+const SPEC_BODY_ROUTE = /^\/api\/teams\/[^/]+\/spec(?:\/validate)?$/
+
+const bodyLimitFor = (pathname: string) => (SPEC_BODY_ROUTE.test(pathname) ? SPEC_BODY_LIMIT : BODY_LIMIT)
+
+async function readBody(req: http.IncomingMessage, limit: number): Promise<{ body: unknown; tooLarge: boolean }> {
   let received = 0
   const chunks: Buffer[] = []
   let tooLarge = false
@@ -89,7 +100,7 @@ async function readBody(req: http.IncomingMessage): Promise<{ body: unknown; too
   await new Promise<void>((resolve, reject) => {
     req.on('data', (c: Buffer) => {
       received += c.length
-      if (received > 64 * 1024) {
+      if (received > limit) {
         tooLarge = true
       } else {
         chunks.push(c)
@@ -251,11 +262,11 @@ async function handleRouter(
       return
     }
 
-    const { body: parsedBody, tooLarge } = await readBody(req)
+    const { body: parsedBody, tooLarge } = await readBody(req, bodyLimitFor(url.pathname))
     if (tooLarge) {
       writeEnvelope(res, 413, {
         ok: false,
-        error: { kind: 'input', code: 'body_too_large', message: '请求体超过 64 KB 上限' },
+        error: { kind: 'input', code: 'body_too_large', message: `请求体超过 ${bodyLimitFor(url.pathname) / 1024} KB 上限` },
       })
       return
     }

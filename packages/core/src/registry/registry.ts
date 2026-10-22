@@ -801,8 +801,9 @@ export class Registry {
 
   // —— 阶段 3C：Orca 同步状态 ——
 
-  getOrcaSync(worktree: string): OrcaSyncRow | null {
-    const r = this.db.prepare('SELECT * FROM orca_sync WHERE worktree = ?').get(worktree) as Row | undefined
+  /** 键是 (worktree, team)：两个团队共用一个 worktree 时各记各的，不会互相覆盖。 */
+  getOrcaSync(worktree: string, team: string): OrcaSyncRow | null {
+    const r = this.db.prepare('SELECT * FROM orca_sync WHERE worktree = ? AND team = ?').get(worktree, team) as Row | undefined
     return r ? orcaSyncRow(r) : null
   }
 
@@ -810,7 +811,7 @@ export class Registry {
     this.db
       .prepare(
         `INSERT INTO orca_sync(worktree, team, status, comment, written_at, fail_count) VALUES (?, ?, ?, ?, ?, ?)
-         ON CONFLICT(worktree) DO UPDATE SET team = excluded.team, status = excluded.status, comment = excluded.comment,
+         ON CONFLICT(worktree, team) DO UPDATE SET status = excluded.status, comment = excluded.comment,
            written_at = excluded.written_at, fail_count = excluded.fail_count`,
       )
       .run(s.worktree, s.team, s.status, s.comment, s.writtenAt, s.failCount)

@@ -125,6 +125,13 @@ test('form edits on the shipped teams/duo/team.yaml change only the edited lines
   expect(validateSpecText(text, file).spec).toMatchObject({ patrol: { workspaceStatus: false }, posts: [{ model: 'sonnet' }, { tags: ['review'] }] })
 })
 
+test('a nonsensical path is a spec_invalid input error, not an internal crash', () => {
+  const src = 'posts:\n  - id: a\n  - id: b\nname: x\n'
+  for (const [p, v] of [[['posts', 5, 'agent'], 'x'], [['posts', 9], 'x'], [['name', 'sub'], 1], [['posts', 'zz', 'k'], 1]] as Array<[Array<string | number>, unknown]>) {
+    expect(() => setField(src, p, v)).toThrow(expect.objectContaining({ kind: 'input', code: 'spec_invalid' }))
+  }
+})
+
 test('edits that the text paths cannot place safely still work through the Document API', () => {
   // flow 映射、序列元素下标越界以外的块序列整体替换等：不要求字节不变，但结果必须是合法 YAML 且内容正确
   const out = setField('tags:\n  - a\n  - b\nx: 1\n', ['tags'], ['z'])

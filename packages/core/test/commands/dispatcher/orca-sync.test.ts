@@ -118,7 +118,7 @@ test('two posts on one worktree: priority wins and the comment has one line each
   expect(w.o.comments).toEqual([
     { worktree: TMP, status: 'in-progress', comment: 'builder：实现登录（进行中，第 2 轮）\nchecker：实现登录（排队，第 1 轮）' },
   ])
-  expect(w.registry.getOrcaSync(os.tmpdir())).toMatchObject({ team: 'duo', status: 'in-progress', failCount: 0 })
+  expect(w.registry.getOrcaSync(os.tmpdir(), 'duo')).toMatchObject({ team: 'duo', status: 'in-progress', failCount: 0 })
 })
 
 test('path:/w/a and current resolving to /w/a are grouped and written once', async () => {
@@ -161,6 +161,15 @@ test('writes only when status or comment changed', async () => {
   expect(w.o.comments[2]).toMatchObject({ status: 'todo' })
 })
 
+test("another team's row on the same worktree neither suppresses nor causes writes", async () => {
+  const w = world()
+  w.registry.putOrcaSync({ worktree: os.tmpdir(), team: 'other', status: 'completed', comment: '别的团队写的', writtenAt: 'T', failCount: 3 })
+  await w.sync([task()])
+  await w.sync([task()])
+  expect(w.o.comments).toHaveLength(1)
+  expect(w.registry.getOrcaSync(os.tmpdir(), 'other')).toMatchObject({ status: 'completed', comment: '别的团队写的', failCount: 3 })
+})
+
 test('only the changed parameter is sent', async () => {
   const w = world()
   await w.sync([task()])
@@ -180,9 +189,9 @@ test('a failure records a patrol_events row with action orca_sync, outcome faile
   w.o.faults.push({ method: 'worktreeSet', when: 'before', error: new WinglineError('orca', 'boom', 'x') })
   await w.sync([task()])
   expect(w.syncEvents()).toEqual([expect.objectContaining({ action: 'orca_sync', outcome: 'failed', detail: { worktree: os.tmpdir(), error: 'boom' } })])
-  expect(w.registry.getOrcaSync(os.tmpdir())).toMatchObject({ failCount: 1, status: null, comment: null })
+  expect(w.registry.getOrcaSync(os.tmpdir(), 'duo')).toMatchObject({ failCount: 1, status: null, comment: null })
   await w.sync([task()])
-  expect(w.registry.getOrcaSync(os.tmpdir())).toMatchObject({ failCount: 0, status: 'in-progress' })
+  expect(w.registry.getOrcaSync(os.tmpdir(), 'duo')).toMatchObject({ failCount: 0, status: 'in-progress' })
 })
 
 test('three consecutive failures stop the worktree and show a warning; dispatcher start resets fail_count', async () => {
@@ -191,13 +200,13 @@ test('three consecutive failures stop the worktree and show a warning; dispatche
     w.o.faults.push({ method: 'worktreeSet', when: 'before', error: new WinglineError('orca', 'boom', 'x') })
     await w.sync([task()])
   }
-  expect(w.registry.getOrcaSync(os.tmpdir())).toMatchObject({ failCount: 3 })
+  expect(w.registry.getOrcaSync(os.tmpdir(), 'duo')).toMatchObject({ failCount: 3 })
   await w.sync([task()])
   expect(w.o.comments).toEqual([])
   expect(warningsOf(w.deps, 'duo', w.ctx().spec)).toContain(`Orca 同步已停止：${os.tmpdir()}（连续 3 次失败，重启调度员后重试）`)
 
   initialState(w.deps, w.registry.getTeam('duo')!, w.ctx().spec)
-  expect(w.registry.getOrcaSync(os.tmpdir())).toMatchObject({ failCount: 0 })
+  expect(w.registry.getOrcaSync(os.tmpdir(), 'duo')).toMatchObject({ failCount: 0 })
   await w.sync([task()])
   expect(w.o.comments).toHaveLength(1)
   expect(warningsOf(w.deps, 'duo', w.ctx().spec).some((x) => x.startsWith('Orca 同步已停止'))).toBe(false)

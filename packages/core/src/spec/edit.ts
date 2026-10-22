@@ -124,11 +124,32 @@ function insertKey(text: string, doc: Doc, path: Path, value: unknown): string |
   return text.slice(0, pos) + (needsBreak ? eol : '') + lines + text.slice(pos)
 }
 
+/**
+ * 路径必须落得下：序列只接受已有的整数下标，映射只接受字符串键，标量底下不能再有东西；
+ * 缺失的部分之后只能是字符串键（会建出映射）。否则 yaml 库要么抛普通错误、要么悄悄造出带洞的序列。
+ */
+function assertPlaceable(doc: Doc, path: Path): void {
+  let node: unknown = doc.contents
+  for (let i = 0; i < path.length; i++) {
+    const k = path[i]!
+    if (node === undefined || node === null || (isScalar(node) && node.value === null)) {
+      if (path.slice(i).every((x) => typeof x === 'string')) return
+      break
+    }
+    if (isSeq(node) && Number.isInteger(k) && (k as number) >= 0 && (k as number) < node.items.length) node = node.get(k as number, true)
+    else if (isMap(node) && typeof k === 'string') node = node.get(k, true)
+    else break
+    if (i === path.length - 1) return
+  }
+  throw new WinglineError('input', 'spec_invalid', `表单修改的路径不合法：${path.join('.')}`)
+}
+
 /** 把表单的一处修改写回 YAML：`value === null` 删除该字段。 */
 export function setField(text: string, path: Path, value: unknown): string {
   const doc = parseDocument(text)
   const err = doc.errors[0]
   if (err) throw new WinglineError('input', 'spec_invalid', `YAML 有语法错误：${err.message}`)
+  assertPlaceable(doc, path)
   const exists = doc.hasIn(path)
   const surgical = value === null ? deleteKey(text, doc, path) : (exists ? replaceInline(text, doc, path, value) : null) ?? (exists ? null : insertKey(text, doc, path, value))
   if (surgical !== null) return surgical
