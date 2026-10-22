@@ -561,3 +561,25 @@ WINGLINE_SPIKE_WORKTREE=<专用测试 worktree 选择器> pnpm tsx spikes/worktr
 **未覆盖**：agent 停在权限确认框上时巡查信号的真机表现（`waiting_approval`）、长时间运行的任务期间 Orca 状态保持 `in-progress`（占位进程已验证，真 agent 的任务太短，巡查看到的都是空闲）、Windows。
 
 **留下的痕迹**：`~/.claude.json` 里多了一条 `wl-e2e-agents` 路径的项目记录（claude 自己写的，无害，可手动删除）。
+
+## 3C 真机验证（续二）：权限确认框信号、真 agent 长任务
+
+两个真 claude（`builder` 为 lead，`checker` 默认权限），`prompt_minutes: 1`，调度员正常运行，一次性 worktree。第一次运行中途磁盘被写满（调度员心跳在约 100 秒后停止），作废；下面是第二次。
+
+**权限确认框 → `waiting_approval`（已验证）**
+- `checker` 第一次执行 `wl task start` 停在 claude 的确认框上（`Do you want to proceed? ❯ 1. Yes … 4. No`）。Orca 返回给调度员的屏幕内容经 `classifyPreview` 判为 `at_prompt`。
+- 第一轮巡查记录 level 0（只记录），下一轮升到 level 2：通知了 lead（`notify_lead ok`），再下一轮重复通知一次（梯度 `repeat`）。
+- Orca 注释里 `checker` 那行出现 `⚠ 等待批准`（开跑后 649 秒，即第二轮巡查）。
+- 真 claude 的 lead 收到 `[雁阵] checker@rt2 停在确认或选择提示上…` 后只汇报、没有替它批准。
+
+**长任务期间状态（部分验证）**
+- `builder` 真的执行了 7 次 `sleep 110` 并 `wl task done`（约 899 秒时已 `completed`）。
+- Orca 状态在第二轮巡查（649 秒）首次写成 `in-progress`，之后一直没变；`builder` 做完后注释里它那行变成“空闲”（961 秒）。
+- 局限：`checker` 的任务一直卡着，状态本来就该是 `in-progress`，所以这次不能证明“只有一个长任务时状态保持 in-progress、做完翻回 completed”。
+
+**没有验证到**
+- 批准后信号被清除、`⚠` 消失：脚本的批准动作（`orca terminal send --text "" --enter`）没有生效（任务仍是 `dispatched`，信号一直在 level 2），原因没有查，且脚本把错误丢掉了。
+- 单个长任务做完后状态回落到 `completed`。
+
+**未解释的现象**
+- 开跑后约 30 秒，两个新任务各记了一条 `escalation / notify_lead / unconfirmed`，岗位显示为“未知岗位”。没有深查，也不确定此前几轮真机里是否出现过。
