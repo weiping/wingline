@@ -1,6 +1,6 @@
 import {
   WinglineError, attention, auditedWriteCommands, cachedOrca, listTasks, ps, readTimeline, readTimelineAfter,
-  type AttentionReport, type CommandDeps, type LogCursor, type WriteCommands,
+  type AttentionReport, type CachedOrca, type CommandDeps, type LogCursor, type WriteCommands,
 } from '@wingline/core'
 import { parseKeys } from './keys.js'
 import { reduce, initialTuiState } from './reduce.js'
@@ -34,6 +34,7 @@ export interface RunTuiOptions {
 }
 
 const TIMELINE_KEEP = 500
+const LOADING = '加载中…'
 const SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP'] as const
 
 const emptyAttention = (team: string): AttentionReport => ({
@@ -48,170 +49,221 @@ function summaryOf(result: unknown): string {
   return typeof r?.outcome === 'string' ? `已完成（${r.outcome}）` : '已完成'
 }
 
-/**
- * 终端里的团队视图：进程内直接调用 core，不依赖控制台服务。读取失败只标“数据过期”；
- * 其他异常先恢复终端（退出备用屏幕、显示光标、关闭 raw 模式）再 reject。
- */
-export function runTui(deps: CommandDeps, team: string, io: TuiIo, o: RunTuiOptions = {}): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    const screen = new Screen(io.stdout)
-    const cached = cachedOrca(deps.orca)
-    const cdeps: CommandDeps = { ...deps, orca: cached }
-    const read: TuiReader = { ps, attention, listTasks, readTimeline, readTimelineAfter, ...o.read }
-    const commands = o.commands ?? auditedWriteCommands('tui:')
-    let state: TuiState = { ...initialTuiState(), status: '加载中…' }
-    let data: TuiData = { team, posts: [], attention: emptyAttention(team), tasks: [], timeline: [], hushed: [] }
-    let cursor: LogCursor | null = null
-    let finished = false
-    const timers: Array<ReturnType<typeof setInterval>> = []
-
-    const restore = () => {
-      screen.restore()
-      try {
-        io.stdin.setRawMode?.(false)
-      } catch {
-        // 终端已经没了
-      }
-      io.stdin.pause?.()
-    }
-    const draw = () => {
-      if (finished) return
-      const lines = renderView(state, data, screen.size())
-      o.onFrame?.(lines)
-      screen.render(lines)
-    }
-    const finish = (err?: unknown) => {
-      if (finished) return
-      finished = true
-      timers.forEach(clearInterval)
-      io.stdin.off('data', onData)
-      io.stdout.off('resize', onResize)
-      process.off('exit', restore)
-      process.off('uncaughtException', onFatal)
-      for (const sig of SIGNALS) process.off(sig, onStop)
-      o.signal?.removeEventListener('abort', onStop)
-      restore()
-      if (err === undefined) resolve()
-      else reject(err)
-    }
-    const guard = <A extends unknown[]>(fn: (...a: A) => void | Promise<void>) => (...a: A): void => {
-      try {
-        const r = fn(...a)
-        if (r instanceof Promise) r.catch(finish)
-      } catch (err) {
-        finish(err)
-      }
-    }
-    const onStop = () => finish()
-    const onFatal = (err: Error) => {
-      process.off('uncaughtException', onFatal)
-      restore()
-      throw err
-    }
-
-    const markStale = () => {
-      state = { ...state, stale: true }
-      draw()
-    }
-
-    const refreshData = async () => {
-      let loaded: { posts: TuiData['posts']; attention: AttentionReport; tasks: TuiData['tasks'] }
-      try {
-        const [posts, att, tasks] = await Promise.all([read.ps(cdeps, { team }), read.attention(cdeps, team), read.listTasks(cdeps, { team })])
-        loaded = { posts, attention: att, tasks }
-      } catch {
-        return markStale()
-      }
-      const now = deps.now().getTime()
-      const hushed = loaded.posts.map((p) => p.address).filter((a) => Date.parse(deps.registry.hushedUntil(a) ?? '') > now)
-      data = { ...data, ...loaded, hushed }
-      state = { ...state, stale: false, status: state.status === '加载中…' ? '' : state.status }
-      draw()
-    }
-
-    const refreshTimeline = async () => {
-      let events: TuiData['timeline']
-      try {
-        if (cursor === null) {
-          const first = await read.readTimeline(cdeps, { team, limit: 200 })
-          cursor = first.cursor
-          events = first.events
-        } else {
-          const more = await read.readTimelineAfter(cdeps, team, cursor)
-          cursor = more.cursor
-          events = [...data.timeline, ...more.events]
-        }
-      } catch {
-        return markStale()
-      }
-      const wasAtEnd = state.view === 'timeline' && state.selected >= data.timeline.length - 1
-      data = { ...data, timeline: events.slice(-TIMELINE_KEEP) }
-      if (wasAtEnd) state = { ...state, selected: Math.max(0, data.timeline.length - 1) }
-      draw()
-    }
-
-    const execute = async (action: PendingAction) => {
-      try {
-        const result = await (commands[action.command] as unknown as WriteFn)(cdeps, action.args)
-        state = { ...state, status: `${action.label}：${summaryOf(result)}`, lastUncertain: null }
-      } catch (err) {
-        state = { ...state, ...failure(action, err) }
-      }
-      cached.invalidate()
-      draw()
-      await Promise.all([refreshData(), refreshTimeline()])
-    }
-
-    const run = (effect: Effect) => {
-      if (effect.kind === 'quit') return finish()
-      if (effect.kind === 'refresh') return void Promise.all([refreshData(), refreshTimeline()]).catch(finish)
-      void execute(effect.action).catch(finish)
-    }
-
-    const onData = guard((chunk: Buffer | string) => {
-      for (const k of parseKeys(String(chunk))) {
-        const r = reduce(state, k, data)
-        state = r.state
-        if (r.effect) run(r.effect)
-      }
-      draw()
-    })
-    const onResize = guard(() => {
-      screen.invalidate()
-      draw()
-    })
-
-    try {
-      process.on('exit', restore)
-      process.on('uncaughtException', onFatal)
-      for (const sig of SIGNALS) process.on(sig, onStop)
-      io.stdin.setRawMode?.(true)
-      io.stdin.setEncoding?.('utf8')
-      io.stdin.resume?.()
-      screen.enter()
-      io.stdin.on('data', onData)
-      io.stdout.on('resize', onResize)
-      o.signal?.addEventListener('abort', onStop, { once: true })
-      draw()
-      timers.push(setInterval(guard(refreshData), o.dataMs ?? 5000), setInterval(guard(refreshTimeline), o.timelineMs ?? 2000))
-      guard(refreshData)()
-      guard(refreshTimeline)()
-      if (o.signal?.aborted) finish()
-    } catch (err) {
-      finish(err)
-    }
-  })
-}
-
 /** 一次写操作失败：只改状态行。结果不确定且带 retryRequest 时记下来，按 R 以同样的参数重试。 */
 function failure(action: PendingAction, err: unknown): Partial<TuiState> {
   if (err instanceof WinglineError) {
+    const hint = err.hint ? `（${err.hint}）` : ''
     const retryRequest = (err.detail as { retryRequest?: unknown } | undefined)?.retryRequest
     if (err.kind === 'uncertain' && typeof retryRequest === 'string') {
-      const hint = err.hint ? `（${err.hint}）` : ''
       return { lastUncertain: { ...action, args: { ...action.args, retryRequest } }, status: `${err.message}${hint}；按 R 原样重试` }
     }
-    return { status: `${action.label}失败：${err.message}${err.hint ? `（${err.hint}）` : ''}` }
+    return { status: `${action.label}失败：${err.message}${hint}` }
   }
   return { status: `${action.label}失败：${err instanceof Error ? err.message : String(err)}` }
+}
+
+/**
+ * 一次 wl tui 会话：进程内直接调用 core，不依赖控制台服务。读取失败只标“数据过期”；
+ * 其他异常先恢复终端（退出备用屏幕、显示光标、关闭 raw 模式）再 reject。
+ */
+class TuiSession {
+  private readonly screen: Screen
+  private readonly cached: CachedOrca
+  private readonly cdeps: CommandDeps
+  private readonly read: TuiReader
+  private readonly commands: WriteCommands
+  private state: TuiState = { ...initialTuiState(), status: LOADING }
+  private data: TuiData
+  private cursor: LogCursor | null = null
+  private finished = false
+  private timers: Array<ReturnType<typeof setInterval>> = []
+
+  constructor(
+    private readonly deps: CommandDeps,
+    private readonly team: string,
+    private readonly io: TuiIo,
+    private readonly o: RunTuiOptions,
+    private readonly done: { resolve(): void; reject(err: unknown): void },
+  ) {
+    this.screen = new Screen(io.stdout)
+    this.cached = cachedOrca(deps.orca)
+    this.cdeps = { ...deps, orca: this.cached }
+    this.read = { ps, attention, listTasks, readTimeline, readTimelineAfter, ...o.read }
+    this.commands = o.commands ?? auditedWriteCommands('tui:')
+    this.data = { team, posts: [], attention: emptyAttention(team), tasks: [], timeline: [], hushed: [] }
+  }
+
+  // —— 生命周期 ——
+
+  start(): void {
+    try {
+      process.on('exit', this.restore)
+      process.on('uncaughtException', this.onFatal)
+      for (const sig of SIGNALS) process.on(sig, this.onStop)
+      this.io.stdin.setRawMode?.(true)
+      this.io.stdin.setEncoding?.('utf8')
+      this.io.stdin.resume?.()
+      this.screen.enter()
+      this.io.stdin.on('data', this.onData)
+      this.io.stdout.on('resize', this.onResize)
+      this.o.signal?.addEventListener('abort', this.onStop, { once: true })
+      this.draw()
+      this.startLoops()
+      if (this.o.signal?.aborted) this.finish()
+    } catch (err) {
+      this.finish(err)
+    }
+  }
+
+  private startLoops(): void {
+    this.timers.push(
+      setInterval(this.guard(() => this.refreshData()), this.o.dataMs ?? 5000),
+      setInterval(this.guard(() => this.refreshTimeline()), this.o.timelineMs ?? 2000),
+    )
+    this.guard(() => this.refreshData())()
+    this.guard(() => this.refreshTimeline())()
+  }
+
+  private readonly restore = (): void => {
+    this.screen.restore()
+    try {
+      this.io.stdin.setRawMode?.(false)
+    } catch {
+      // 终端已经没了
+    }
+    this.io.stdin.pause?.()
+  }
+
+  private finish(err?: unknown): void {
+    if (this.finished) return
+    this.finished = true
+    this.timers.forEach(clearInterval)
+    this.io.stdin.off('data', this.onData)
+    this.io.stdout.off('resize', this.onResize)
+    process.off('exit', this.restore)
+    process.off('uncaughtException', this.onFatal)
+    for (const sig of SIGNALS) process.off(sig, this.onStop)
+    this.o.signal?.removeEventListener('abort', this.onStop)
+    this.restore()
+    if (err === undefined) this.done.resolve()
+    else this.done.reject(err)
+  }
+
+  /** 回调里抛出的异常（同步或异步）一律走 finish：先恢复终端再 reject。 */
+  private guard<A extends unknown[]>(fn: (...a: A) => void | Promise<void>): (...a: A) => void {
+    return (...a) => {
+      try {
+        const r = fn(...a)
+        if (r instanceof Promise) r.catch((e) => this.finish(e))
+      } catch (err) {
+        this.finish(err)
+      }
+    }
+  }
+
+  private readonly onStop = (): void => this.finish()
+
+  private readonly onFatal = (err: Error): void => {
+    process.off('uncaughtException', this.onFatal)
+    this.restore()
+    throw err
+  }
+
+  // —— 画面与输入 ——
+
+  private draw(): void {
+    if (this.finished) return
+    const lines = renderView(this.state, this.data, this.screen.size())
+    this.o.onFrame?.(lines)
+    this.screen.render(lines)
+  }
+
+  private readonly onData = this.guard((chunk: Buffer | string) => {
+    for (const k of parseKeys(String(chunk))) {
+      const r = reduce(this.state, k, this.data)
+      this.state = r.state
+      if (r.effect) this.run(r.effect)
+    }
+    this.draw()
+  })
+
+  private readonly onResize = this.guard(() => {
+    this.screen.invalidate()
+    this.draw()
+  })
+
+  private run(effect: Effect): void {
+    if (effect.kind === 'quit') return this.finish()
+    if (effect.kind === 'refresh') return void this.refreshAll().catch((e) => this.finish(e))
+    void this.execute(effect.action).catch((e) => this.finish(e))
+  }
+
+  // —— 读取 ——
+
+  private refreshAll(): Promise<unknown> {
+    return Promise.all([this.refreshData(), this.refreshTimeline()])
+  }
+
+  private markStale(): void {
+    this.state = { ...this.state, stale: true }
+    this.draw()
+  }
+
+  /** 读取失败只标过期；处理结果时抛出的异常是 bug，交给 guard 走 finish。 */
+  private async refreshData(): Promise<void> {
+    const { team, cdeps, read } = this
+    let loaded: { posts: TuiData['posts']; attention: AttentionReport; tasks: TuiData['tasks'] }
+    try {
+      const [posts, att, tasks] = await Promise.all([read.ps(cdeps, { team }), read.attention(cdeps, team), read.listTasks(cdeps, { team })])
+      loaded = { posts, attention: att, tasks }
+    } catch {
+      return this.markStale()
+    }
+    const now = this.deps.now().getTime()
+    const hushed = loaded.posts.map((p) => p.address).filter((a) => Date.parse(this.deps.registry.hushedUntil(a) ?? '') > now)
+    this.data = { ...this.data, ...loaded, hushed }
+    this.state = { ...this.state, stale: false, status: this.state.status === LOADING ? '' : this.state.status }
+    this.draw()
+  }
+
+  private async refreshTimeline(): Promise<void> {
+    const { team, cdeps, read } = this
+    let events: TuiData['timeline']
+    try {
+      if (this.cursor === null) {
+        const first = await read.readTimeline(cdeps, { team, limit: 200 })
+        this.cursor = first.cursor
+        events = first.events
+      } else {
+        const more = await read.readTimelineAfter(cdeps, team, this.cursor)
+        this.cursor = more.cursor
+        events = [...this.data.timeline, ...more.events]
+      }
+    } catch {
+      return this.markStale()
+    }
+    const wasAtEnd = this.state.view === 'timeline' && this.state.selected >= this.data.timeline.length - 1
+    this.data = { ...this.data, timeline: events.slice(-TIMELINE_KEEP) }
+    if (wasAtEnd) this.state = { ...this.state, selected: Math.max(0, this.data.timeline.length - 1) }
+    this.draw()
+  }
+
+  // —— 写操作 ——
+
+  private async execute(action: PendingAction): Promise<void> {
+    try {
+      const result = await (this.commands[action.command] as unknown as WriteFn)(this.cdeps, action.args)
+      this.state = { ...this.state, status: `${action.label}：${summaryOf(result)}`, lastUncertain: null }
+    } catch (err) {
+      this.state = { ...this.state, ...failure(action, err) }
+    }
+    this.cached.invalidate()
+    this.draw()
+    await this.refreshAll()
+  }
+}
+
+/** 全屏终端视图。结束（q / Ctrl-C / 信号 / abort）时 resolve；出错时先恢复终端再 reject。 */
+export function runTui(deps: CommandDeps, team: string, io: TuiIo, o: RunTuiOptions = {}): Promise<void> {
+  return new Promise<void>((resolve, reject) => new TuiSession(deps, team, io, o, { resolve, reject }).start())
 }

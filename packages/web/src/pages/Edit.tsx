@@ -27,6 +27,20 @@ interface SaveResult {
   hash: string
 }
 type SetOp = { path: SpecPath; value: unknown }
+/** 当前展示给用户看的编辑结果：服务端最近一次返回的内容，加上本地还没确认的输入。 */
+interface Shown {
+  yaml: string
+  parsed: any
+  errors: FormError[]
+  preview: SpecPlan | null
+  problem: string | null
+}
+/** 保存时要带的基准：加载（或上次保存）时写入目标文件的哈希。 */
+interface Base {
+  hash: string | null
+  draftHash: string | null
+  hasDraft: boolean
+}
 
 const DEBOUNCE_MS = 400
 
@@ -45,104 +59,91 @@ function setLocal(parsed: any, path: SpecPath, value: unknown): any {
   return out
 }
 
-function useEditor(team: string, spec: SpecForEdit) {
-  const enc = encodeURIComponent(team)
-  const start = spec.draft ?? spec
-  const [yaml, setYaml] = useState(start.yaml)
-  const [parsed, setParsed] = useState<any>(start.parsed)
-  const [errors, setErrors] = useState<FormError[]>([])
-  const [preview, setPreview] = useState<SpecPlan | null>(null)
+/** 把排队的表单修改依次交给服务端套用（每次基于上一次返回的 yaml）；没有排队的修改就只校验当前文本。 */
+async function validateQueued(post: (body: object) => Promise<ValidateResult>, latest: { current: string }, sets: SetOp[]): Promise<ValidateResult> {
+  if (sets.length === 0) return post({ yaml: latest.current })
+  let res!: ValidateResult
+  for (const set of sets) {
+    res = await post({ yaml: latest.current, set })
+    latest.current = res.yaml
+  }
+  return res
+}
+
+/** 防抖校验：表单与 YAML 两个视图共用一份编辑状态；停顿 400 毫秒后才请求，多次修改按顺序合并。 */
+function useValidation(team: string, start: { yaml: string; parsed: any }) {
+  const [shown, setShown] = useState<Shown>({ yaml: start.yaml, parsed: start.parsed, errors: [], preview: null, problem: null })
   const [dirty, setDirty] = useState(false)
-  const [problem, setProblem] = useState<string | null>(null)
-  const [base, setBase] = useState({ hash: spec.hash, draftHash: spec.draft?.hash ?? null, hasDraft: spec.draft !== null })
   const latest = useRef(start.yaml)
   const lastGood = useRef<any>(start.parsed)
   const timer = useRef<ReturnType<typeof setTimeout>>()
   const pending = useRef<SetOp[]>([])
   const version = useRef(0)
   const chain = useRef<Promise<void>>(Promise.resolve())
-  if (parsed !== null) lastGood.current = parsed
-
-  const post = (body: object) => api.post<ValidateResult>(`/api/teams/${enc}/spec/validate`, body)
+  if (shown.parsed !== null) lastGood.current = shown.parsed
+  const post = (body: object) => api.post<ValidateResult>(`/api/teams/${encodeURIComponent(team)}/spec/validate`, body)
 
   const run = async () => {
-    const sets = pending.current.splice(0)
     const startVersion = version.current
     try {
-      let res: ValidateResult
-      if (sets.length === 0) res = await post({ yaml: latest.current })
-      else {
-        res = undefined as unknown as ValidateResult
-        for (const set of sets) {
-          res = await post({ yaml: latest.current, set })
-          latest.current = res.yaml
-        }
-      }
-      if (version.current !== startVersion) return
-      setYaml(res.yaml)
-      setParsed(res.parsed)
-      setErrors(res.errors)
-      setPreview(res.preview)
-      setProblem(null)
-      setDirty(false)
+      const res = await validateQueued(post, latest, pending.current.splice(0))
+      if (version.current === startVersion) setShown({ yaml: res.yaml, parsed: res.parsed, errors: res.errors, preview: res.preview, problem: null })
     } catch (err) {
-      setProblem(errorText(err))
-      setDirty(false)
+      setShown((s) => ({ ...s, problem: errorText(err) }))
     }
+    if (version.current === startVersion) setDirty(false)
   }
-
   const flushNow = () => {
     clearTimeout(timer.current)
     chain.current = chain.current.then(run)
   }
-  const schedule = () => {
-    clearTimeout(timer.current)
-    timer.current = setTimeout(flushNow, DEBOUNCE_MS)
-  }
   useEffect(() => () => clearTimeout(timer.current), [])
-
   const edited = () => {
     version.current += 1
     setDirty(true)
-    schedule()
+    clearTimeout(timer.current)
+    timer.current = setTimeout(flushNow, DEBOUNCE_MS)
   }
   const onYaml = (text: string) => {
     latest.current = text
     pending.current = []
-    setYaml(text)
+    setShown((s) => ({ ...s, yaml: text }))
     edited()
   }
   const onSet = (path: SpecPath, value: unknown) => {
     pending.current.push({ path, value })
-    setParsed((p: any) => setLocal(p, path, value))
+    setShown((s) => ({ ...s, parsed: setLocal(s.parsed, path, value) }))
     edited()
   }
-
-  const saveBody = () => ({ yaml: latest.current, running: spec.running, baseHash: spec.running ? base.draftHash : base.hash })
-  const afterSave = (res: SaveResult) =>
-    setBase((b) => (res.wrote === 'draft' ? { ...b, draftHash: res.hash, hasDraft: true } : { ...b, hash: res.hash }))
-  const save = () => api.post<SaveResult>(`/api/teams/${enc}/spec`, saveBody())
-
-  return { yaml, parsed, formParsed: parsed ?? lastGood.current, errors, setErrors, preview, dirty, problem, base, onYaml, onSet, flushNow, save, afterSave }
+  const setErrors = (errors: FormError[]) => setShown((s) => ({ ...s, errors }))
+  return { shown, formParsed: shown.parsed ?? lastGood.current, dirty, latest, onYaml, onSet, flushNow, setErrors }
 }
 
-type View = 'form' | 'yaml'
+interface SavePanelProps {
+  team: string
+  spec: SpecForEdit
+  base: Base
+  setBase: (f: (b: Base) => Base) => void
+  yaml: { current: string }
+  blocked: boolean
+  setErrors: (e: FormError[]) => void
+  reload: () => void
+}
 
-function SavePanel(props: { spec: SpecForEdit; ed: ReturnType<typeof useEditor>; reload: () => void }) {
-  const { spec, ed } = props
+function SavePanel(p: SavePanelProps) {
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState<SaveResult | null>(null)
   const [fail, setFail] = useState<{ text: string; conflict: boolean } | null>(null)
-  const blocked = ed.dirty || saving || ed.errors.length > 0 || ed.parsed === null
   const click = async () => {
     setSaving(true)
     setFail(null)
     try {
-      const res = await ed.save()
-      ed.afterSave(res)
+      const body = { yaml: p.yaml.current, running: p.spec.running, baseHash: p.spec.running ? p.base.draftHash : p.base.hash }
+      const res = await api.post<SaveResult>(`/api/teams/${encodeURIComponent(p.team)}/spec`, body)
+      p.setBase((b) => (res.wrote === 'draft' ? { ...b, draftHash: res.hash, hasDraft: true } : { ...b, hash: res.hash }))
       setSaved(res)
     } catch (err) {
-      if (err instanceof ApiError && err.detail?.errors) ed.setErrors(err.detail.errors)
+      if (err instanceof ApiError && err.detail?.errors) p.setErrors(err.detail.errors)
       setFail({ text: errorText(err), conflict: err instanceof ApiError && err.code === 'spec_conflict' })
     } finally {
       setSaving(false)
@@ -150,8 +151,8 @@ function SavePanel(props: { spec: SpecForEdit; ed: ReturnType<typeof useEditor>;
   }
   return (
     <div class="save-panel">
-      <button type="button" class="btn" disabled={blocked} onClick={() => void click()}>
-        {spec.running ? '保存为草稿' : '保存'}
+      <button type="button" class="btn" disabled={p.blocked || saving} onClick={() => void click()}>
+        {p.spec.running ? '保存为草稿' : '保存'}
       </button>
       {saved && (
         <p class="muted small" role="status">
@@ -162,7 +163,7 @@ function SavePanel(props: { spec: SpecForEdit; ed: ReturnType<typeof useEditor>;
         <p class="error" role="alert">
           {fail.text}{' '}
           {fail.conflict && (
-            <button type="button" class="btn ghost small" onClick={props.reload}>
+            <button type="button" class="btn ghost small" onClick={p.reload}>
               重新加载
             </button>
           )}
@@ -185,10 +186,64 @@ function Errors({ errors }: { errors: FormError[] }) {
   )
 }
 
-function Editor({ team, spec, reload }: { team: string; spec: SpecForEdit; reload: () => void }) {
-  const ed = useEditor(team, spec)
-  const [view, setView] = useState<View>('form')
+type View = 'form' | 'yaml'
+
+function ViewTabs(props: { view: View; show: (v: View) => void }) {
+  const tab = (v: View, label: string) => (
+    <button type="button" class={props.view === v ? 'btn' : 'btn ghost'} aria-pressed={props.view === v} onClick={() => props.show(v)}>
+      {label}
+    </button>
+  )
+  return (
+    <div class="tabs" role="group" aria-label="视图">
+      {tab('form', '表单视图')}
+      {tab('yaml', 'YAML 视图')}
+    </div>
+  )
+}
+
+function DraftBanner(props: { team: string; reload: () => void }) {
+  return (
+    <div class="banner">
+      当前打开的是未应用的草稿。{' '}
+      <ActionDialog
+        label="丢弃草稿"
+        title="丢弃草稿"
+        danger
+        onSubmit={(_v, rr) => api.post(`/api/teams/${encodeURIComponent(props.team)}/spec/discard-draft`, rr ? { retryRequest: rr } : {})}
+        onDone={props.reload}
+      />
+    </div>
+  )
+}
+
+type Validation = ReturnType<typeof useValidation>
+
+function EditorBody({ view, ed }: { view: View; ed: Validation }) {
+  const { shown } = ed
   const ids: string[] = (ed.formParsed?.posts ?? []).map((p: any) => String(p?.id ?? ''))
+  if (view === 'yaml') {
+    return (
+      <>
+        <textarea class="yaml" aria-label="YAML" spellcheck={false} rows={26} value={shown.yaml} onInput={(e) => ed.onYaml((e.target as HTMLTextAreaElement).value)} />
+        <Errors errors={shown.errors} />
+      </>
+    )
+  }
+  return (
+    <>
+      {shown.parsed === null && <p class="banner error">YAML 有语法错误，表单只读，请切到 YAML 视图修正。</p>}
+      <Errors errors={shown.errors.filter((e) => !formHasField(e.path, ids))} />
+      <SpecForm parsed={ed.formParsed} errors={shown.errors} disabled={shown.parsed === null} onSet={ed.onSet} />
+    </>
+  )
+}
+
+function Editor({ team, spec, reload }: { team: string; spec: SpecForEdit; reload: () => void }) {
+  const ed = useValidation(team, spec.draft ?? spec)
+  const [view, setView] = useState<View>('form')
+  const [base, setBase] = useState<Base>({ hash: spec.hash, draftHash: spec.draft?.hash ?? null, hasDraft: spec.draft !== null })
+  const { shown } = ed
   const show = (v: View) => {
     ed.flushNow()
     setView(v)
@@ -200,41 +255,15 @@ function Editor({ team, spec, reload }: { team: string; spec: SpecForEdit; reloa
         <span class="muted small">{spec.specPath}</span>
       </header>
       {spec.running && <p class="banner">团队正在运行：保存会写入草稿，不影响运行；停掉团队后用 wl up --draft 应用。</p>}
-      {ed.base.hasDraft && (
-        <div class="banner">
-          当前打开的是未应用的草稿。{' '}
-          <ActionDialog
-            label="丢弃草稿"
-            title="丢弃草稿"
-            danger
-            onSubmit={(_v, rr) => api.post(`/api/teams/${encodeURIComponent(team)}/spec/discard-draft`, rr ? { retryRequest: rr } : {})}
-            onDone={reload}
-          />
-        </div>
-      )}
-      <div class="tabs" role="group" aria-label="视图">
-        <button type="button" class={view === 'form' ? 'btn' : 'btn ghost'} aria-pressed={view === 'form'} onClick={() => show('form')}>
-          表单视图
-        </button>
-        <button type="button" class={view === 'yaml' ? 'btn' : 'btn ghost'} aria-pressed={view === 'yaml'} onClick={() => show('yaml')}>
-          YAML 视图
-        </button>
-      </div>
-      {view === 'form' ? (
-        <>
-          {ed.parsed === null && <p class="banner error">YAML 有语法错误，表单只读，请切到 YAML 视图修正。</p>}
-          <Errors errors={ed.errors.filter((e) => !formHasField(e.path, ids))} />
-          <SpecForm parsed={ed.formParsed} errors={ed.errors} disabled={ed.parsed === null} onSet={ed.onSet} />
-        </>
-      ) : (
-        <>
-          <textarea class="yaml" aria-label="YAML" spellcheck={false} rows={26} value={ed.yaml} onInput={(e) => ed.onYaml((e.target as HTMLTextAreaElement).value)} />
-          <Errors errors={ed.errors} />
-        </>
-      )}
-      {ed.problem && <p class="error" role="alert">{ed.problem}</p>}
-      {ed.preview && <SpecPreview preview={ed.preview} team={team} />}
-      <SavePanel spec={spec} ed={ed} reload={reload} />
+      {base.hasDraft && <DraftBanner team={team} reload={reload} />}
+      <ViewTabs view={view} show={show} />
+      <EditorBody view={view} ed={ed} />
+      {shown.problem && <p class="error" role="alert">{shown.problem}</p>}
+      {shown.preview && <SpecPreview preview={shown.preview} team={team} />}
+      <SavePanel
+        team={team} spec={spec} base={base} setBase={setBase} yaml={ed.latest} setErrors={ed.setErrors} reload={reload}
+        blocked={ed.dirty || shown.errors.length > 0 || shown.parsed === null}
+      />
       <p class="muted small">team.yaml 视为可信配置：launch、gates、notify.command 会在本机执行，请只保存你信任的内容。</p>
     </div>
   )
