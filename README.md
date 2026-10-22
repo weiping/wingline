@@ -192,13 +192,56 @@ wl log duo --follow               # 持续输出新事件（Ctrl+C 结束）
 
 ### 控制台：`wl console`
 
-`wl console` 在 `127.0.0.1` 上起一个本地网页控制台（收件箱、总览、任务看板、任务详情、岗位详情、时间线），只监听本机，没有绑定其他地址的选项。
+`wl console` 在 `127.0.0.1` 上起一个本地网页控制台（收件箱、总览、任务看板、任务详情、岗位详情、时间线、团队编辑器、关于与诊断），只监听本机，没有绑定其他地址的选项。
 
 - 前台运行并打印一次性登录链接；链接 5 分钟内有效、只能用一次，拿到它就等于拿到控制台的访问权，不要贴到别处。
 - 已有控制台在运行时，再执行 `wl console` 只打印新的登录链接，不会起第二个服务；`wl console --link` 只取新链接，没有服务时报 `console_not_running`。
 - `wl console --open` 在 Orca 内置浏览器里打开控制台：有服务就直接打开，没有就在 Orca 里新开 `console@wingline` 终端运行它。`--worktree <选择器>` 指定这个终端的工作区；不给时取第一个运行中团队的牵头岗工作区，没有团队则报 `console_no_worktree`。Orca 不支持在内置浏览器打开标签页时，会打印链接，请在浏览器里打开。
 - 页面里的写操作（回答提问、发消息、冻结、改派、转人工等）与命令行做的是同一件事，审计里记为执行者 `human`、命令名带 `console:` 前缀；结果不确定时只给出“按原样重试”，不会自动重试。
 - 服务重启后会话失效，需要重新 `wl console --link` 取链接；`Ctrl-C` 停止服务。
+
+### 编辑团队（草稿与 `wl up --draft`）
+
+控制台的「编辑」页可以改岗位、`lead`、`links`、`gates`、`budgets.task` 与 `patrol`，有表单和 YAML 两个视图（YAML 是唯一的真实来源，表单的每次修改都由服务端写回 YAML，保留你的注释与字段顺序）。边改边校验，下方的「预演」会列出每个岗位的去向（新增 / 不变 / 启动参数变化 / 删除 / 简报变化）、字段差异，以及改完要执行的命令。新增或删除岗位、`patrol.notify` 请在 YAML 视图里改。
+
+- **团队在运行时**，保存写到同目录的 `team.draft.yaml`（`team.yaml` → `team.draft.yaml`），不影响运行：团队照常工作，`wl attention` 与控制台总览会提示「有未应用的规格草稿」。
+- **团队已停止时**，保存直接写 `team.yaml`。
+- 应用草稿：`wl down <team>` 后执行 `wl up <team.yaml> --draft`。它先校验草稿，再把旧规格备份成 `team.yaml.bak`，把草稿改名为正式规格，然后照常 `up`。团队仍在运行且草稿改了规格内容时会拒绝（`team_spec_changed`），只改了注释则允许。没有草稿报 `draft_not_found`。
+- 保存带冲突检测：加载之后文件被别处改过会得到 `spec_conflict`（HTTP 409），请重新加载。`yaml` 内容上限 48 KB。
+- `team.yaml` 视为可信配置：`launch`、`gates`、`notify.command` 会在本机执行。
+- 控制台的「关于」页（`/settings`）只读，列出 Orca 路径与版本、数据目录、注册表版本、日志占用与各团队状态，每项标注来源（环境变量 / 默认值 / 注册表 / 文件 / Orca）。
+
+### Orca 界面上的状态
+
+调度员在运行时，会在每次巡查（约 5 分钟一轮）结束时把状态同步到 Orca 自己的界面：
+
+- **工作区状态**（`patrol.workspace_status`，默认 `true`）：岗位所在 worktree 显示 `in-progress`（有任务派给它）/ `in-review`（它提交的工作正在被审）/ `todo`（有排队的任务）/ `completed`。多个岗位共用一个 worktree 时取优先级最高的（`in-review` > `in-progress` > `todo` > `completed`）。
+- **卡片注释**（`patrol.worktree_comment`，默认 `false`）：每个岗位一行，形如 `builder：实现登录（进行中，第 2 轮） ⚠ 无进展`；有巡查信号加 `⚠`，被冻结加 `❄ 已冻结`；通知不再整段覆盖注释。最长 500 字符。
+
+只在值变化时才写；重启调度员后的第一轮只计算不写；某个 worktree 连续 3 次写失败会停手，并在 `wl attention` 的「告警」里列出，重启调度员后重试。这个状态由雁阵维护：你在 Orca 界面里手动改了，会在雁阵下一次算出新值时被覆盖。调度员没在运行时不同步。
+
+> 当前版本里工作区状态的 Orca 参数尚未在真机上验证（`spikes/worktree-status.ts` 探针已写好、待运行，见 `spikes/REPORT.md`）。验证之前它按「不支持」处理：开关为 `true` 时 `wl attention` 会提示「Orca 不支持工作区状态」，不会写 Orca。
+
+### 终端视图：`wl tui`
+
+```bash
+wl tui [team]        # 省略团队名：只有一个团队时直接进入，多个团队先选择
+```
+
+在终端里的全屏视图（备用屏幕，退出后终端恢复原状），需要交互式终端：输入输出被重定向会报 `tui_not_tty`。三个视图：**总览**（调度员状态、岗位表、最近 8 条事件）、**收件箱**（`wl attention` 的各节，告警只读）、**时间线**（新的在下，实时追加）。不依赖控制台服务，岗位与待办每 5 秒、时间线每 2 秒刷新。
+
+| 按键 | 作用 |
+| --- | --- |
+| `1` `2` `3` / `Tab` | 切换视图 |
+| `↑` `↓` / `j` `k` | 选中行 |
+| `Enter` | 打开选中项的操作；没有写操作的条目会显示对应的 `wl` 命令 |
+| `/` | 时间线里按 `source:` / `post:` / `task:` 过滤，留空清除 |
+| `r` | 立即刷新 |
+| `R` | 上一次写操作结果不确定时，按原样重试 |
+| `?` | 帮助 |
+| `q` / `Ctrl-C` | 退出 |
+
+可做的操作：回答提问；处理 gate（可同时改派）；恢复派发失主的任务；冻结 / 解冻；静音 / 取消静音；给岗位发消息。需要输入的内容在底部单行输入框填写，提交前会再确认一次（`y` 执行，其他键取消）。写操作和命令行一样记审计，执行者 `human`、命令名带 `tui:` 前缀。显示窄于 40 列时只提示「窗口太窄」；Windows 需要支持 VT 序列的终端（Windows Terminal 等），否则会先打印一行警告。外部文本（提问正文、任务标题等）里的终端控制序列一律剥除，不会改终端标题或清屏。
 
 ## 调度员与 `wl attention`
 
@@ -229,7 +272,8 @@ wl attention duo                              # 只读汇总：需要人处理�
 | `post_failure_streak` | 3 | 同一岗位连续这么多个任务以 gate 失败收场，升级处理 |
 | `freeze_lead` | `false` | 为 `true` 时牵头岗也可能被自动冻结 |
 | `auto_recover` | `false` | 为 `true` 时对"派发失主"的任务自动执行 `wl task recover` |
-| `worktree_comment` | `false` | 为 `true` 时通知的同时给岗位的 worktree 写一条注释 |
+| `worktree_comment` | `false` | 为 `true` 时把每个岗位的当前任务与告警标记同步成 worktree 的卡片注释（见「Orca 界面上的状态」） |
+| `workspace_status` | `true` | 为 `true` 时同步岗位所在 worktree 的工作区状态（见「Orca 界面上的状态」） |
 | `notify.webhook` / `notify.command` | 无 | 外部通知，二选一：webhook 会收到一条 JSON `POST`；command 是参数数组（不经 shell），消息作为最后一个参数追加 |
 
 ```yaml

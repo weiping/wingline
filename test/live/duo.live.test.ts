@@ -130,3 +130,28 @@ test.skipIf(process.env.WL_LIVE_CONSOLE !== '1')('console --open opens the conso
   expect(res.result.outcome).toBe('opened')
   console.log(`\n>>> 请在 Orca 里确认控制台标签页已打开，看完后手动关闭 console@wingline 终端：${res.result.url}\n`)
 }, 300_000)
+
+// 3C 真机用例（默认跳过，需人工确认）：调度员运行时给 builder 派一个任务，一个巡查周期后 worktree 的工作区状态应为 in-progress。
+// 前提：已在真机跑过 spikes/worktree-status.ts，并把 orca/client.ts 的 ORCA_WORKTREE_SUPPORT.workspaceStatus 改成 true（否则按“不支持”处理，不会写 Orca）。
+// 运行：WL_LIVE_WORKSPACE_STATUS=1 WINGLINE_LIVE_WORKTREE=<Orca worktree 选择器> pnpm test:live -t "workspace status"
+test.skipIf(process.env.WL_LIVE_WORKSPACE_STATUS !== '1')('workspace status follows the dispatcher: a started task makes the worktree in-progress (manual confirm)', async () => {
+  const { yaml, env } = sandbox()
+  const worktree = process.env.WINGLINE_LIVE_WORKTREE ?? 'current'
+  const shown = () => execFileSync(defaultMakeDeps(env, () => {}).orcaPath, ['worktree', 'show', '--worktree', worktree, '--json'], { encoding: 'utf8' })
+  try {
+    await wl(['up', yaml, '--json'], env)
+    await wl(['dispatcher', 'up', 'duo', '--json'], env)
+    const created = await wl(['task', 'create', 'duo', '--title', '3C 真机：工作区状态', '--post', 'builder@duo', '--json'], env)
+    expect(created.json.ok).toBe(true)
+    // 重启后第一轮只观察不写，所以要等第二个巡查周期（周期 5 分钟）
+    let seen = ''
+    for (let i = 0; i < 28 && !seen.includes('in-progress'); i++) {
+      await new Promise((r) => setTimeout(r, 15_000))
+      seen = shown()
+    }
+    expect(seen).toContain('in-progress')
+  } finally {
+    await wl(['dispatcher', 'down', 'duo', '--close', '--json'], env).catch(() => {})
+    await wl(['down', 'duo', '--close', '--json'], env).catch(() => {})
+  }
+}, 900_000)

@@ -24,7 +24,8 @@ posts:
 #   post_failure_streak: 3      # 同一岗位连续这么多个任务以 gate 失败收场 → 升级
 #   freeze_lead: false          # true 时牵头岗也可能被自动冻结（默认不冻结牵头岗）
 #   auto_recover: false         # true 时对"派发失主"的任务自动执行 wl task recover
-#   worktree_comment: false     # true 时通知的同时给该岗位的 worktree 写一条注释
+#   worktree_comment: false     # true 时把各岗位的当前任务与告警标记同步成 worktree 的卡片注释
+#   workspace_status: true      # true（默认）时同步岗位所在 worktree 的工作区状态（需要调度员在运行）
 #   notify:                     # 外部通知通道，webhook 与 command 二选一
 #     webhook: https://example.com/hook
 #     # command: ['/usr/local/bin/terminal-notifier', '-title', 'Wingline', '-message']   # 消息作为最后一个参数追加
