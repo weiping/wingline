@@ -6,12 +6,13 @@ import type { CheckMessage, CheckResult, OrcaClient, OrchestrationTask, RequestS
 const WAIT_PROCESS_SLACK_MS = 15_000
 
 /**
- * `orca worktree set` 里哪些东西真机验证过（3C 探针，见 spikes/REPORT.md）。探针还没在真机上跑过：
- * 工作区状态按“不支持”处理（开关打开时 wl attention 会提示），注释沿用 2B 已用的 --comment。
- * 跑完探针后只改这里的三个值和 WORKSPACE_STATUS_FLAG。
+ * `orca worktree set` 里哪些东西真机验证过（3C 探针 spikes/worktree-status.ts，结论见 spikes/REPORT.md，macOS Orca 1.4.237）：
+ * - `--workspace-status` 取 todo / in-progress / in-review / completed，`worktree show --json` 的 `workspaceStatus` 能读回；
+ * - `--comment` 支持多行，至少能写 5000 字符（比我们自己的 500 上限宽，所以 commentMax 留 null）；
+ * - 注意：`--comment ""` 会被当成没给参数而忽略，没有办法用空串清空注释（我们从不写空注释）。
  */
 export const ORCA_WORKTREE_SUPPORT: { workspaceStatus: boolean; comment: boolean; commentMax: number | null } = {
-  workspaceStatus: false,
+  workspaceStatus: true,
   comment: true,
   commentMax: null,
 }

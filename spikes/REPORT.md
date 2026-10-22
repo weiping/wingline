@@ -502,12 +502,23 @@ macOS 真机（Orca 1.4.224）以**本机 claude × 2**（builder 与 checker �
 - 本机 claude 不在屏幕上画会话 ID（Linux 的会话头部会画会话文件路径），第一次跑因断言“屏幕含 sessionId”失败；live 用例改为断言标记在屏幕上（标记只存在于原会话，比会话 ID 更能证明接回的是原会话）。
 - **仍未覆盖**：`/private` cwd 前缀（本次 worktree 在 `/Users/...`，不经过 `/private`，仍只有单测）；codex 接回（留 3D）；整机或 Orca 桌面端真重启。
 
-## 3C 探针：工作区状态与注释（脚本已写，真机结论待补）
+## 3C 探针：工作区状态与注释（2026-10-22，macOS，Orca 1.4.237）
 
-探针 `spikes/worktree-status.ts` 依次设置 `todo`/`in-progress`/`in-review`/`completed` 并用 `worktree show` 读回，再测 `--comment` 的多行、600 字符与清空。运行方式：
+探针 `spikes/worktree-status.ts` 依次设置 `todo`/`in-progress`/`in-review`/`completed` 并用 `worktree show --json` 读回，再测 `--comment` 的多行、长度与清空，最后还原。运行方式：
 
 ```
 WINGLINE_SPIKE_WORKTREE=<专用测试 worktree 选择器> pnpm tsx spikes/worktree-status.ts
 ```
 
-**状态：未在真机上运行**（本次执行环境无法对真实 Orca 的 worktree 做写入）。结论待补；在此之前 Task 6 按计划的默认值实现：`ORCA_WORKTREE_SUPPORT = { workspaceStatus: false, comment: true, commentMax: null }`，状态参数名暂用 `--workspace-status`。真机跑出结果后只需修改 `orca/client.ts` 的该常量与参数名，并存回执 `test/fixtures/receipts/worktree-set.json`。
+本次对象是 Orca 里唯一登记的 wingline worktree（`path:/Users/liuweiping/workspace/dev/wingline`，原状态 `in-progress`、注释为空）。
+
+**实测结论：成立**
+- 状态参数：`orca worktree set --worktree <选择器> --workspace-status <id>`（`--help` 也写明默认列 `todo`/`in-progress`/`in-review`/`completed`，自定义状态用其配置的 id）。四个取值全部设置成功，`worktree show --json` 的 `worktree.workspaceStatus` 都能读回。
+- 注释：`--comment` 支持多行；600 与 5000 字符都原样写入并读回（实际上限没测出来，至少 5000，比我们自己的 500 上限宽）。中文以及 `⚠`、`❄` 标记原样往返。
+- **空串清不掉注释**：`--comment ""`、`--comment=` 都被 CLI 当成“没给这个参数”而忽略（退出码 0，注释不变）；`--comment null` 会把字面量 `null` 写进去。唯一能“看起来清空”的办法是写单个空格。雁阵从不写空注释，所以不受影响；探针还原原本为空的注释时也用单个空格。
+- `worktree set --json` 回执是 `{ worktree: {…, workspaceStatus, comment, …} }`，已脱敏存为 `test/fixtures/receipts/worktree-set.json`。
+- 用雁阵自己的 `createOrcaClient().worktreeSet({ worktree: "path:…", status, comment })` 再往返了一次（状态 + 带 `⚠ ❄` 标记的两行注释），读回完全一致。
+
+**据此的改动**：`packages/core/src/orca/client.ts` 的 `ORCA_WORKTREE_SUPPORT` 改为 `{ workspaceStatus: true, comment: true, commentMax: null }`（`commentMax` 留 `null`：实测上限 ≥ 5000，我们自己的 500 上限更紧）；参数名 `--workspace-status` 与计划一致，无需改。
+
+**遗留**：探针第一次运行时脚本只会用空串还原注释，结果在这个 worktree 上留下了 600 个 `x`；已手动清掉，并把脚本改成用单个空格还原。这个 worktree 的注释现在是一个空格（CLI 做不到比这更“空”；要彻底清空请在 Orca 界面里改卡片注释）。

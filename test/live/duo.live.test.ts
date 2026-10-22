@@ -132,7 +132,7 @@ test.skipIf(process.env.WL_LIVE_CONSOLE !== '1')('console --open opens the conso
 }, 300_000)
 
 // 3C 真机用例（默认跳过，需人工确认）：调度员运行时给 builder 派一个任务，一个巡查周期后 worktree 的工作区状态应为 in-progress。
-// 前提：已在真机跑过 spikes/worktree-status.ts，并把 orca/client.ts 的 ORCA_WORKTREE_SUPPORT.workspaceStatus 改成 true（否则按“不支持”处理，不会写 Orca）。
+// 前提：Orca 版本在已验证范围内（工作区状态参数已在 1.4.237 上验证，ORCA_WORKTREE_SUPPORT.workspaceStatus 为 true）。
 // 运行：WL_LIVE_WORKSPACE_STATUS=1 WINGLINE_LIVE_WORKTREE=<Orca worktree 选择器> pnpm test:live -t "workspace status"
 test.skipIf(process.env.WL_LIVE_WORKSPACE_STATUS !== '1')('workspace status follows the dispatcher: a started task makes the worktree in-progress (manual confirm)', async () => {
   const { yaml, env } = sandbox()

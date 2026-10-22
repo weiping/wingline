@@ -311,5 +311,7 @@ packages/cli/src/tui/                  # screen.ts（备用屏幕、差分、恢
 
 ## 修订记录
 
+- **2026-10-22 探针结论**（macOS，Orca 1.4.237，详见 `spikes/REPORT.md`）：第 3 节两项都成立。`orca worktree set --workspace-status <id>`，取值 `todo`/`in-progress`/`in-review`/`completed`，`worktree show --json` 的 `workspaceStatus` 能读回；`--comment` 支持多行、至少 5000 字符，所以 `ORCA_WORKTREE_SUPPORT = { workspaceStatus: true, comment: true, commentMax: null }`（我们自己的 500 上限更紧）。补充一条：`--comment ""` 会被 Orca CLI 忽略，没有办法用空串清空注释（雁阵从不写空注释）。
+
 - **2026-10-21 复审**：阶段 3A/3B 落地后核对出 5 处前提失效（`warnings` 字段不存在、`posts.worktree` 是选择器、写路由三处登记、TUI 复用写命令表、`postWorkspaceStatus` 的输入不够）。
 - **2026-10-22 复审**：上述 5 条已并入正文（第 6.5、6.3、4.4、7.3、6.2 节），不再单列。同时补充：保存的 `running` / `baseHash` 冲突规则与重发幂等（第 4.3 节）、`spec_too_large` 与 48 KB 上限（第 4.4 节）、`validate` 的路由位置、`--draft` 比较规格哈希而非文件哈希（第 4.5 节）、`about` 为异步（第 5 节）、探针结论的常量与告警（第 3 节）、`fail_count` 在调度员启动时清零（第 6.4 节）、TUI 外部文本复用 `plainText`（第 7.5 节）。

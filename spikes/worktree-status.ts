@@ -59,27 +59,34 @@ const m = await trySet(['--comment', multiline])
 const multilineBack = (await show()).comment
 const commentMultiline = m.ok && typeof multilineBack === 'string' && multilineBack.split('\n').length === 3
 
-let commentMax: number | 'unknown' = 'unknown'
-const long = await trySet(['--comment', 'x'.repeat(600)])
-const longBack = (await show()).comment
-if (long.ok && typeof longBack === 'string') commentMax = longBack.length >= 600 ? 600 : longBack.length
-else if (!long.ok) commentMax = 'unknown'
-record(probe, 'comment', { multiline: { set: m, readBack: multilineBack }, long: { set: long, backLength: typeof longBack === 'string' ? longBack.length : null } })
+// 注释长度：依次写 600 与 5000 字符，读回长度；写进去多少算多少（被截断时读回长度就是上限）
+let commentMax: string = '未知'
+const lengths: Array<{ asked: number; set: { ok: boolean; error?: string }; back: number | null }> = []
+for (const n of [600, 5000]) {
+  const set = await trySet(['--comment', 'x'.repeat(n)])
+  const back = (await show()).comment
+  lengths.push({ asked: n, set, back: typeof back === 'string' ? back.length : null })
+  if (set.ok && typeof back === 'string') commentMax = back.length >= n ? `>=${n}` : String(back.length)
+}
+record(probe, 'comment', { multiline: { set: m, readBack: multilineBack }, lengths })
 
+// 清空：空串会被 CLI 当成“没给这个参数”而忽略（实测），所以“还原为空”要用单个空格
 const clear = await trySet(['--comment', ''])
-record(probe, 'comment-clear', { clear, readBack: (await show()).comment })
+const afterClear = (await show()).comment
+const emptyClears = clear.ok && afterClear === ''
+record(probe, 'comment-clear', { clear, readBack: afterClear, emptyClears })
 
 // 还原
 const originalStatus = statusOf(before)
 if (flag && typeof originalStatus === 'string') await trySet([flag, originalStatus])
-if (typeof before.comment === 'string') await trySet(['--comment', before.comment])
+if (typeof before.comment === 'string') await trySet(['--comment', before.comment === '' ? ' ' : before.comment])
 
 console.log(
   `RESULT worktree-status status=${flag ?? '无'} values=${accepted.join(',') || '无'} ` +
-    `comment-multiline=${commentMultiline ? '是' : '否'} comment-max=${commentMax}`,
+    `comment-multiline=${commentMultiline ? '是' : '否'} comment-max=${commentMax} comment-empty-clears=${emptyClears ? '是' : '否'}`,
 )
 finish(
   probe,
-  flag && accepted.length === STATUSES.length ? '成立' : flag || long.ok ? '部分成立' : '不成立',
+  flag && accepted.length === STATUSES.length ? '成立' : flag || lengths.some((l) => l.set.ok) ? '部分成立' : '不成立',
   `status=${flag ?? '无'} values=${accepted.length}/${STATUSES.length} comment-multiline=${commentMultiline ? '是' : '否'}`,
 )

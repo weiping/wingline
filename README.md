@@ -220,7 +220,7 @@ wl log duo --follow               # 持续输出新事件（Ctrl+C 结束）
 
 只在值变化时才写；重启调度员后的第一轮只计算不写；某个 worktree 连续 3 次写失败会停手，并在 `wl attention` 的「告警」里列出，重启调度员后重试。这个状态由雁阵维护：你在 Orca 界面里手动改了，会在雁阵下一次算出新值时被覆盖。调度员没在运行时不同步。
 
-> 当前版本里工作区状态的 Orca 参数尚未在真机上验证（`spikes/worktree-status.ts` 探针已写好、待运行，见 `spikes/REPORT.md`）。验证之前它按「不支持」处理：开关为 `true` 时 `wl attention` 会提示「Orca 不支持工作区状态」，不会写 Orca。
+> 工作区状态与注释的 Orca 参数已在真机验证（macOS，Orca 1.4.237，见 `spikes/REPORT.md`）：`--workspace-status` 取 `todo`/`in-progress`/`in-review`/`completed`，`--comment` 支持多行。注意 Orca 的 `--comment ""` 会被忽略，没法用空串清空卡片注释。
 
 ### 终端视图：`wl tui`
 
