@@ -1,5 +1,6 @@
 import { WinglineError } from '../../errors.js'
 import type { CommandDeps } from '../deps.js'
+import { syncAfterChange } from '../dispatcher/orca-sync.js'
 import type { Actor } from './identity.js'
 import { isOwnTerminal } from './identity.js'
 import { ledgered } from './ledger.js'
@@ -104,8 +105,11 @@ async function dispatchRound(deps: CommandDeps, team: string, taskId: string, ta
   return ledgerDispatch(deps, team, task, target, canBump)
 }
 
-export function dispatchTo(deps: CommandDeps, team: string, taskId: string, target: Target): Promise<DispatchOutcome> {
-  return dispatchRound(deps, team, taskId, target, true)
+export async function dispatchTo(deps: CommandDeps, team: string, taskId: string, target: Target): Promise<DispatchOutcome> {
+  const d = await dispatchRound(deps, team, taskId, target, true)
+  // 排队（岗位手上还有别的任务）时 Orca 里什么都没变，不用写
+  if (d.status === 'dispatched') await syncAfterChange(deps, team, target.address)
+  return d
 }
 
 const newTaskLine = (id: string, title: string) =>

@@ -3,7 +3,7 @@ import { WinglineError } from '../../errors.js'
 import { ORCA_WORKTREE_SUPPORT } from '../../orca/client.js'
 import type { WorkspaceStatus } from '../../orca/types.js'
 import type { DoneVerdictRow, OrcaSyncRow, PatrolSignal, PostRow, TeamRow } from '../../registry/registry.js'
-import type { TeamSpec } from '../../spec/load.js'
+import { loadTeamSpec, type TeamSpec } from '../../spec/load.js'
 import { plainText } from '../../view/plain-text.js'
 import type { CommandDeps } from '../deps.js'
 import { fetchTasks, type TaskRow } from '../task/query.js'
@@ -263,5 +263,22 @@ export async function syncWorktreeForPost(deps: CommandDeps, ctx: Ctx, post: str
     await syncGroups(deps, ctx, await fetchTasks(deps, ctx.team.name), on, { only: post, round })
   } catch (err) {
     recordFailure(deps, ctx.team.name, err)
+  }
+}
+
+/**
+ * 命令行里改变了任务状态（派发成功、wl task done 收尾）之后，立刻把岗位所在 worktree 同步一次，不等下一轮巡查
+ * （新启动的团队最慢要 10 分钟才第一次写，完成之后也要等 5–6 分钟）。
+ * 在命令行进程里调用，所以先确认本团队的调度员正在运行：没有调度员就没人负责之后清除，宁可不写。
+ * 不受“重启后第一轮只观察”约束：那条管调度员刚起来、不了解现状时；这里的任务状态是刚刚改变的。
+ * 永不抛出：同步只是展示，不能让命令失败。
+ */
+export async function syncAfterChange(deps: CommandDeps, team: string, post: string): Promise<void> {
+  try {
+    const row = deps.registry.getTeam(team)
+    if (!row || row.status !== 'up' || dispatcherHealth(deps, team).state !== 'running') return
+    await syncWorktreeForPost(deps, { team: row, spec: loadTeamSpec(row.specPath) }, post)
+  } catch (err) {
+    recordFailure(deps, team, err)
   }
 }

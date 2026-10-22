@@ -154,6 +154,7 @@
 - 失败 → `fail_count + 1`，记一条 `patrol_events`（`action = orca_sync`，`outcome = failed`，`detail = { worktree, error: <错误码> }`），下一轮重试；`fail_count ≥ 3` 的 worktree 停止尝试。
 - 停止期间，`wl attention` 的 `warnings` 列出“Orca 同步已停止：<worktree>（连续 3 次失败，重启调度员后重试）”。该条从 `orca_sync` 推导，停止期间一直显示。
 - 调度员启动时把本团队所有 `orca_sync` 行的 `fail_count` 清零（`resetOrcaSyncFailures(team)`），从而“重启后重新尝试”。
+- **命令行改变任务状态后立即同步**：除了巡查扫描末尾，命令行进程在两类时刻立刻重算该岗位所在 worktree 并按同一规则写入（`syncAfterChange`），不等下一轮巡查：① 派发成功（`dispatchTo` 返回 `dispatched`，覆盖 `wl task create --post`、`wl task start`、`wl task recover`、完成后派发后续子任务），否则新启动的团队要等“首轮只观察 + 一个巡查周期”约 10 分钟才第一次写出 `in-progress`；② `wl task done` 收尾（`proceed` 里 `finishVerdict` 之后，结局是 `done` 或 `escalated`），必须在判定收尾之后，因为 `in-review` 要求判定已结束且收尾类型是送审。条件：团队登记为 `up` 且本团队的调度员正在运行（没有调度员就没人负责之后清除，宁可不写）；排队（`queued`）、gate 失败、重放（判定早已收尾）不触发；不受“首轮只观察”约束（那条管调度员刚启动、不了解现状的情形）；永不抛出，写失败照常记 `fail_count` 与 `orca_sync` 事件，不影响命令。信号清除、冻结等其他变化仍按巡查周期同步。
 - 重启后第一轮只观察（2B 的 `observeOnlyNextScan`）同样适用：首轮不对 Orca 写任何东西（包括巡查清除信号时触发的重算），也不更新 `orca_sync`。
 - `orca_sync` 按 `(worktree, team)` 记录各团队**自己算出的值**（用来判断自己有没有变化）。Orca 里一个 worktree 只有一个状态和一条注释，所以写给 Orca 的是**并上其他团队之后**的值：
   - 参与合并的只有“登记为 up 且调度员正在运行”的其他团队（已停止或调度员不在的团队不参与，免得旧值一直顶着）；用它们记录里最近一次算出的值。
