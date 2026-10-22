@@ -253,8 +253,9 @@ async function scan(deps: CommandDeps, st: LoopState, spec: TeamSpec, opts: Loop
     syncCursors(deps, team, [...snap.streakAfterCursor.keys()], snap)
     beat(deps, team, st.locked)
     const hits = detectSignals(snap, spec, deps.registry.listPatrolState(team))
-    await advancePatrol(deps, ctx, hits, { observeOnly: st.observeOnlyNextScan, ops: opts.ops, io: opts.io })
-    await syncOrca(deps, ctx, snap, { observeOnly: st.observeOnlyNextScan })
+    const round = { failed: new Set<string>() }
+    await advancePatrol(deps, ctx, hits, { observeOnly: st.observeOnlyNextScan, ops: opts.ops, io: opts.io, round })
+    await syncOrca(deps, ctx, snap, { observeOnly: st.observeOnlyNextScan, round })
     deps.registry.appendPatrolEvent({ team, action: 'scan', outcome: 'ok', detail: { hits: hits.length } })
   } catch (err) {
     if (err instanceof WinglineError && err.code === 'dispatcher_superseded') throw err

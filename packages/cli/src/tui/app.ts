@@ -75,6 +75,9 @@ class TuiSession {
   private state: TuiState = { ...initialTuiState(), status: LOADING }
   private data: TuiData
   private cursor: LogCursor | null = null
+  /** 正在进行的读取与“进行中又被要求刷新”的标记：同一种读取不并发，被挤掉的请求在读完后补跑一次。 */
+  private busy = { data: false, timeline: false }
+  private rerun = { data: false, timeline: false }
   private finished = false
   private timers: Array<ReturnType<typeof setInterval>> = []
 
@@ -210,7 +213,32 @@ class TuiSession {
   }
 
   /** 读取失败只标过期；处理结果时抛出的异常是 bug，交给 guard 走 finish。 */
-  private async refreshData(): Promise<void> {
+  private refreshData(): Promise<void> {
+    return this.exclusive('data', () => this.loadData())
+  }
+
+  private refreshTimeline(): Promise<void> {
+    return this.exclusive('timeline', () => this.loadTimeline())
+  }
+
+  private async exclusive(kind: 'data' | 'timeline', load: () => Promise<void>): Promise<void> {
+    if (this.busy[kind]) {
+      this.rerun[kind] = true
+      return
+    }
+    this.busy[kind] = true
+    try {
+      await load()
+    } finally {
+      this.busy[kind] = false
+    }
+    if (this.rerun[kind]) {
+      this.rerun[kind] = false
+      await this.exclusive(kind, load)
+    }
+  }
+
+  private async loadData(): Promise<void> {
     const { team, cdeps, read } = this
     let loaded: { posts: TuiData['posts']; attention: AttentionReport; tasks: TuiData['tasks'] }
     try {
@@ -226,7 +254,7 @@ class TuiSession {
     this.draw()
   }
 
-  private async refreshTimeline(): Promise<void> {
+  private async loadTimeline(): Promise<void> {
     const { team, cdeps, read } = this
     let events: TuiData['timeline']
     try {

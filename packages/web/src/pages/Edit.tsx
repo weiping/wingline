@@ -60,11 +60,15 @@ function setLocal(parsed: any, path: SpecPath, value: unknown): any {
 }
 
 /** 把排队的表单修改依次交给服务端套用（每次基于上一次返回的 yaml）；没有排队的修改就只校验当前文本。 */
-async function validateQueued(post: (body: object) => Promise<ValidateResult>, latest: { current: string }, sets: SetOp[]): Promise<ValidateResult> {
+async function validateQueued(
+  post: (body: object) => Promise<ValidateResult>, latest: { current: string }, sets: SetOp[], adopt: () => boolean,
+): Promise<ValidateResult> {
   if (sets.length === 0) return post({ yaml: latest.current })
   let res!: ValidateResult
   for (const set of sets) {
     res = await post({ yaml: latest.current, set })
+    // 请求在途时用户在 YAML 视图里改了文本：服务端这份是旧的，不能覆盖用户刚敲的内容，剩下的修改也作废
+    if (!adopt()) return res
     latest.current = res.yaml
   }
   return res
@@ -79,14 +83,16 @@ function useValidation(team: string, start: { yaml: string; parsed: any }) {
   const timer = useRef<ReturnType<typeof setTimeout>>()
   const pending = useRef<SetOp[]>([])
   const version = useRef(0)
+  const typed = useRef(0) // YAML 视图里手敲的次数
   const chain = useRef<Promise<void>>(Promise.resolve())
   if (shown.parsed !== null) lastGood.current = shown.parsed
   const post = (body: object) => api.post<ValidateResult>(`/api/teams/${encodeURIComponent(team)}/spec/validate`, body)
 
   const run = async () => {
     const startVersion = version.current
+    const startTyped = typed.current
     try {
-      const res = await validateQueued(post, latest, pending.current.splice(0))
+      const res = await validateQueued(post, latest, pending.current.splice(0), () => typed.current === startTyped)
       if (version.current === startVersion) setShown({ yaml: res.yaml, parsed: res.parsed, errors: res.errors, preview: res.preview, problem: null })
     } catch (err) {
       setShown((s) => ({ ...s, problem: errorText(err) }))
@@ -107,6 +113,7 @@ function useValidation(team: string, start: { yaml: string; parsed: any }) {
   const onYaml = (text: string) => {
     latest.current = text
     pending.current = []
+    typed.current += 1
     setShown((s) => ({ ...s, yaml: text }))
     edited()
   }
@@ -157,6 +164,11 @@ function SavePanel(p: SavePanelProps) {
       {saved && (
         <p class="muted small" role="status">
           已保存到 <code>{saved.path}</code>（{saved.wrote === 'draft' ? '草稿' : '正式规格'}）
+        </p>
+      )}
+      {saved?.wrote === 'spec' && p.base.hasDraft && (
+        <p class="banner" role="status">
+          旁边还留着一份旧草稿 <code>team.draft.yaml</code>：之后执行 <code>wl up --draft</code> 会用它覆盖这次保存的内容。不需要了就点上方的“丢弃草稿”。
         </p>
       )}
       {fail && (

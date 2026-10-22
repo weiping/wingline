@@ -166,7 +166,27 @@ export function setField(text: string, path: Path, value: unknown): string {
   const exists = doc.hasIn(path)
   const surgical = value === null ? deleteKey(text, doc, path) : (exists ? replaceInline(text, doc, path, value) : null) ?? (exists ? null : insertKey(text, doc, path, value))
   if (surgical !== null) return surgical
-  if (value === null) doc.deleteIn(path)
-  else doc.setIn(path, value)
-  return doc.toString()
+  try {
+    if (value === null) doc.deleteIn(path)
+    else {
+      fillEmptySections(doc, path)
+      doc.setIn(path, value)
+    }
+    return doc.toString()
+  } catch (cause) {
+    // yaml 库对放不下的位置抛普通 Error：这是表单给了不合理的路径，按输入错误处理，不是 500
+    throw new WinglineError('input', 'spec_invalid', `表单修改无法写入：${path.join('.')}（${(cause as Error).message}）`, { cause })
+  }
+}
+
+/** 路径经过的某一段是“只有键、没有值”（`patrol:` 后面什么都没写）：先补成空映射，setIn 才有地方放。 */
+function fillEmptySections(doc: Doc, path: Path): void {
+  for (let i = 1; i < path.length; i++) {
+    const node = doc.getIn(path.slice(0, i), true)
+    if (!isScalar(node) || node.value !== null) continue
+    const empty = doc.createNode({}) as Node
+    empty.comment = node.comment
+    node.comment = undefined
+    doc.setIn(path.slice(0, i), empty)
+  }
 }

@@ -280,7 +280,12 @@ async function reportDeadAssignees(l: Launch, runId: string): Promise<NonNullabl
  */
 function applyDraftBeforeUp(deps: CommandDeps, specPath: string): void {
   const draft = draftPathOf(specPath)
-  if (!fs.existsSync(draft)) throw new WinglineError('input', 'draft_not_found', `找不到规格草稿 ${draft}`)
+  if (!fs.existsSync(draft)) {
+    const applied = fs.existsSync(`${specPath}.bak`) ? `发现 ${specPath}.bak，草稿多半已经应用过。` : ''
+    throw new WinglineError('input', 'draft_not_found', `找不到规格草稿 ${draft}`, {
+      hint: `${applied}如果上一次 wl up --draft 是在应用草稿之后才失败的，草稿其实已经生效，直接执行 wl up ${specPath} 重试即可`,
+    })
+  }
   const abs = path.resolve(specPath)
   const named = deps.registry.getTeam(loadTeamSpec(draft).name)
   const owner = deps.registry.listTeams().find((t) => path.resolve(t.specPath) === abs)

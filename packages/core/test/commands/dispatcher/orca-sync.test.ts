@@ -170,6 +170,41 @@ test("another team's row on the same worktree neither suppresses nor causes writ
   expect(w.registry.getOrcaSync(os.tmpdir(), 'other')).toMatchObject({ status: 'completed', comment: '别的团队写的', failCount: 3 })
 })
 
+test('worktree paths are normalised before grouping (trailing slash, dot segments)', async () => {
+  const w = world()
+  w.registry.upsertPost({ ...w.registry.getPost('builder@duo')!, worktree: 'path:/w/a/' })
+  w.registry.upsertPost({ ...w.registry.getPost('checker@duo')!, worktree: 'path:/w/./a' })
+  await w.sync([task()])
+  expect(w.o.comments).toHaveLength(1)
+  expect(w.o.comments[0]).toMatchObject({ worktree: 'path:/w/a' })
+  expect(w.registry.getOrcaSync('/w/a', 'duo')).not.toBeNull()
+})
+
+test('one scan counts a failing worktree once even when the post-notice sync and the end-of-scan sync both try', async () => {
+  const w = world()
+  const round = { failed: new Set<string>() }
+  w.o.faults.push({ method: 'worktreeSet', when: 'before', error: new WinglineError('orca', 'boom', 'x') })
+  w.o.faults.push({ method: 'worktreeSet', when: 'before', error: new WinglineError('orca', 'boom', 'x') })
+  await syncWorktreeForPost(w.deps, w.ctx(), 'builder@duo', round)
+  await syncOrca(w.deps, w.ctx(), snapOf([task()]), { observeOnly: false, round })
+  expect(w.registry.getOrcaSync(os.tmpdir(), 'duo')).toMatchObject({ failCount: 1 })
+  expect(w.syncEvents()).toHaveLength(1)
+  expect(w.o.faults).toHaveLength(1) // 第二次根本没去试
+  await w.sync([task()]) // 下一轮（新的 round）才再试一次
+  expect(w.registry.getOrcaSync(os.tmpdir(), 'duo')).toMatchObject({ failCount: 2 })
+})
+
+test('a failure event carries the worktree and the error code', async () => {
+  const w = world()
+  w.o.faults.push({ method: 'worktreeSet', when: 'before', error: new WinglineError('orca', 'boom', 'x') })
+  await syncWorktreeForPost(w.deps, w.ctx(), 'builder@duo')
+  expect(w.syncEvents()[0]).toMatchObject({ outcome: 'failed', detail: { worktree: os.tmpdir(), error: 'boom' } })
+  const f = world()
+  f.o.faults.push({ method: 'taskList', when: 'before', error: new WinglineError('orca', 'runtime_unavailable', 'x') })
+  await syncWorktreeForPost(f.deps, f.ctx(), 'builder@duo')
+  expect(f.syncEvents()[0]).toMatchObject({ outcome: 'failed:runtime_unavailable', detail: { error: 'runtime_unavailable' } })
+})
+
 test('only the changed parameter is sent', async () => {
   const w = world()
   await w.sync([task()])

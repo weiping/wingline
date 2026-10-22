@@ -565,6 +565,17 @@ test('up --draft allows a comment-only draft while the team is up', async () => 
   expect(r.posts.map((x) => x.outcome)).toEqual(['already_live', 'already_live'])
   expect(fs.readFileSync(p, 'utf8')).toContain('只改注释')
 })
+test('draft_not_found tells you the draft may already have been applied when a .bak is lying next to the spec', async () => {
+  const o = new FakeOrca(); const { deps } = mkDeps(o); const p = duo()
+  const plain = await up(deps, { specPath: p, draft: true }).catch((e) => e)
+  expect(plain.hint).toContain('wl up')
+  expect(plain.hint).not.toContain('.bak')
+  fs.writeFileSync(`${p}.bak`, DUO_YAML)
+  const withBak = await up(deps, { specPath: p, draft: true }).catch((e) => e)
+  expect(withBak).toMatchObject({ code: 'draft_not_found' })
+  expect(withBak.hint).toContain('.bak')
+  expect(withBak.hint).toContain(`wl up ${p}`)
+})
 test('up --draft without a draft fails with draft_not_found (input error) before any Orca call', async () => {
   const o = new FakeOrca(); const { deps } = mkDeps(o)
   const err = await up(deps, { specPath: duo(), draft: true }).catch((e) => e)

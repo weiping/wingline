@@ -26,15 +26,39 @@ export function fileHash(file: string): string | null {
   }
 }
 
-/** 先写同目录临时文件再改名，避免留下半截文件。 */
-function writeAtomic(file: string, text: string): void {
+/** 符号链接指向的真实文件；不存在（还没有这个文件）就原样返回。 */
+function realTarget(file: string): string {
+  try {
+    return fs.realpathSync(file)
+  } catch {
+    return file
+  }
+}
+
+/** 已有文件的权限位（不存在返回 null）。 */
+function modeOf(file: string): number | null {
+  try {
+    return fs.statSync(file).mode & 0o7777
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 先写同目录临时文件再改名，避免留下半截文件。改名会换掉文件本身，所以：
+ * 符号链接要写到它指向的真实文件上（链接保持链接），已有文件的权限位要带过去。
+ */
+function writeAtomic(link: string, text: string): void {
+  const file = realTarget(link)
   const tmp = path.join(path.dirname(file), `.${path.basename(file)}.${process.pid}.tmp`)
   try {
     fs.writeFileSync(tmp, text)
+    const mode = modeOf(file)
+    if (mode !== null) fs.chmodSync(tmp, mode)
     fs.renameSync(tmp, file)
   } catch (cause) {
     fs.rmSync(tmp, { force: true })
-    throw new WinglineError('internal', 'internal', `写入 ${file} 失败：${(cause as Error).message}`, { cause })
+    throw new WinglineError('internal', 'internal', `写入 ${link} 失败：${(cause as Error).message}`, { cause })
   }
 }
 
@@ -92,7 +116,9 @@ export function applyDraft(specPath: string, o: { runningHash: string | null }):
   const hadSpec = fs.existsSync(specPath)
   if (hadSpec) fs.copyFileSync(specPath, backup)
   try {
-    fs.renameSync(draft, specPath)
+    const mode = modeOf(specPath)
+    if (mode !== null) fs.chmodSync(draft, mode)
+    fs.renameSync(draft, realTarget(specPath))
   } catch (err) {
     if (hadSpec) fs.rmSync(backup, { force: true })
     throw err

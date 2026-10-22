@@ -56,3 +56,9 @@ test('fit does not cut a surrogate pair in half', () => {
   expect(out).toBe('👍👍…')
   expect(cellWidth(out)).toBe(5)
 })
+
+test('emoji with emoji presentation count two columns; text-presentation symbols (our ⚠ and ❄ marks) stay one', () => {
+  for (const wide of ['🚀', '✅', '❌', '⭐', '🩷', '⏰']) expect(cellWidth(wide), wide).toBe(2)
+  for (const narrow of ['⚠', '❄', '✓', '✔', '★', '©']) expect(cellWidth(narrow), narrow).toBe(1)
+  expect(fit('✅ 通过', 8)).toBe('✅ 通过 ')
+})

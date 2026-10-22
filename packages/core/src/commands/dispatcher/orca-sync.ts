@@ -1,3 +1,4 @@
+import path from 'node:path'
 import { WinglineError } from '../../errors.js'
 import { ORCA_WORKTREE_SUPPORT } from '../../orca/client.js'
 import type { WorkspaceStatus } from '../../orca/types.js'
@@ -91,12 +92,18 @@ export function summarize(rows: Array<{ status: WorkspaceStatus; line: string }>
  * 岗位地址 → worktree 绝对路径。`path:` 直接去前缀；其余选择器（如 current）每轮每个选择器只问一次 Orca。
  * 解析失败的岗位不在结果里（本轮跳过，不计入同步失败）。
  */
+/** `/w/a/`、`/w/./a`、`/w/a` 是同一个 worktree：归组与 orca_sync 的键都用归一后的路径。 */
+function tidy(p: string): string {
+  const n = path.normalize(p)
+  return n.length > 1 && n.endsWith(path.sep) ? n.slice(0, -1) : n
+}
+
 export async function resolveWorktrees(deps: CommandDeps, posts: PostRow[]): Promise<Map<string, string>> {
   const out = new Map<string, string>()
   const resolved = new Map<string, string | null>()
   for (const p of posts) {
     if (p.worktree.startsWith('path:')) {
-      out.set(p.address, p.worktree.slice('path:'.length))
+      out.set(p.address, tidy(p.worktree.slice('path:'.length)))
       continue
     }
     if (!resolved.has(p.worktree)) {
@@ -107,8 +114,8 @@ export async function resolveWorktrees(deps: CommandDeps, posts: PostRow[]): Pro
         resolved.set(p.worktree, null)
       }
     }
-    const path = resolved.get(p.worktree)
-    if (path) out.set(p.address, path)
+    const found = resolved.get(p.worktree)
+    if (found) out.set(p.address, tidy(found))
   }
   return out
 }
@@ -151,7 +158,15 @@ function composeGroup(deps: CommandDeps, ctx: Ctx, tasks: TaskRow[], addresses: 
 }
 
 /** 只在值变化时写；失败记 fail_count 与事件，连续 MAX_FAILS 次后停手（调度员重启时清零）。 */
-async function writeGroup(deps: CommandDeps, ctx: Ctx, worktree: string, want: { status?: WorkspaceStatus; comment?: string }): Promise<void> {
+/** 一轮巡查里已经写失败的 worktree：同一轮不再重试，失败只计一次（下一轮用新的 round 再试）。 */
+export interface SyncRound {
+  failed: Set<string>
+}
+
+async function writeGroup(
+  deps: CommandDeps, ctx: Ctx, worktree: string, want: { status?: WorkspaceStatus; comment?: string }, round?: SyncRound,
+): Promise<void> {
+  if (round?.failed.has(worktree)) return
   const prev = deps.registry.getOrcaSync(worktree, ctx.team.name)
   if ((prev?.failCount ?? 0) >= MAX_FAILS) return
   const change = {
@@ -167,6 +182,7 @@ async function writeGroup(deps: CommandDeps, ctx: Ctx, worktree: string, want: {
       writtenAt: deps.now().toISOString(), failCount: 0,
     })
   } catch (err) {
+    round?.failed.add(worktree)
     deps.registry.putOrcaSync({
       worktree, team, status: prev?.status ?? null, comment: prev?.comment ?? null, writtenAt: prev?.writtenAt ?? null, failCount: (prev?.failCount ?? 0) + 1,
     })
@@ -174,39 +190,40 @@ async function writeGroup(deps: CommandDeps, ctx: Ctx, worktree: string, want: {
   }
 }
 
-async function syncGroups(deps: CommandDeps, ctx: Ctx, tasks: TaskRow[], on: Switches, only?: string): Promise<void> {
+async function syncGroups(deps: CommandDeps, ctx: Ctx, tasks: TaskRow[], on: Switches, o: { only?: string; round?: SyncRound }): Promise<void> {
   const paths = await resolveWorktrees(deps, deps.registry.listPosts(ctx.team.name))
   for (const [worktree, addresses] of groupByWorktree(ctx, paths)) {
-    if (only !== undefined && !addresses.includes(only)) continue
+    if (o.only !== undefined && !addresses.includes(o.only)) continue
     const c = composeGroup(deps, ctx, tasks, addresses)
-    await writeGroup(deps, ctx, worktree, { ...(on.status ? { status: c.status } : {}), ...(on.comment ? { comment: c.comment } : {}) })
+    await writeGroup(deps, ctx, worktree, { ...(on.status ? { status: c.status } : {}), ...(on.comment ? { comment: c.comment } : {}) }, o.round)
   }
 }
 
 function recordFailure(deps: CommandDeps, team: string, err: unknown): void {
-  deps.registry.appendPatrolEvent({ team, action: 'orca_sync', outcome: `failed:${err instanceof WinglineError ? err.code : 'error'}` })
+  const code = err instanceof WinglineError ? err.code : 'error'
+  deps.registry.appendPatrolEvent({ team, action: 'orca_sync', outcome: `failed:${code}`, detail: { error: code } })
 }
 
 /**
  * 每次巡查扫描末尾把岗位所在 worktree 的工作区状态与卡片注释同步到 Orca（展示用，永不抛出）。
  * observeOnly（重启后第一轮）不写，也不动 orca_sync。
  */
-export async function syncOrca(deps: CommandDeps, ctx: Ctx, snap: ScanSnapshot, o: { observeOnly: boolean }): Promise<void> {
+export async function syncOrca(deps: CommandDeps, ctx: Ctx, snap: ScanSnapshot, o: { observeOnly: boolean; round?: SyncRound }): Promise<void> {
   const on = switchesOf(ctx.spec)
   if (o.observeOnly || (!on.status && !on.comment)) return
   try {
-    await syncGroups(deps, ctx, snap.tasks, on)
+    await syncGroups(deps, ctx, snap.tasks, on, { round: o.round })
   } catch (err) {
     recordFailure(deps, ctx.team.name, err)
   }
 }
 
 /** 通知 / 恢复之后重新算该岗位所在 worktree 并按同一规则写入（原来的 worktreeComment 路径）。永不抛出。 */
-export async function syncWorktreeForPost(deps: CommandDeps, ctx: Ctx, post: string): Promise<void> {
+export async function syncWorktreeForPost(deps: CommandDeps, ctx: Ctx, post: string, round?: SyncRound): Promise<void> {
   const on = switchesOf(ctx.spec)
   if (!on.status && !on.comment) return
   try {
-    await syncGroups(deps, ctx, await fetchTasks(deps, ctx.team.name), on, post)
+    await syncGroups(deps, ctx, await fetchTasks(deps, ctx.team.name), on, { only: post, round })
   } catch (err) {
     recordFailure(deps, ctx.team.name, err)
   }

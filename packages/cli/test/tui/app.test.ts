@@ -356,6 +356,38 @@ test('a failing read marks the data stale without exiting, and the next good rea
   await done
 })
 
+test('data refreshes never overlap: a slow read is not started again, and a refresh asked for meanwhile runs once afterwards', async () => {
+  const h = harness()
+  let active = 0
+  let max = 0
+  let calls = 0
+  const core = await import('@wingline/core')
+  const done = h.start({
+    dataMs: 5,
+    read: {
+      ps: async (d: never, a: { team: string }) => {
+        active += 1; calls += 1; max = Math.max(max, active)
+        try {
+          await new Promise((r) => setTimeout(r, 40))
+          return await core.ps(d, a)
+        } finally {
+          active -= 1
+        }
+      },
+    },
+  })
+  await until(() => h.text().includes('builder@duo'))
+  await until(() => calls >= 3, 4000)
+  expect(max).toBe(1)
+  // 手动刷新（r）撞上正在进行的读取：不并发，读完后补跑一次
+  const before = calls
+  h.stdin.press('r'); h.stdin.press('r'); h.stdin.press('r')
+  await until(() => calls > before, 2000)
+  expect(max).toBe(1)
+  h.stdin.press('q')
+  await done
+})
+
 test('an exception inside the loop restores the terminal before rejecting', async () => {
   const h = harness()
   let n = 0

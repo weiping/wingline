@@ -115,6 +115,43 @@ test('clearing a required field (id, agent, lead) sends an empty string instead 
   expect(s.validates().at(-1)!.body.set).toEqual({ path: ['posts', 0, 'model'], value: null })
 })
 
+test('a late reply to a form edit does not overwrite what was typed in the YAML view meanwhile', async () => {
+  let release!: () => void
+  const gate = new Promise<void>((r) => { release = r })
+  let first = true
+  const s = server({
+    validate: (b) => {
+      if (first) {
+        first = false
+        return gate.then(() => ({ yaml: 'SERVER TEXT\n', parsed: PARSED, errors: [], preview: null }))
+      }
+      return { yaml: b.yaml, parsed: PARSED, errors: [], preview: null }
+    },
+  })
+  const { container, getByText, getByLabelText } = render(<Edit team="duo" />)
+  await loaded(container)
+  fireEvent.input(agentInput(container), { target: { value: 'codex' } })
+  await waitFor(() => expect(s.validates()).toHaveLength(1)) // 请求在途
+  fireEvent.click(getByText('YAML 视图'))
+  fireEvent.input(getByLabelText('YAML'), { target: { value: 'MY TYPING\n' } })
+  release()
+  await waitFor(() => expect(s.validates().length).toBeGreaterThanOrEqual(2))
+  expect(s.validates().at(-1)!.body.yaml).toBe('MY TYPING\n')
+  await act(async () => { await new Promise((r) => setTimeout(r, 50)) })
+  expect((getByLabelText('YAML') as HTMLTextAreaElement).value).toBe('MY TYPING\n')
+})
+
+test('saving the spec of a stopped team while an older draft exists warns that the draft would overwrite it later', async () => {
+  const s = server({ running: false, draft: { yaml: YAML_TEXT, parsed: PARSED, hash: 'D1' }, save: () => ({ wrote: 'spec', path: '/t/duo/team.yaml', hash: 'N3' }) })
+  const { container, getByText, findByText } = render(<Edit team="duo" />)
+  await loaded(container)
+  fireEvent.input(agentInput(container), { target: { value: 'codex' } })
+  await waitFor(() => expect(s.validates()).toHaveLength(1))
+  await clickWhenEnabled(getByText, '保存')
+  expect(await findByText(/旧草稿/)).toBeTruthy()
+  expect(getByText('丢弃草稿')).toBeTruthy()
+})
+
 test('validate fires only after 400 ms of inactivity', async () => {
   vi.useFakeTimers()
   const s = server()

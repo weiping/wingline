@@ -154,6 +154,14 @@ test('a string written into a flow collection is quoted for flow context', () =>
   expect(setField(flow, ['p', 'b'], 'plain')).toBe('p: {a: 1, b: plain}\nq: [m, n]\n')
 })
 
+test('editing a field under an empty section (`patrol:` with nothing after the colon) works instead of crashing', () => {
+  const src = 'a: 1\npatrol:   # 巡查\nb: 2\n'
+  const out = setField(src, ['patrol', 'workspace_status'], false)
+  expect(parse(out)).toEqual({ a: 1, patrol: { workspace_status: false }, b: 2 })
+  expect(out).toContain('# 巡查')
+  expect(parse(setField('patrol:\nb: 2\n', ['patrol', 'notify', 'webhook'], 'https://x'))).toEqual({ patrol: { notify: { webhook: 'https://x' } }, b: 2 })
+})
+
 test('a nonsensical path is a spec_invalid input error, not an internal crash', () => {
   const src = 'posts:\n  - id: a\n  - id: b\nname: x\n'
   for (const [p, v] of [[['posts', 5, 'agent'], 'x'], [['posts', 9], 'x'], [['name', 'sub'], 1], [['posts', 'zz', 'k'], 1]] as Array<[Array<string | number>, unknown]>) {
