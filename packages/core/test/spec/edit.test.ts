@@ -1,5 +1,9 @@
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { expect, test } from 'vitest'
 import { setField } from '../../src/spec/edit.js'
+import { validateSpecText } from '../../src/spec/load.js'
 
 const SRC = '# 团队\nversion: 1\nname: duo   # 名字\n\nposts:\n  - id: builder  # 牵头\n    agent: claude\n'
 
@@ -25,15 +29,108 @@ test('setField with null deletes the key', () => {
   expect(setField('a: 1\nb: 2\n', ['a'], null)).toBe('b: 2\n')
 })
 
-test('setField adds a missing key and keeps existing comments', () => {
-  const out = setField('# top\nname: duo\n', ['lead'], 'builder')
-  expect(out).toContain('# top')
-  expect(out).toContain('lead: builder')
-  expect(out.indexOf('name: duo')).toBeLessThan(out.indexOf('lead: builder'))
+// 评审点 3：表单改一处，其余部分逐字节不变。下面这份刻意带了会被重排的写法：
+// 评论前多个空格、没有缩进的序列、flow 列表、空行与块注释。
+const MESSY = [
+  '# 团队',
+  'version: 1',
+  'name: duo   # 名字',
+  '',
+  'posts:',
+  '- id: builder    # 牵头',
+  '  agent: claude',
+  '  brief: [briefs/builder.md]   # 简报',
+  '',
+  '# 巡查',
+  'patrol:',
+  '  prompt_minutes: 5   # 提示',
+  '  owner_idle_minutes: 30',
+  '',
+].join('\n')
+
+test('adding a key to a map inside a sequence inserts only its own line', () => {
+  const out = setField(MESSY, ['posts', 0, 'model'], 'opus')
+  expect(out).toBe(MESSY.replace('  brief: [briefs/builder.md]   # 简报\n', '  brief: [briefs/builder.md]   # 简报\n  model: opus\n'))
 })
 
-test('setField can set a list value', () => {
-  expect(setField('tags: [a]\n', ['tags'], ['x', 'y'])).toMatch(/tags:\s*\n?\s*(\[x, y\]|- x\n\s*- y)/)
+test('adding a key to an existing section inserts after its last pair, keeping every other byte', () => {
+  const out = setField(MESSY, ['patrol', 'workspace_status'], false)
+  expect(out).toBe(MESSY.replace('  owner_idle_minutes: 30\n', '  owner_idle_minutes: 30\n  workspace_status: false\n'))
+})
+
+test('adding a key to a top-level map appends it after the last pair', () => {
+  const out = setField('a: 1   # c\nb: 2\n\n# tail\n', ['lead'], 'builder')
+  expect(out).toBe('a: 1   # c\nb: 2\nlead: builder\n\n# tail\n')
+})
+
+test('adding a missing section inserts the whole chain after the last top-level pair', () => {
+  const input = MESSY.slice(0, MESSY.indexOf('# 巡查')) // 以空行结尾
+  const out = setField(input, ['budgets', 'task', 'max_gate_failures'], 5)
+  expect(out).toBe(input.replace(/\n\n$/, '\nbudgets:\n  task:\n    max_gate_failures: 5\n\n'))
+})
+
+test('a file without a trailing newline still gets a well-formed insert', () => {
+  expect(setField('a: 1\nb: 2', ['c'], 3)).toBe('a: 1\nb: 2\nc: 3\n')
+})
+
+test('CRLF files get CRLF inserts', () => {
+  expect(setField('a: 1\r\nb: 2\r\n', ['c'], 3)).toBe('a: 1\r\nb: 2\r\nc: 3\r\n')
+})
+
+test('deleting a key removes exactly its line and leaves the rest byte-identical', () => {
+  expect(setField(MESSY, ['patrol', 'prompt_minutes'], null)).toBe(MESSY.replace('  prompt_minutes: 5   # 提示\n', ''))
+  expect(setField(MESSY, ['posts', 0, 'agent'], null)).toBe(MESSY.replace('  agent: claude\n', ''))
+})
+
+test('deleting the last key of a section keeps the document valid', () => {
+  const out = setField('patrol:\n  only: 1\nx: 2\n', ['patrol', 'only'], null)
+  expect(out).toMatch(/^patrol: \{\}\nx: 2\n$/)
+})
+
+test('setting a list replaces an inline list in place and inserts a flow list for a missing key', () => {
+  expect(setField(MESSY, ['posts', 0, 'brief'], ['a.md', 'b.md'])).toBe(MESSY.replace('[briefs/builder.md]', '[a.md, b.md]'))
+  expect(setField(MESSY, ['posts', 0, 'tags'], ['x', 'y'])).toBe(
+    MESSY.replace('  brief: [briefs/builder.md]   # 简报\n', '  brief: [briefs/builder.md]   # 简报\n  tags: [x, y]\n'),
+  )
+})
+
+test('setting a scalar over a null value (key with nothing after the colon) keeps the rest', () => {
+  expect(setField('a:   # c\nb: 2\n', ['a'], 'x')).toBe('a: x   # c\nb: 2\n')
+})
+
+test('a value that needs quoting is quoted when inserted', () => {
+  expect(setField('a: 1\n', ['b'], 'yes: no')).toBe('a: 1\nb: "yes: no"\n')
+  expect(setField('a: 1\n', ['b'], 'true')).toBe('a: 1\nb: "true"\n')
+})
+
+test('an object value is inserted as an indented block under the right parent', () => {
+  const out = setField(MESSY, ['patrol', 'notify'], { webhook: 'https://example.com/hook' })
+  expect(out).toBe(MESSY.replace('  owner_idle_minutes: 30\n', '  owner_idle_minutes: 30\n  notify:\n    webhook: https://example.com/hook\n'))
+})
+
+test('form edits on the shipped teams/duo/team.yaml change only the edited lines and keep the spec valid', () => {
+  const file = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../teams/duo/team.yaml')
+  const src = fs.readFileSync(file, 'utf8')
+  const edits: Array<[Array<string | number>, unknown]> = [
+    [['posts', 0, 'model'], 'sonnet'],
+    [['gates', 'builder'], 'pnpm test'],
+    [['patrol', 'workspace_status'], false],
+    [['posts', 1, 'tags'], ['review']],
+  ]
+  let text = src
+  for (const [p, v] of edits) text = setField(text, p, v)
+  const removed = src.split('\n').filter((l) => !text.split('\n').includes(l))
+  expect(removed).toEqual(['    model: opus'])
+  expect(validateSpecText(text, file).errors).toEqual([])
+  expect(validateSpecText(text, file).spec).toMatchObject({ patrol: { workspaceStatus: false }, posts: [{ model: 'sonnet' }, { tags: ['review'] }] })
+})
+
+test('edits that the text paths cannot place safely still work through the Document API', () => {
+  // flow 映射、序列元素下标越界以外的块序列整体替换等：不要求字节不变，但结果必须是合法 YAML 且内容正确
+  const out = setField('tags:\n  - a\n  - b\nx: 1\n', ['tags'], ['z'])
+  expect(out).toContain('z')
+  expect(out).toContain('x: 1')
+  expect(setField('m: {a: 1}\n', ['m', 'b'], 2)).toMatch(/b: 2/)
 })
 
 test('setField on text with a syntax error throws spec_invalid', () => {
