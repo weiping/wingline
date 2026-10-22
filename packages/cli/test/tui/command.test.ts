@@ -34,6 +34,8 @@ class In extends EventEmitter {
 
 const team = (name: string, status: TeamRow['status'] = 'up'): TeamRow => ({ name, specPath: `/t/${name}.yaml`, specHash: 'h', runId: 'r', coordinatorHandle: 'c', status })
 const depsOf = (teams: TeamRow[]) => ({ registry: { listTeams: () => teams, getTeam: (n: string) => teams.find((t) => t.name === n) ?? null } }) as unknown as CommandDeps
+// 这几个测试不关心平台：固定成 linux，免得在 Windows 上走到“终端可能不支持 VT”的分支（那条有专门的测试）
+const tui = (deps: CommandDeps, a: Parameters<typeof tuiCmd>[1]) => tuiCmd(deps, { platform: 'linux', env: {}, ...a })
 const ioOf = (o: { stdin?: In; stdout?: Out } = {}) => ({ stdin: (o.stdin ?? new In()) as never, stdout: (o.stdout ?? new Out()) as never })
 
 test('not a TTY → tui_not_tty (input error), before touching the registry', async () => {
@@ -49,27 +51,27 @@ test('a TTY that reports zero columns → tui_unsupported_terminal', async () =>
 test('no team argument: one team enters directly, several show the picker, none → team_unknown', async () => {
   const run = vi.fn(async () => {})
   const pick = vi.fn(async () => 'b')
-  await tuiCmd(depsOf([team('only')]), { io: ioOf(), run: run as never, pick })
+  await tui(depsOf([team('only')]), { io: ioOf(), run: run as never, pick })
   expect(run).toHaveBeenLastCalledWith(expect.anything(), 'only', expect.anything(), expect.anything())
   expect(pick).not.toHaveBeenCalled()
 
-  await tuiCmd(depsOf([team('a'), team('b')]), { io: ioOf(), run: run as never, pick })
+  await tui(depsOf([team('a'), team('b')]), { io: ioOf(), run: run as never, pick })
   expect(pick).toHaveBeenCalledOnce()
   expect(run).toHaveBeenLastCalledWith(expect.anything(), 'b', expect.anything(), expect.anything())
 
-  await expect(tuiCmd(depsOf([]), { io: ioOf(), run: run as never, pick })).rejects.toMatchObject({ code: 'team_unknown' })
+  await expect(tui(depsOf([]), { io: ioOf(), run: run as never, pick })).rejects.toMatchObject({ code: 'team_unknown' })
 })
 
 test('leaving the picker without a choice ends quietly', async () => {
   const run = vi.fn(async () => {})
-  await tuiCmd(depsOf([team('a'), team('b')]), { io: ioOf(), run: run as never, pick: async () => null })
+  await tui(depsOf([team('a'), team('b')]), { io: ioOf(), run: run as never, pick: async () => null })
   expect(run).not.toHaveBeenCalled()
 })
 
 test('a team name that is not registered → team_unknown', async () => {
-  await expect(tuiCmd(depsOf([team('duo')]), { team: 'ghost', io: ioOf(), run: vi.fn() as never })).rejects.toMatchObject({ code: 'team_unknown' })
+  await expect(tui(depsOf([team('duo')]), { team: 'ghost', io: ioOf(), run: vi.fn() as never })).rejects.toMatchObject({ code: 'team_unknown' })
   const run = vi.fn(async () => {})
-  await tuiCmd(depsOf([team('duo')]), { team: 'duo', io: ioOf(), run: run as never })
+  await tui(depsOf([team('duo')]), { team: 'duo', io: ioOf(), run: run as never })
   expect(run).toHaveBeenCalledOnce()
 })
 

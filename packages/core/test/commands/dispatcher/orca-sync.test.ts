@@ -1,4 +1,5 @@
 import os from 'node:os'
+import path from 'node:path'
 import { afterEach, beforeEach, expect, test } from 'vitest'
 import { warningsOf } from '../../../src/commands/dispatcher/attention.js'
 import { initialState } from '../../../src/commands/dispatcher/loop.js'
@@ -111,6 +112,8 @@ function world(yaml = DUO_YAML + PATROL_ON) {
   return { o, ...s, ctx, sync, syncEvents }
 }
 const TMP = `path:${os.tmpdir()}`
+/** `/w/a` 经归一后的写法：Windows 上是 `\w\a`，代码里归组和 orca_sync 的键都用这个。 */
+const WA = path.normalize('/w/a')
 
 test('two posts on one worktree: priority wins and the comment has one line each', async () => {
   const w = world()
@@ -129,7 +132,7 @@ test('path:/w/a and current resolving to /w/a are grouped and written once', asy
   w.o.worktreePaths.set('current', '/w/a')
   await w.sync([task()])
   expect(w.o.comments).toHaveLength(1)
-  expect(w.o.comments[0]).toMatchObject({ worktree: 'path:/w/a', status: 'in-progress' })
+  expect(w.o.comments[0]).toMatchObject({ worktree: `path:${WA}`, status: 'in-progress' })
   expect(w.o.comments[0]!.comment!.split('\n')).toHaveLength(2)
   expect(w.o.calls.filter((c) => c === 'worktreeShow')).toHaveLength(1)
 })
@@ -176,8 +179,8 @@ test('worktree paths are normalised before grouping (trailing slash, dot segment
   w.registry.upsertPost({ ...w.registry.getPost('checker@duo')!, worktree: 'path:/w/./a' })
   await w.sync([task()])
   expect(w.o.comments).toHaveLength(1)
-  expect(w.o.comments[0]).toMatchObject({ worktree: 'path:/w/a' })
-  expect(w.registry.getOrcaSync('/w/a', 'duo')).not.toBeNull()
+  expect(w.o.comments[0]).toMatchObject({ worktree: `path:${WA}` })
+  expect(w.registry.getOrcaSync(WA, 'duo')).not.toBeNull()
 })
 
 test('one scan counts a failing worktree once even when the post-notice sync and the end-of-scan sync both try', async () => {

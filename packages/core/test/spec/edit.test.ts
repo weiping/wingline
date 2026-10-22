@@ -109,9 +109,10 @@ test('an object value is inserted as an indented block under the right parent', 
   expect(out).toBe(MESSY.replace('  owner_idle_minutes: 30\n', '  owner_idle_minutes: 30\n  notify:\n    webhook: https://example.com/hook\n'))
 })
 
-test('form edits on the shipped teams/duo/team.yaml change only the edited lines and keep the spec valid', () => {
+// Windows 检出（autocrlf）会把换行变成 CRLF：LF 和 CRLF 两种都要过，不能只在 Windows 的 CI 上才暴露
+test.each([['LF', '\n'], ['CRLF', '\r\n']])('form edits on the shipped teams/duo/team.yaml (%s) change only the edited lines and keep the spec valid', (_name, eol) => {
   const file = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../teams/duo/team.yaml')
-  const src = fs.readFileSync(file, 'utf8')
+  const src = fs.readFileSync(file, 'utf8').replace(/\r?\n/g, eol)
   const edits: Array<[Array<string | number>, unknown]> = [
     [['posts', 0, 'model'], 'sonnet'],
     [['gates', 'builder'], 'pnpm test'],
@@ -120,7 +121,8 @@ test('form edits on the shipped teams/duo/team.yaml change only the edited lines
   ]
   let text = src
   for (const [p, v] of edits) text = setField(text, p, v)
-  const removed = src.split('\n').filter((l) => !text.split('\n').includes(l))
+  const lines = (t: string) => t.split(/\r?\n/)
+  const removed = lines(src).filter((l) => !lines(text).includes(l))
   expect(removed).toEqual(['    model: opus'])
   expect(validateSpecText(text, file).errors).toEqual([])
   expect(validateSpecText(text, file).spec).toMatchObject({ patrol: { workspaceStatus: false }, posts: [{ model: 'sonnet' }, { tags: ['review'] }] })
