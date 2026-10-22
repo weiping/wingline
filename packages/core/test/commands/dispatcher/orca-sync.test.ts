@@ -318,3 +318,132 @@ test('syncWorktreeForPost never throws and records a failed write', async () => 
   await expect(syncWorktreeForPost(w.deps, w.ctx(), 'checker@duo')).resolves.toBeUndefined()
   expect(w.syncEvents()).toHaveLength(1)
 })
+
+// —— 两个团队共用一个 worktree：Orca 上只有一个状态和一条注释，合并各团队最近一次算出的值 ——
+
+/** 持住 `dispatcher:<团队>` 的锁，表示这个团队的调度员正在运行；返回释放函数。 */
+function hold(w: ReturnType<typeof world>, name: string): () => void {
+  let release = () => {}
+  void w.registry.withTeamLock(`dispatcher:${name}`, () => {
+    w.registry.heartbeat(`dispatcher:${name}`)
+    return new Promise<void>((res) => { release = res })
+  })
+  return () => release()
+}
+
+/** 在 w 的注册表里再加一个团队：同样的 worktree，调度员的锁持住表示“正在运行”。返回它的 ctx / sync / 释放函数。 */
+function addTeam(w: ReturnType<typeof world>, name: string, o: { running?: boolean; status?: 'up' | 'stopped' } = {}) {
+  const specPath = mkTeam(DUO_YAML.replace('name: duo', `name: ${name}`) + PATROL_ON)
+  w.registry.upsertTeam({ name, specPath, specHash: specHash(loadTeamSpec(specPath)), runId: 'run-1', coordinatorHandle: 'coord-1', status: o.status ?? 'up' })
+  for (const [id, handle] of [['builder', 'term-tb'], ['checker', 'term-tc']] as const) {
+    w.registry.upsertPost({
+      address: `${id}@${name}`, team: name, agent: 'claude', worktree: TMP, handle, status: 'live', isLead: id === 'builder',
+      sessionMarker: null, sessionId: null, sessionAt: null,
+    })
+  }
+  const release = o.running === false ? () => {} : hold(w, name)
+  const ctx = () => ({ team: w.registry.getTeam(name)!, spec: loadTeamSpec(w.registry.getTeam(name)!.specPath) })
+  return { ctx, sync: (tasks: TaskRow[]) => syncOrca(w.deps, ctx(), snapOf(tasks), { observeOnly: false }), release }
+}
+const busyDuo = () => task()
+const busyTrio = () => task({ id: 't9', title: '审查登录', claimedBy: 'builder@trio', assigneeHandle: 'term-tb' })
+
+test('the second team to write does not hide the first one: status is the highest priority, comment lines carry the team name', async () => {
+  const w = world()
+  const duoUp = hold(w, 'duo')
+  const trio = addTeam(w, 'trio')
+  await w.sync([busyDuo()])
+  expect(w.o.comments.at(-1)).toMatchObject({ status: 'in-progress', comment: 'builder：实现登录（进行中，第 2 轮）\nchecker：空闲' }) // 只有自己时没有团队名前缀
+  await trio.sync([]) // trio 空闲：以前这里会把状态盖成 completed
+  expect(w.o.comments.at(-1)).toEqual({
+    worktree: TMP,
+    status: 'in-progress',
+    comment: '[duo] builder：实现登录（进行中，第 2 轮）\n[duo] checker：空闲\n[trio] builder：空闲\n[trio] checker：空闲',
+  })
+  trio.release()
+})
+
+test('whoever writes first, the result converges to the same merged status and comment', async () => {
+  const a = world()
+  const duoA = hold(a, 'duo')
+  const ta = addTeam(a, 'trio')
+  await ta.sync([])
+  await a.sync([busyDuo()])
+  const b = world()
+  const duoB = hold(b, 'duo')
+  const tb = addTeam(b, 'trio')
+  await b.sync([busyDuo()])
+  await tb.sync([])
+  expect(a.o.comments.at(-1)).toEqual(b.o.comments.at(-1))
+  expect(a.o.comments.at(-1)!.status).toBe('in-progress')
+  ta.release(); tb.release()
+})
+
+test('when the busy team finishes, the merged status falls back and the lines are refreshed', async () => {
+  const w = world()
+  const duoUp = hold(w, 'duo')
+  const trio = addTeam(w, 'trio')
+  await w.sync([busyDuo()])
+  await trio.sync([busyTrio()])
+  expect(w.o.comments.at(-1)).toMatchObject({ status: 'in-progress' })
+  await w.sync([]) // duo 做完了，trio 还在做
+  expect(w.o.comments.at(-1)).toMatchObject({ status: 'in-progress' })
+  expect(w.o.comments.at(-1)!.comment).toContain('[duo] builder：空闲')
+  expect(w.o.comments.at(-1)!.comment).toContain('[trio] builder：审查登录（进行中，第 2 轮）')
+  await trio.sync([]) // 都空闲了
+  expect(w.o.comments.at(-1)).toMatchObject({ status: 'completed' })
+  trio.release()
+})
+
+test('a team whose dispatcher is not running, or that is stopped, contributes nothing', async () => {
+  const notRunning = world()
+  const nr = addTeam(notRunning, 'trio', { running: false })
+  await nr.sync([busyTrio()]) // 它写过一次记录，但调度员没在运行
+  await notRunning.sync([])
+  expect(notRunning.o.comments.at(-1)).toMatchObject({ status: 'completed', comment: 'builder：空闲\nchecker：空闲' })
+
+  const stopped = world()
+  const st = addTeam(stopped, 'trio', { status: 'stopped' })
+  await st.sync([busyTrio()])
+  await stopped.sync([])
+  expect(stopped.o.comments.at(-1)).toMatchObject({ status: 'completed', comment: 'builder：空闲\nchecker：空闲' })
+  st.release()
+})
+
+test('a team that syncs only the status adds no comment lines; a team that syncs only comments adds no status', async () => {
+  const w = world(DUO_YAML) // duo：只同步状态
+  const duoUp = hold(w, 'duo')
+  const trio = addTeam(w, 'trio') // trio：状态与注释都同步
+  await w.sync([busyDuo()])
+  await trio.sync([])
+  const last = w.o.comments.at(-1)!
+  expect(last.status).toBe('in-progress')
+  expect(last.comment).toBe('builder：空闲\nchecker：空闲') // 只有 trio 的两行，没有 duo 的，也就没有团队名前缀
+  trio.release()
+})
+
+test('the merged comment is cut to the limit with a trailing ellipsis', async () => {
+  const w = world()
+  const duoUp = hold(w, 'duo')
+  const trio = addTeam(w, 'trio')
+  await w.sync([task({ title: '长'.repeat(300) })])
+  await trio.sync([task({ id: 't9', title: '长'.repeat(300), claimedBy: 'builder@trio', assigneeHandle: 'term-tb' })])
+  const c = w.o.comments.at(-1)!.comment!
+  expect(c).toHaveLength(500)
+  expect(c.endsWith('…')).toBe(true)
+  expect(c.startsWith('[duo] ')).toBe(true)
+  trio.release()
+})
+
+test('nothing is written again when no team’s own value changed', async () => {
+  const w = world()
+  const duoUp = hold(w, 'duo')
+  const trio = addTeam(w, 'trio')
+  await w.sync([busyDuo()])
+  await trio.sync([])
+  const n = w.o.comments.length
+  await w.sync([busyDuo()])
+  await trio.sync([])
+  expect(w.o.comments).toHaveLength(n)
+  trio.release()
+})

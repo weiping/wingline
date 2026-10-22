@@ -2,11 +2,12 @@ import path from 'node:path'
 import { WinglineError } from '../../errors.js'
 import { ORCA_WORKTREE_SUPPORT } from '../../orca/client.js'
 import type { WorkspaceStatus } from '../../orca/types.js'
-import type { DoneVerdictRow, PatrolSignal, PostRow, TeamRow } from '../../registry/registry.js'
+import type { DoneVerdictRow, OrcaSyncRow, PatrolSignal, PostRow, TeamRow } from '../../registry/registry.js'
 import type { TeamSpec } from '../../spec/load.js'
 import { plainText } from '../../view/plain-text.js'
 import type { CommandDeps } from '../deps.js'
 import { fetchTasks, type TaskRow } from '../task/query.js'
+import { dispatcherHealth } from './lifecycle.js'
 import type { ScanSnapshot } from './signals.js'
 
 type Ctx = { team: TeamRow; spec: TeamSpec }
@@ -80,12 +81,42 @@ export function postLine(id: string, task: TaskRow | null, flags: { signal: Patr
 /** 多个岗位共用一个 worktree：状态取优先级最高的，注释每岗位一行；超长截断并以 … 结尾（… 计入长度）。 */
 export function summarize(rows: Array<{ status: WorkspaceStatus; line: string }>, maxLen: number): { status: WorkspaceStatus; comment: string } {
   const status = rows.reduce<WorkspaceStatus>((best, r) => (PRIORITY[r.status] > PRIORITY[best] ? r.status : best), 'completed')
-  const full = rows.map((r) => r.line).join('\n')
-  if (full.length <= maxLen) return { status, comment: full }
+  return { status, comment: cut(rows.map((r) => r.line).join('\n'), maxLen) }
+}
+
+/** 超长截断并以 … 结尾（… 计入长度），不把代理对从中间切开。 */
+function cut(full: string, maxLen: number): string {
+  if (full.length <= maxLen) return full
   let end = maxLen - 1
   const last = full.charCodeAt(end - 1)
-  if (last >= 0xd800 && last <= 0xdbff) end -= 1 // 别把代理对从中间切开
-  return { status, comment: `${full.slice(0, end)}…` }
+  if (last >= 0xd800 && last <= 0xdbff) end -= 1
+  return `${full.slice(0, end)}…`
+}
+
+const commentLimit = () => Math.min(COMMENT_MAX, ORCA_WORKTREE_SUPPORT.commentMax ?? COMMENT_MAX)
+
+/**
+ * Orca 里一个 worktree 只有一个状态、一条注释，可是同一个 worktree 上可能有几个团队各自在同步。
+ * 只看自己的话，后写的会盖掉先写的（忙的团队被空闲的盖成 completed）。所以写入时把其他团队最近一次算出的值合并进来：
+ * 只算“团队登记为 up 且调度员正在运行”的团队，已停止或调度员不在的团队不参与，免得旧值一直顶着。
+ */
+function peersOf(deps: CommandDeps, ctx: Ctx, worktree: string): OrcaSyncRow[] {
+  return deps.registry
+    .listOrcaSyncOf(worktree)
+    .filter((r) => r.team !== ctx.team.name && deps.registry.getTeam(r.team)?.status === 'up' && dispatcherHealth(deps, r.team).state === 'running')
+}
+
+/** 状态取各团队里优先级最高的。 */
+function mergedStatus(own: WorkspaceStatus, peers: OrcaSyncRow[]): WorkspaceStatus {
+  return [own, ...peers.map((p) => p.status as WorkspaceStatus | null)].reduce<WorkspaceStatus>((best, s) => (s && PRIORITY[s] > PRIORITY[best] ? s : best), own)
+}
+
+/** 注释：只有自己时原样；有别的团队时每行加 `[团队名] ` 前缀，按团队名排序，各方算出同一份结果。 */
+function mergedComment(team: string, own: string, peers: OrcaSyncRow[]): string {
+  const others = peers.filter((p) => p.comment)
+  if (others.length === 0) return own
+  const all = [{ team, comment: own }, ...others.map((p) => ({ team: p.team, comment: p.comment! }))].sort((a, b) => (a.team < b.team ? -1 : 1))
+  return cut(all.flatMap((t) => t.comment.split('\n').map((l) => `[${t.team}] ${l}`)).join('\n'), commentLimit())
 }
 
 /**
@@ -154,7 +185,7 @@ function composeGroup(deps: CommandDeps, ctx: Ctx, tasks: TaskRow[], addresses: 
       line: postLine(address.split('@')[0]!, currentTask(p, tasks), { signal: top?.signal ?? null, frozen: deps.registry.getFrozen(address) !== null }),
     }
   })
-  return summarize(rows, Math.min(COMMENT_MAX, ORCA_WORKTREE_SUPPORT.commentMax ?? COMMENT_MAX))
+  return summarize(rows, commentLimit())
 }
 
 /** 只在值变化时写；失败记 fail_count 与事件，连续 MAX_FAILS 次后停手（调度员重启时清零）。 */
@@ -175,8 +206,14 @@ async function writeGroup(
   }
   if (Object.keys(change).length === 0) return
   const team = ctx.team.name
+  // 记录里存的是“本团队自己算出的值”（用来判断有没有变化）；写给 Orca 的是并上其他团队之后的值
+  const peers = peersOf(deps, ctx, worktree)
+  const send = {
+    ...(change.status !== undefined ? { status: mergedStatus(change.status, peers) } : {}),
+    ...(change.comment !== undefined ? { comment: mergedComment(team, change.comment, peers) } : {}),
+  }
   try {
-    await deps.orca.worktreeSet({ worktree: `path:${worktree}`, ...change })
+    await deps.orca.worktreeSet({ worktree: `path:${worktree}`, ...send })
     deps.registry.putOrcaSync({
       worktree, team, status: change.status ?? prev?.status ?? null, comment: change.comment ?? prev?.comment ?? null,
       writtenAt: deps.now().toISOString(), failCount: 0,

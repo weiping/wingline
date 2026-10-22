@@ -817,6 +817,11 @@ export class Registry {
       .run(s.worktree, s.team, s.status, s.comment, s.writtenAt, s.failCount)
   }
 
+  /** 同一个 worktree 上所有团队各自最近一次算出的值（调用方自己筛掉没在运行的团队）。 */
+  listOrcaSyncOf(worktree: string): OrcaSyncRow[] {
+    return (this.db.prepare('SELECT * FROM orca_sync WHERE worktree = ? ORDER BY team').all(worktree) as Row[]).map(orcaSyncRow)
+  }
+
   listOrcaSync(team: string): OrcaSyncRow[] {
     return (this.db.prepare('SELECT * FROM orca_sync WHERE team = ? ORDER BY worktree').all(team) as Row[]).map(orcaSyncRow)
   }
