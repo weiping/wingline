@@ -583,3 +583,67 @@ WINGLINE_SPIKE_WORKTREE=<专用测试 worktree 选择器> pnpm tsx spikes/worktr
 
 **未解释的现象**
 - 开跑后约 30 秒，两个新任务各记了一条 `escalation / notify_lead / unconfirmed`，岗位显示为“未知岗位”。没有深查，也不确定此前几轮真机里是否出现过。
+
+## 3C 真机验证（续三）：批准动作与单任务长跑
+
+团队 `rt3`，两个真 claude，调度员正常运行，磁盘全程 11–12G。
+
+**测试环境的坑（不是 wingline 的缺陷）**
+- 会话重启后，从带有 `ORCA_TERMINAL_HANDLE` 的 shell 运行 `wl up`，Orca 会拒绝它代表 builder 终端认领或新建 run（`This terminal is attested as … and cannot act as …`），任务建不出来。去掉 `ORCA_TERMINAL_HANDLE` / `ORCA_AGENT_LAUNCH_TOKEN` / `ORCA_AGENT_LAUNCH` 后恢复正常。重启前为什么没有这个问题，没有逐一核实。
+- 团队 `rt2` 在 Orca 里留有旧 run 和未完成的任务，没有清理。
+
+**已再次看到的**
+- `checker` 停在权限确认框，约开跑后 615 秒 `waiting_approval` 升到 level 2；调度员先 `observe`，之后两次 `notify_lead ok`；lead（真 claude）只汇报，没有代批。
+- `builder` 的长任务（9 次 `sleep 110`）做完，任务状态变为 `completed`（约 1124 秒）；做完后 Orca 注释里 builder 那行变成“空闲”。
+
+**没有验证到的**
+- 批准后信号清除、`⚠ 等待批准` 消失：脚本分两步发送了 `1` 和回车，Orca 两次都返回 `accepted: true, bytesWritten: 1`。发送 `1` 后屏幕一度变成空提示符（`manual mode on`），发送回车后确认框又出现；`checker` 的任务一直停在 `dispatched`，信号一直在 level 2。传输是通的，但按键对 claude 确认框的实际效果没有弄清。
+- 单任务长跑：`checker` 的任务始终没完成，整个团队的状态因此一直是 `in-progress`，无法单独证明“只剩一个长任务时保持 in-progress、做完翻回 completed”。
+- 状态在开跑后约 10 分钟才从 `todo` 变成 `in-progress`；这期间任务何时真正开始没有记录，不能据此判断是否延迟。
+
+## 3C 真机验证（续四）：批准动作查清，信号清除与长任务收尾已验证
+
+团队 `rt4`，两个真 claude，调度员正常运行，`prompt_minutes: 1`，磁盘全程 11G。脚本进程去掉了 `ORCA_TERMINAL_HANDLE` 等身份变量（原因见续三）。
+
+**续三“批准没生效”的原因：测试脚本只批了一次**
+- `checker`（默认权限）依次弹出三个独立的确认框：`wl task start`、`wl task show`、`wl task done`。只发数字 `1`（不发回车）即可批掉当前这个框；脚本每次看到框就批一次，批三次后 `checker` 回复“完成”，任务变为 `completed`。
+- 这不是 wingline 的缺陷。续二、续三里任务一直卡着，是因为脚本只批了第一个框。
+
+**已验证**
+- 批准后信号清除：任务完成于 03:33:09，调度员在 03:37:02 记录 `cleared`；03:37:10 的采样里 `signals` 为 `[]`，Orca 注释里 `checker` 那行的 `⚠ 等待批准` 消失，变成“空闲”。任务完成到清除间隔约 4 分钟（等到下一轮巡查），未核对是否符合设计的巡查间隔。
+- 只剩一个长任务时的状态：`checker` 空闲后，工作区状态保持 `in-progress`；`builder` 的长任务 03:39:38 变为 `completed`，工作区状态在 03:42:39 翻成 `completed`，注释变为“builder：空闲 checker：空闲”。长任务完成到状态翻转约 3 分钟。
+- lead（真 claude）全程没有代批，并在收尾汇报里写明 `checker` 仍在等待批准、需要人处理。
+
+**状态约 10 分钟才变成 `in-progress`：已查清，是设计行为，不是 bug**
+- 调度员只在每次巡查扫描末尾同步 Orca 状态（3C spec §6.4），巡查周期固定 `PATROL_INTERVAL_MS = 300_000`（2B spec：实际间隔 5–6 分钟），与 `patrol.prompt_minutes` 无关；任务派发（`wl task create`）本身不触发同步。
+- 重启（含首次启动）后第一轮只观察，不对 Orca 写任何东西（3C spec §6.4，`observeOnlyNextScan`）。
+- rt4 的实际扫描时间（UTC）：19:26:55（首轮，只观察）→ 19:31:59（第一次写，状态变 `in-progress`，对应日志 03:32:10）→ 19:37:02（信号 `cleared`）→ 19:42:32（状态翻 `completed`）。所以刚启动的团队，状态要 ≈ 10 分钟（首轮扫描 + 观察轮）才第一次写成 `in-progress`；之后每次变化最多滞后一个周期（≈ 5–6 分钟）。上面测到的“清除约 4 分钟”“翻转约 3 分钟”都落在这个范围内。
+- 影响：新启动的团队前 ≈ 10 分钟 Orca 里显示 `todo`，即使任务已在跑。如果要求“长任务期间一直显示 `in-progress`”，这 10 分钟是缺口；是否缩短首轮或在派发时触发同步，是产品取舍，尚未改动。
+- 已处理：派发成功后、`wl task done` 收尾后立刻同步一次（`syncAfterChange`，见 3C spec §6.4），验证结果见续五、续六。
+
+**另一个未核实的现象**
+- 本轮第一次 `notify_lead` 的结果是 `unconfirmed`，之前几轮是 `ok`；当时 lead 正在处理上一条消息。没有核实 lead 是否因此漏收，只看到它事后的汇报里提到了 `checker` 在等批准。
+
+## 3C 真机验证（续五）：派发时立即同步
+
+改动：`dispatchTo` 返回 `dispatched` 后调用 `syncAfterChange`（`packages/core/src/commands/dispatcher/orca-sync.ts`），覆盖 `wl task create --post`、`wl task start`、`wl task recover`、完成后派发后续子任务。条件：团队为 `up` 且本团队调度员正在运行；排队不触发；永不抛出。单元测试 `packages/core/test/commands/task/dispatch-sync.test.ts`（8 个）；全量 106 个文件 1458 个用例通过，`pnpm typecheck` 通过。
+
+真机（团队 `rt5`，两个真 claude，调度员运行，`worktree_comment: true`）：
+- 04:09:52 创建并派发两个任务；`orca_sync` 记录的写入时间 04:09:50（UTC 20:09:50，见下方 UTC 对照），第一次采样（任务创建后 1 秒）工作区状态已是 `in-progress`，注释里两个岗位各一行“进行中，第 1 轮”。此前同样场景要约 10 分钟（615–650 秒）。
+- 此时调度员一次巡查都还没跑（`patrol_events` 为空），写入来自命令行进程的派发时同步。
+- 局限：本次只验证了派发这一个触发点的真机行为；`start` / `recover` / 子任务派发只有单元测试（`start` 有），没有真机；任务完成、信号清除仍按巡查周期（≈ 5–6 分钟）同步，没有改动。
+
+（时间对照：脚本日志为本地时间 UTC+8，`orca_sync.written_at` 为 UTC，二者相差 8 小时。）
+
+## 3C 真机验证（续六）：`wl task done` 收尾后立即同步
+
+改动：`proceed`（`packages/core/src/commands/task/done.ts`）在 `finishVerdict`、`logTask` 之后调用 `syncAfterChange`（结局为 `done` 或 `escalated`）。必须放在判定收尾之后：`in-review` 要求判定已结束且收尾类型是送审，单元测试 `done-sync.test.ts` 里送审场景的写入序列是 `in-progress`（派发评审子任务时）→ `in-review`（收尾后）。gate 失败、重放、没有调度员都不写。函数从 `syncOnDispatch` 改名为 `syncAfterChange`（派发与 done 共用）。
+
+测试：新增 `done-sync.test.ts` 6 个用例；全量 107 个文件 1464 个用例通过，`pnpm typecheck` 通过。
+
+真机（团队 `rt6`，真 claude，调度员运行）：
+- 04:16:30 创建并派发一个短任务，第一次采样（+0 秒）工作区状态 `in-progress`。
+- 04:16:40（+10 秒）claude 自己跑完 `wl task start` / `wl task done`，工作区状态与任务状态同为 `completed`；`orca_sync` 写入时间 20:16:39（UTC）。
+- 期间调度员的 `patrol_events` 只有 `inbox` / `check_ok`，没有一次 `scan`：两次写入都来自命令行进程。此前“任务完成 → 状态翻转”要等下一轮巡查，实测约 3 分钟。
+
+局限：真机只验证了不带 `links` 的 `done`（落到 `completed`）；送审（`in-review`）、`escalated` 只有单元测试，没有真机。信号清除、冻结等仍按巡查周期同步。
