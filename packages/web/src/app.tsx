@@ -5,9 +5,11 @@ import { Layout, StreamBanner, TopBar } from './components/Layout.js'
 import { ErrorBox, Loading } from './components/common.js'
 import { Toaster } from './components/Toast.js'
 import { Link } from './components/Link.js'
+import { Edit } from './pages/Edit.js'
 import { Inbox } from './pages/Inbox.js'
 import { Overview } from './pages/Overview.js'
 import { PostDetail } from './pages/PostDetail.js'
+import { Settings } from './pages/Settings.js'
 import { TaskBoard } from './pages/TaskBoard.js'
 import { TaskDetail } from './pages/TaskDetail.js'
 import { Timeline } from './pages/Timeline.js'
@@ -67,6 +69,8 @@ function Page({ route, team }: { route: Route; team: string }): ComponentChildre
       return <PostDetail team={team} post={route.post} />
     case 'log':
       return <Timeline team={team} />
+    case 'edit':
+      return <Edit team={team} />
     default:
       return <p class="muted">页面不存在。</p>
   }
@@ -77,6 +81,13 @@ function Routed({ route, teams }: { route: Route; teams: string[] }) {
     return (
       <Layout teams={teams} team={null}>
         <Home teams={teams} />
+      </Layout>
+    )
+  }
+  if (route.name === 'settings') {
+    return (
+      <Layout teams={teams} team={null}>
+        <Settings />
       </Layout>
     )
   }

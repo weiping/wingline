@@ -13,6 +13,7 @@ export const NAV: NavTarget[] = [
   { label: '收件箱', sub: '/inbox' },
   { label: '任务看板', sub: '/tasks' },
   { label: '时间线', sub: '/log' },
+  { label: '编辑', sub: '/edit' },
 ]
 
 const STATE_TEXT = { live: ['实时', 'ok'], reconnecting: ['重连中', 'warn'], closed: ['已断开', 'bad'] } as const
@@ -49,6 +50,11 @@ export function Layout(props: { teams: string[]; team: string | null; children: 
             ))}
           </nav>
         )}
+        <nav class="side-foot">
+          <Link href="/settings" class="nav-link">
+            关于
+          </Link>
+        </nav>
       </aside>
       <div class="main">{props.children}</div>
     </div>
