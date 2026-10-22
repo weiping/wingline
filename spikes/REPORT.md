@@ -535,3 +535,28 @@ WINGLINE_SPIKE_WORKTREE=<专用测试 worktree 选择器> pnpm tsx spikes/worktr
 **`wl tui` 在真实伪终端里（Python `pty`，100×30）对着上面这个活团队**，21 项全部通过：进入备用屏幕并显示岗位与任务标题；`2` `3` `?` `1` 切换视图与帮助；Enter → 菜单 → 冻结 → 输入理由 → 确认 `y`，`wl attention` 里看到冻结、`wl log` 里有 `tui: dispatcher freeze` 审计行；再通过 TUI 解冻；窗口缩到 30 列显示“窗口太窄”并整屏重绘、恢复后回到正常；`q` 退出码 0；最后输出是 `\x1b[?25h\x1b[?1049l`；全程没有输出任何 OSC 序列；退出后终端回到 cooked 模式（ICANON、ECHO 都开）。
 
 **未覆盖**：真实 agent（claude / codex）参与的场景；多个团队共用一个 worktree 的真机场景（只有单测）；Windows 终端。
+
+## 3C 真机验证（续）：真实 agent、多个团队共用一个 worktree（2026-10-22，macOS，Orca 1.4.237，claude 2.1.308，codex-cli 0.163.0）
+
+对象是两个一次性的 Orca worktree（`wl-e2e-multi`、`wl-e2e-agents`，验证后已删除），没有动 wingline 主 worktree。agent 在终端里用 `env PATH=<含 wl 的目录>:$PATH WINGLINE_HOME=<临时目录> WINGLINE_ORCA=<orca> <agent>` 启动，这样它们执行的 `wl …` 找得到 `wl`，也读写同一个临时注册表。
+
+**真实 claude（`--permission-mode acceptEdits --allowedTools "Bash(wl:*),…"`）：通过**
+- 启动包被接受，岗位自我介绍后空闲；没有出现信任目录弹窗。
+- `wl send` 返回 `delivered`（观察到它开始处理）。
+- 任务 `task create --post builder@rt`：`notified`，它自己执行 `wl task start` / `wl task done`，约 20 秒结束，结果 `succeeded`；审计里的执行者是 `builder@rt`（隐式身份解析在真实终端里可用）。
+- 完整干活：按任务新建了 `e2e-hello.txt`（只此一个文件变化），`wl task done` 成功，约 30 秒。
+
+**真实 codex：能用，但有几个要写进文档的坑**
+- 默认 `-s workspace-write -a never` 下，`wl` 访问 Orca 得到 `orca:runtime_access_denied`；审计里这条命令的执行者是 `unknown`。加 `-c sandbox_workspace_write.network_access=true` 后 `orca status` 能通；但 `wl` 还要往 `WINGLINE_HOME/logs` 与注册表写，沙箱外目录被拒（`EPERM`），补 `writable_roots` 后又遇到 Orca 读取 `orca-environments.json` 的错误，没有继续深挖。
+- 免沙箱（`--dangerously-bypass-approvals-and-sandbox`，范围限定在一次性 worktree）下一切正常：收到启动包、`wl send` 给 builder 报到、执行 `wl task start/done`、在 `e2e-hello.txt` 末尾追加 `checked by checker`，约 20 秒结束。
+- codex 在免沙箱启动时会弹“Hooks need review（6 个 hooks 新增或变更）”对话框，岗位不会就绪，`wl up` 返回 `uncertain`（“岗位未确认就绪，启动包未送达”）。按 Esc 跳过（等于不信任）后再执行一次 `wl up` 即可。
+- 没有收到具体任务时，codex 会自己找事做（开始审查仓库代码）。简报里没有“没有任务就等着”的约束，后续可以加一句。
+
+**多个团队共用一个 worktree（占位进程，`duo` + `trio`，同一个注册表）：发现问题**
+- 调度员各自的第二轮扫描：`duo`（有进行中的任务）在 06:57:47 写入 `in-progress`；2 秒后 `trio`（空闲）写入 `completed` 与自己的两行“空闲”注释，覆盖了前者。之后没有任何团队的值再变化，Orca 一直显示 `completed`，直到验证结束（约 7 分钟）。
+- `orca_sync` 按 `(worktree, team)` 记录，所以没有来回写（flapping），也没有互相覆盖各自的记录——这部分符合设计。问题在于**Orca 上只有一个状态 / 一条注释，后写的团队盖掉先写的**：忙的团队被“空闲”覆盖，用户从 Orca 界面上看不出有团队在干活。
+- 可能的修法（未做，需要先定语义）：写入时把同一 worktree 上其他在运行团队最近一次算出的值合并进来——状态取各团队的最高优先级，注释把各团队的行并起来并加团队名前缀；已停止的团队的记录不参与合并，避免旧值一直顶着。
+
+**未覆盖**：agent 停在权限确认框上时巡查信号的真机表现（`waiting_approval`）、长时间运行的任务期间 Orca 状态保持 `in-progress`（占位进程已验证，真 agent 的任务太短，巡查看到的都是空闲）、Windows。
+
+**留下的痕迹**：`~/.claude.json` 里多了一条 `wl-e2e-agents` 路径的项目记录（claude 自己写的，无害，可手动删除）。
