@@ -321,6 +321,8 @@ test('uninstall plan runs launchctl bootout / systemctl disable and deletes only
 
 ### Task 7: 收尾与真机验证
 
+> **状态（2026-10-24）：** Step 1 完成（114 个文件、1540 个用例通过，typecheck 通过）。Step 2 的 (a) macOS 安装即执行一次、(c) launchd 最小环境能启动 node 与 orca 已在本机验证（结果见 `spikes/REPORT.md` “3D-1 真机验证”）；(b) 重新登录后恢复 `up` 团队、(d) 未读红点需要有登记团队的环境，**待验证**。
+
 **Files:**
 - Modify: `docs/superpowers/specs/2026-10-16-phase-3d-screen-signals-remote-autostart-design.md`（顶部状态行标注 3D-1 已实现）、`docs/superpowers/plans/2026-10-16-phase-3d-screen-signals-remote-autostart.md`（索引状态）
 

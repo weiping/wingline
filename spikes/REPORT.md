@@ -703,3 +703,19 @@ WINGLINE_SPIKE_WORKTREE=<专用测试 worktree 选择器> pnpm tsx spikes/worktr
 - **局限**：(1) 被测对象是普通 Node 输出，不是 Claude / Codex 的全屏 TUI；TUI 的状态栏是否出现在 `tail` 里、重绘是否把画面搅乱，要等探针 2 用真实 agent 的样本确认。(2) 80 行上限随终端面板大小变化，面板很矮时 `--limit 40` 可能少于 40 行——实现不能假定恰好 40 行，按 `returnedLineCount` 处理。(3) 只在 macOS 上测过。
 
 **据此的改动**：块 (c) 不搁置；探针 2 继续（样本用 `spikes/phase-3d2.ts sample <handle> <样本名>` 存入 `test/fixtures/screens/`）。
+
+## 3D-1 真机验证：`wl autostart`（2026-10-24，macOS，Orca 1.4.237，node v24.18.0）
+
+用构建后的 CLI（`node packages/cli/dist/main.js`，`tsc -b packages/core packages/cli`）在本机执行。这台机器的 `~/.wingline` 里没有 `state.db`，没有登记任何团队。
+
+**已验证**
+- `wl autostart install --wait-orca 5m`：写出 `~/Library/LaunchAgents/wingline.restore.plist`，`plutil -lint` 通过；`launchctl print gui/501/wingline.restore` 显示已加载、`runs = 1`（`RunAtLoad` 立即执行了一次），程序是 nvm 下 node 的绝对路径。
+- **launchd 的最小环境能启动 node 与 orca**：launchd 的默认 PATH 是 `/usr/bin:/bin:/usr/sbin:/sbin`，plist 里显式写的 `PATH`（node 目录、orca 目录、系统目录）生效；该次运行等到 Orca 可达、终端列表连续 4 次相同后正常退出，`last exit code = 0`，`autostart.log` 只有一行“没有处于运行状态的团队，无需恢复”，没有 “command not found”。
+- `wl autostart status` 安装前后的输出正确（未安装 / 已安装、解析出的命令、日志最后一行）。
+- `wl autostart uninstall`：plist 删除、服务注销，`launchctl print` 报 “Could not find service”；日志保留；再次卸载仍成功。验证结束后已卸载，机器恢复原状。
+- `wl restore --all --dry-run`：没有运行中的团队时输出一行说明、退出码 0。
+
+**未验证（需要人在有团队的环境里做）**
+- 重新登录后，Orca 就绪时 `up` 团队被真正恢复，时间线上每个团队一行、执行者为 `autostart`（本机没有登记团队，也没有重新登录）。
+- 有新待办时，Orca 侧栏里牵头岗 workspace 出现未读标记、同一批不重复标记（需要运行中的团队与调度员；未读标记的 `--unread` 本身已在探针 3 验证）。
+- Linux systemd 路径只有单元测试，没有真机。
