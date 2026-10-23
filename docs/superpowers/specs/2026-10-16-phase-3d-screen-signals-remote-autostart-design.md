@@ -193,7 +193,7 @@ CLI 现在 `restore <team>` 的 `<team>` 是必填位置参数（`cli.ts:258`）
   3. 不替用户启动 Orca。
 - **审计与执行者**：
   - `RestoreArgs` 新增 `as?: string`：审计读 `a.as ?? o.actor`（`audit.ts:63`），`restore` 本体忽略它；`as = 'autostart'` 时 `resolveActor` 直接返回该值，不触发 `terminalList` 查询。
-  - `restoreAll(deps, a, o: { restoreOne })` 通过注入的 `restoreOne` 逐团队调用**已审计**的 `commands.restore`（CLI 层传入，附 `as: 'autostart'`），所以时间线上每个团队一行、执行者 `autostart`；`--dry-run` 沿用 `AUDIT.restore.skip`。`restoreAll` 本身不属于单个团队，不进 `AUDIT` / `WRITE_COMMANDS`，`cli/test/main.test.ts` 里“每个写命令都在审计表”的断言加一个显式的豁免列表（`restoreAll`、`autostart*`）。
+  - `restoreAll(deps, a, o: { restoreOne })` 通过注入的 `restoreOne` 逐团队调用**已审计**的 `commands.restore`（CLI 层传入；带了 `--actor autostart` 才附 `as: 'autostart'`，手动执行时不带，仍按 2A 第 7.1 节解析执行者），所以时间线上每个团队一行、自启动时执行者为 `autostart`；`--dry-run` 沿用 `AUDIT.restore.skip`。`restoreAll` 由 CLI 直接调用核心函数，不放进 `Commands`，因此不进 `AUDIT` / `WRITE_COMMANDS`，`cli/test/main.test.ts` 里“每个写命令都在审计表”的断言无需改动（autostart 的命令同理）。没有任何 `up` 团队时人读输出一行“没有处于运行状态的团队，无需恢复”，`--json` 为 `{ teams: [] }`，退出码 0。
   - CLI 隐藏选项 `--actor <name>`，只接受 `autostart`，映射成 `as`；手动执行时仍按 2A 第 7.1 节解析执行者。
   - 自启动命令行带 `--home` / `--orca`，而目前只有 `dispatcher run` 与 `console` 声明了这两个选项并通过 `execute(..., overrides)` 生效：`restore` 命令同样要加这两个选项并传 `overrides`。
 

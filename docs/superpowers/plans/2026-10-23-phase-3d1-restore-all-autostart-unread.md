@@ -205,17 +205,17 @@ test('attentionKeys matches the entries attention() reports (stale, questions, f
 ### Task 5: `wl restore --all`
 
 **Files:**
-- Modify: `packages/core/src/commands/restore/index.ts`（`RestoreArgs.as`、`restoreAll`、`waitForOrca`）、`packages/core/src/errors.ts`（若错误码在此登记）、`packages/cli/src/cli.ts:258`（`restore [team]`、`--all`、`--wait-orca`、隐藏 `--actor`、`--home`、`--orca`）、`output.ts`（`renderRestoreAll`）、`audit-table.ts`、`packages/cli/test/main.test.ts:60-66`（豁免列表）
+- Modify: `packages/core/src/commands/restore/index.ts`（`RestoreArgs.as`、`restoreAll`、`waitForOrca`）、`packages/core/src/errors.ts`（若错误码在此登记）、`packages/cli/src/cli.ts:258`（`restore [team]`、`--all`、`--wait-orca`、隐藏 `--actor`、`--home`、`--orca`）、`output.ts`（`renderRestoreAll`）、`packages/cli/test/main.test.ts`（追加 `--all` 用例）
 - Test: `packages/core/test/commands/restore/restore-all.test.ts`、`packages/cli/test/main.test.ts`（追加）
 
 **Interfaces:**
 - Produces:
   - `RestoreArgs.as?: string` — 审计读 `a.as ?? o.actor`（`audit.ts` 已支持），`restore` 本体忽略；`as = 'autostart'` 时 `resolveActor` 直接返回，不查 `terminalList`
   - `type RestoreAllResult = { teams: Array<{ team: string; result?: RestoreResult; error?: { kind: ErrorKind; code: string; message: string; hint?: string } }> }`
-  - `restoreAll(deps: CommandDeps, a: { waitOrcaMs?: number; dryRun?: boolean; noTasks?: boolean }, o: { restoreOne: (a: RestoreArgs) => Promise<RestoreResult>; sleep?: (ms: number) => Promise<void> }): Promise<RestoreAllResult>` — 先 `waitForOrca`（有 `waitOrcaMs` 时），再对 `teams.status = up` 的团队串行调 `restoreOne({ team, dryRun, noTasks, as: 'autostart' })`；单团队抛错捕获为该团队的 `error`
+  - `restoreAll(deps: CommandDeps, a: { waitOrcaMs?: number; dryRun?: boolean; noTasks?: boolean; as?: string }, o: { restoreOne: (a: RestoreArgs) => Promise<RestoreResult>; sleep?: (ms: number) => Promise<void> }): Promise<RestoreAllResult>` — 先 `waitForOrca`（有 `waitOrcaMs` 时），再对 `teams.status = up` 的团队串行调 `restoreOne({ team, dryRun?, noTasks?, as? })`（`as` 由调用方给，不写死；没给就不带这个键）；单团队抛错捕获为该团队的 `error`
   - `waitForOrca(deps: CommandDeps, timeoutMs: number, sleep: (ms: number) => Promise<void>): Promise<void>` — 常量 `ORCA_POLL_MS = 10_000`、`SETTLE_SAMPLES = 4`
   - `restoreAllExitCode(r: RestoreAllResult): 0 | 1 | 2 | 3 | 4`
-  - CLI：`wl restore [team] --all [--wait-orca <时长>] [--dry-run] [--no-tasks] [--json]`；`--all` 与 `<team>`、`--session` 互斥（输入错误，退出码 1）；`restoreOne` 在 CLI 层传入已审计的 `commands.restore`；`restoreAll` 与 `autostart*` 进 `main.test.ts` 的显式豁免列表（不进 `AUDIT` / `WRITE_COMMANDS`）
+  - CLI：`wl restore [team] --all [--wait-orca <时长>] [--dry-run] [--no-tasks] [--json]`；`--all` 与 `<team>`、`--session` 互斥（输入错误，退出码 1）；`restoreOne` 在 CLI 层传入已审计的 `commands.restore`；`restoreAll` 由 CLI 直接调用核心函数，不放进 `Commands`，所以不进 `AUDIT` / `WRITE_COMMANDS`，`main.test.ts` 的审计表断言无需改；没有 `up` 团队时人读输出“没有处于运行状态的团队，无需恢复”、`--json` 为 `{ teams: [] }`、退出码 0
 
 - [ ] **Step 1: 写失败测试**（FakeOrca；`sleep` 注入为立即返回并计数）
 
@@ -265,14 +265,14 @@ test('--dry-run --all is not audited (AUDIT.restore.skip)', async () => {})
 **Interfaces:**
 - Consumes: Task 5 的 `restore --all --actor autostart` 命令行；`parseDuration`（`controls.ts:8`）；`WINDOWS_UNSAFE`
 - Produces:
-  - `absoluteSelfCommand(a: SelfSpec): { file: string; args: string[] }` — 不依赖 PATH：`node`、`script`、`home`、`orca` 都按 `a.platform` 对应的 `path.posix` / `path.win32` 检查绝对性，脚本先 `path.resolve`；不合 → `autostart_path_invalid`；`win32` 仍做 `WINDOWS_UNSAFE` 校验。参数列表不再追加 `--home/--orca`（命令里已显式给出）
+  - `absoluteSelfCommand(a: SelfSpec): { file: string; args: string[] }` — 不依赖 PATH：`node`、`script`、`home`、`orca` 都按 `a.platform` 对应的 `path.posix` / `path.win32` 检查绝对性，脚本先 `path.resolve`；不合 → `autostart_path_invalid`；`win32` 仍做 `WINDOWS_UNSAFE` 校验。参数列表与 `selfCommand` 一样末尾追加 `--home <home> --orca <orca>`
   - `type AutostartPlatform = 'darwin' | 'linux'`
   - `interface AutostartPlan { platform: AutostartPlatform; file: { path: string; content: string }; logPath: string; register: Array<{ file: string; args: string[]; allowFail?: boolean }>; unregister: Array<{ file: string; args: string[]; allowFail?: boolean }> }`
   - `planAutostart(o: { platform: NodeJS.Platform; homeDir: string; uid?: number; node: string; script: string; home: string; orca: string; waitOrca: string }): AutostartPlan` — `platform` 为 `win32` 或其它 → 抛 `autostart_unsupported`
   - `type Exec = (file: string, args: string[]) => Promise<{ code: number; stdout: string; stderr: string }>`
   - `applyAutostart(plan: AutostartPlan, exec: Exec, fsx?: FsLike): Promise<void>` — `mkdir -p` 日志目录；日志 > 1 MB 先轮转为 `.1`；先写临时文件再改名；`register` 依次执行（`allowFail` 的命令失败不算）；注册失败删除刚写的文件并抛 `autostart_failed`（附 stderr）
   - `removeAutostart(plan: AutostartPlan, exec: Exec, fsx?: FsLike): Promise<void>` — 执行 `unregister`，删文件；没安装过 → 成功
-  - `autostartStatus(plan: AutostartPlan, exec: Exec, io: { readFile; exists: (p: string) => boolean }): Promise<{ installed: boolean; location: string; command: string; commandMissing: string[]; logTail: string[]; linger?: boolean }>` — `commandMissing` 列出命令中已不存在的 node / 入口脚本；Linux 上用 `loginctl show-user <user> -p Linger` 填 `linger`，未开启时 CLI 渲染提示“无界面或 SSH 场景需要 loginctl enable-linger <user>”
+  - `autostartStatus(plan: AutostartPlan, exec: Exec, io: { readFile: (p: string) => string; exists: (p: string) => boolean }): Promise<{ installed: boolean; location: string; command: string[]; commandMissing: string[]; logTail: string[]; linger: boolean | undefined }>` — `command` 是从**已安装的文件**里解析出的词（`installedCommand`，不是按当前环境重算的），`commandMissing` 列出命令中已不存在的 node / 入口脚本；Linux 上用 `loginctl show-user <user> -p Linger` 填 `linger`，未开启时 CLI 渲染提示“无界面或 SSH 场景需要 loginctl enable-linger <user>”
   - CLI：`wl autostart install [--wait-orca <时长，默认 15m>] [--json]`、`uninstall`、`status`
 
 - [ ] **Step 1: 写失败测试**（`path.posix` 显式构造期望值，不用宿主 `path`）
