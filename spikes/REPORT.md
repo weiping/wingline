@@ -647,3 +647,59 @@ WINGLINE_SPIKE_WORKTREE=<专用测试 worktree 选择器> pnpm tsx spikes/worktr
 - 期间调度员的 `patrol_events` 只有 `inbox` / `check_ok`，没有一次 `scan`：两次写入都来自命令行进程。此前“任务完成 → 状态翻转”要等下一轮巡查，实测约 3 分钟。
 
 局限：真机只验证了不带 `links` 的 `done`（落到 `completed`）；送审（`in-review`）、`escalated` 只有单元测试，没有真机。信号清除、冻结等仍按巡查周期同步。
+
+## 3D-1 探针 3：`worktree set --unread` / `--read`（2026-10-23，macOS，Orca 1.4.237）
+
+探针 `spikes/phase-3d1.ts unread`（`WINGLINE_SPIKE_WORKTREE=path:/Users/liuweiping/workspace/dev/wingline`）。对象是 wingline 自己的 worktree，运行前 `isUnread = true`、注释为单个空格、状态 `in-progress`。原始输出在 `spikes/out/phase-3d1/darwin/`。
+
+**实测结论：成立**
+- 参数：`orca worktree set --worktree <选择器> --unread` / `--read`（`--help` 也写明：`--unread` “Mark the workspace unread in the sidebar”，`--read` “clearing the unread dot”）。这条原先只来自复审转述，现已核实。
+- 读回：`worktree show --json` 的 `worktree.isUnread`（布尔）；`worktree set --unread --json` 的回执就是 `{ worktree: {…, isUnread: true, …} }`，已脱敏存为 `test/fixtures/receipts/worktree-unread.json`。
+- 顺序实验（每步后读回）：`--read` → `false`；`--unread` → `true`；**在未读状态下写 `--comment`、写 `--workspace-status` 都不会改变 `isUnread`**（仍为 `true`）；`--read` → `false`。所以 spec 第 6 节第 3 条“写 comment / status 是否改变未读状态”的答案是**不改变**，同一轮内不必先 `syncOrca` 再标记，两次调用顺序无关。
+- 重复 `--unread` 无副作用（置位已为 `true` 的标志）。
+- 自动清除：`--unread` 之后每 2 秒读回、共 30 秒，一直是 `true`——**仅靠时间流逝不会清除**。但还原后几分钟内，该 worktree 的 `isUnread` 从 `true` 变成了 `false`，期间没有任何命令改过它；该 worktree 正是当时终端所在、用户在看的那个，最可能是 Orca 在用户查看时自行清除。**没有单独验证“切换到该 workspace 才清除”**，以此为推测。结论：红点由 Orca 在用户查看时清除，雁阵不需要清除（与 spec 第 6 节一致）。
+
+**据此的改动**：`ORCA_WORKTREE_SUPPORT.unread` 默认 `true`；spec 第 6 节第 3 条去掉“待探针”。
+
+**遗留**：探针结束时脚本把 `isUnread` 还原成了 `true`（读回确认），之后被 Orca 清成 `false`，所以该 worktree 现在比运行前少了一个红点；对结果没有影响，也不需要再处理。
+
+## 3D-1 探针 6：Orca 重启后终端列表多久稳定（2026-10-23，macOS，Orca 1.4.237）
+
+探针 `spikes/phase-3d1.ts settle`：先启动采样（每 5 秒一次，记录 `terminalList` 的 handle + connected 集合），再由人手动重启 Orca。明细在 `spikes/out/phase-3d1/darwin/settle-samples.json`。**只跑了一次，重启前只有 5 个终端**；团队更大时重新纳管可能更慢。
+
+| 时间 | 状态 |
+| --- | --- |
+| 0–21 秒 | 重启前：5 个终端，全部 connected |
+| 26–31 秒 | Orca 不可达（`terminalList` 抛错） |
+| 37 秒 | 可达，但只有 2 个终端，connected 为 0 |
+| 44 秒 | 1 个终端 |
+| 50–60 秒 | 2 个终端（平台期约 15 秒） |
+| 65 秒起 | 3 个终端，此后到 93 秒结束采样一直不变 |
+
+**结论**
+- 状态可达（约 37 秒）比终端列表稳定（65 秒）早约 28 秒：`orca status` 可达不等于已纳管完终端，spec 第 7.1 节的担心成立，必须再等列表稳定。
+- 脚本输出的 `RESULT … 成立` 只表示出现过不可达采样，不说明别的。
+- 中间出现过约 15 秒的 2 终端平台期，“连续 3 次、每次 10 秒”（需稳定 20 秒）只比平台期长 5 秒，余量太薄；改为**连续 4 次相同（稳定 30 秒）**。`--wait-orca` 默认 15 分钟远大于实测的约 65–100 秒，不用动。
+- 重启前 5 个终端、重启后只剩 3 个：稳定只保证列表不再变化，不保证岗位终端都回来。缺失的岗位由 `restore` 判 offline 后接回，这是 `restore` 的既有职责。
+
+**据此的改动**：`ORCA_POLL_MS = 10_000`、`SETTLE_SAMPLES = 4`；spec 第 3、7.1、11 节与 3D-1 plan 的 Global Constraints、Task 5 同步。
+
+**局限**：单次运行、终端数少；若真机出现过早放行（列表稳定后又变化）再调大次数。
+
+## 3D-2 探针 1：`terminal read --screen --limit N`（2026-10-23，macOS，Orca 1.4.237）
+
+探针 `spikes/phase-3d2.ts read`：开一个临时终端，打印 `LINE-001` … `LINE-120` 后挂起，分别用 `terminal show` 和 `terminal read --screen --limit N` 读回。原始回执在 `spikes/out/phase-3d2/darwin/`。
+
+**实测结论：成立（针对普通命令行输出；TUI 重绘未测）**
+
+| 读法 | 拿到 |
+| --- | --- |
+| `terminal show` 的 `preview` | 53 个字符、6 行（`LINE-115` … `LINE-120`）——只有屏幕尾部，与此前“约 300 字符”一致，读不到 40 行 |
+| `terminal read --screen --limit 8` / `40` / `80` | 恰好 8 / 40 / 80 行，每次都是最后 N 行（`LINE-113…120`、`LINE-081…120`、`LINE-041…120`），`source: "screen"` |
+| `--limit 200` 或不带 `--limit` | 80 行（`limited: false`）：上限是渲染出的屏幕行数，不是 `--limit` |
+
+- 回执形态：`{ terminal: { handle, status, tail: string[], truncated, limited, oldestCursor, nextCursor, latestCursor, returnedLineCount, tailRows: object[], source } }`；屏幕文本在 `terminal.tail`（行数组），不是单个字符串。`--json` 下 `source` 为 `screen`；文档说明拿不到渲染屏幕时会退回 `screen-unavailable`（累计流输出），实现要检查 `source`。
+- 因此 spec 第 4.2 节的方案可行：新增 `terminalRead({ handle, lines })`，取 `terminal.tail.join('\n')`；`SIGNAL_TAIL_LINES = 40` 在这个窗口内（屏幕上限 80 行）。
+- **局限**：(1) 被测对象是普通 Node 输出，不是 Claude / Codex 的全屏 TUI；TUI 的状态栏是否出现在 `tail` 里、重绘是否把画面搅乱，要等探针 2 用真实 agent 的样本确认。(2) 80 行上限随终端面板大小变化，面板很矮时 `--limit 40` 可能少于 40 行——实现不能假定恰好 40 行，按 `returnedLineCount` 处理。(3) 只在 macOS 上测过。
+
+**据此的改动**：块 (c) 不搁置；探针 2 继续（样本用 `spikes/phase-3d2.ts sample <handle> <样本名>` 存入 `test/fixtures/screens/`）。
