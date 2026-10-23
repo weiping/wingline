@@ -45,6 +45,7 @@ const patrolSchema = z
     auto_recover: z.boolean().default(false),
     worktree_comment: z.boolean().default(false),
     workspace_status: z.boolean().default(true),
+    unread_mark: z.boolean().default(true),
     notify: notifySchema.optional(),
   })
   .strict()

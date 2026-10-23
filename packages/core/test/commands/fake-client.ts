@@ -67,7 +67,7 @@ export class FakeOrca implements OrcaClient {
   deliveries = new Map<string, { gen: number; ids: string[]; acked: boolean }>()
   questions = new Map<string, { dispatchId: string; taskId: string; asker: string; answered: boolean }>()
   /** worktreeSet 的每次调用原样记下（comment、status 都可能缺省）。 */
-  comments: Array<{ worktree: string; comment?: string; status?: string }> = []
+  comments: Array<{ worktree: string; comment?: string; status?: string; unread?: boolean }> = []
   onCheck?: (a: Args) => void | Promise<void>
   /** 为真时下一次 check 返回 connectionLost: true 的空批并复位。 */
   connectionLostOnce = false
@@ -315,7 +315,7 @@ export class FakeOrca implements OrcaClient {
     })
   }
 
-  async worktreeSet(a: { worktree: string; comment?: string; status?: WorkspaceStatus }): Promise<void> {
+  async worktreeSet(a: { worktree: string; comment?: string; status?: WorkspaceStatus; unread?: boolean }): Promise<void> {
     this.observe('worktreeSet', a)
     this.comments.push({ ...a })
   }

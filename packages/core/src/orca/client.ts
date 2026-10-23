@@ -11,10 +11,11 @@ const WAIT_PROCESS_SLACK_MS = 15_000
  * - `--comment` 支持多行，至少能写 5000 字符（比我们自己的 500 上限宽，所以 commentMax 留 null）；
  * - 注意：`--comment ""` 会被当成没给参数而忽略，没有办法用空串清空注释（我们从不写空注释）。
  */
-export const ORCA_WORKTREE_SUPPORT: { workspaceStatus: boolean; comment: boolean; commentMax: number | null } = {
+export const ORCA_WORKTREE_SUPPORT: { workspaceStatus: boolean; comment: boolean; commentMax: number | null; unread: boolean } = {
   workspaceStatus: true,
   comment: true,
   commentMax: null,
+  unread: true,
 }
 const WORKSPACE_STATUS_FLAG = '--workspace-status'
 
@@ -239,13 +240,14 @@ function inboxMethods(runner: OrcaRunner): Pick<OrcaClient, 'check' | 'reply' | 
       }))
     },
     async worktreeSet(a) {
-      if (a.comment === undefined && a.status === undefined) {
-        throw new WinglineError('internal', 'internal', 'worktreeSet 至少要带 comment 或 status')
+      if (a.comment === undefined && a.status === undefined && a.unread === undefined) {
+        throw new WinglineError('internal', 'internal', 'worktreeSet 至少要带 comment、status 或 unread')
       }
       await runner.json([
         'worktree', 'set', '--worktree', a.worktree,
         ...(a.comment !== undefined ? ['--comment', a.comment] : []),
         ...(a.status !== undefined ? [WORKSPACE_STATUS_FLAG, a.status] : []),
+        ...(a.unread !== undefined ? [a.unread ? '--unread' : '--read'] : []),
       ])
     },
   }

@@ -271,7 +271,8 @@ test('worktreeSet accepts the real (sanitised) receipt and the probed support co
   await expect(client.worktreeSet({ worktree: 'path:/path/to/repo', status: 'in-progress', comment: receipt.worktree.comment })).resolves.toBeUndefined()
   expect(calls[0]).toEqual(['worktree', 'set', '--worktree', 'path:/path/to/repo', '--comment', 'builder：空闲', '--workspace-status', 'in-progress'])
   // 3C 探针（macOS Orca 1.4.237）：四个状态都能设置并读回，注释多行且至少 5000 字符
-  expect(ORCA_WORKTREE_SUPPORT).toEqual({ workspaceStatus: true, comment: true, commentMax: null })
+  // 3D-1 探针 3（macOS Orca 1.4.237）：--unread / --read 可用，isUnread 可读回
+  expect(ORCA_WORKTREE_SUPPORT).toEqual({ workspaceStatus: true, comment: true, commentMax: null, unread: true })
   expect(['todo', 'in-progress', 'in-review', 'completed']).toContain(receipt.worktree.workspaceStatus)
 })
 
@@ -283,6 +284,22 @@ test('worktreeSet passes --workspace-status and --comment only when given', asyn
   expect(calls[1]).toEqual(['worktree', 'set', '--worktree', 'path:/w', '--comment', 'a\nb', '--workspace-status', 'todo'])
   await expect(client.worktreeSet({ worktree: 'path:/w' })).rejects.toMatchObject({ kind: 'internal' })
   expect(calls).toHaveLength(2)
+})
+
+test('worktreeSet({ unread }) adds --unread / --read and accepts the probed receipt', async () => {
+  const receipt = fixture('worktree-unread')
+  const { client, calls } = clientWith({ 'worktree set': receipt })
+  await client.worktreeSet({ worktree: 'path:/w/a', unread: true })
+  await client.worktreeSet({ worktree: 'path:/w/a', unread: false })
+  expect(calls[0]).toEqual(['worktree', 'set', '--worktree', 'path:/w/a', '--unread'])
+  expect(calls[1]).toEqual(['worktree', 'set', '--worktree', 'path:/w/a', '--read'])
+  expect(receipt.worktree.isUnread).toBe(true)
+})
+
+test('worktreeSet with unread alone is enough; combined with comment / status it still builds one argv', async () => {
+  const { client, calls } = clientWith({ 'worktree set': { worktree: {} } })
+  await client.worktreeSet({ worktree: 'path:/w', unread: true, comment: 'c', status: 'todo' })
+  expect(calls[0]).toEqual(['worktree', 'set', '--worktree', 'path:/w', '--comment', 'c', '--workspace-status', 'todo', '--unread'])
 })
 
 test('workerList tolerates a worker without projection', async () => {

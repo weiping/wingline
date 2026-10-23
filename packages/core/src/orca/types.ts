@@ -120,8 +120,8 @@ export interface OrcaClient {
   check(a: { terminal: string; run: string; ack?: string; wait?: boolean; timeoutMs?: number }): Promise<CheckResult>
   reply(a: { id: string; body: string; run: string; from: string }): Promise<{ messageId: string; duplicate: boolean }>
   workerList(a: { run: string }): Promise<WorkerView[]>
-  /** comment 与 status 至少给一个；缺省的不改。 */
-  worktreeSet(a: { worktree: string; comment?: string; status?: WorkspaceStatus }): Promise<void>
+  /** comment、status、unread 至少给一个；缺省的不改。`unread: true` → `--unread`，`false` → `--read`（标记的是 workspace，不是终端）。 */
+  worktreeSet(a: { worktree: string; comment?: string; status?: WorkspaceStatus; unread?: boolean }): Promise<void>
   /** query 原样作为一个参数（调用方负责加引号实现精确搜索）。 */
   search(a: { query: string; agent: string; environment?: string }): Promise<SearchHit[]>
   /** 在 Orca 内置浏览器里打开一个页面（3B 控制台的 --open）。 */

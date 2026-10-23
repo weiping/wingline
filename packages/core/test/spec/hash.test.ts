@@ -75,6 +75,13 @@ test('final-review I1: a team without a patrol section keeps exactly its 2A-era 
   expect(specHash(loadTeamSpec(mkTeam(DUO_YAML + 'patrol:\n  no_progress_minutes: 20\n')))).toBe(specHash(loadTeamSpec(mkTeam(DUO_YAML))))
 })
 
+test('3D-1: patrol.unread_mark defaults to true and keeps the pinned hash; false changes it', () => {
+  const base = specHash(loadTeamSpec(mkTeam(DUO_YAML)))
+  expect(base).toBe('d6cf0b333ae8418f9fe51eced88cc223e889ebcdf2f6278c633fc37fbb2dc00c')
+  expect(specHash(loadTeamSpec(mkTeam(DUO_YAML + 'patrol:\n  unread_mark: true\n')))).toBe(base)
+  expect(specHash(loadTeamSpec(mkTeam(DUO_YAML + 'patrol:\n  unread_mark: false\n')))).not.toBe(base)
+})
+
 test('final-review I1: a non-default patrol value changes the hash', () => {
   const base = specHash(loadTeamSpec(mkTeam(DUO_YAML)))
   const a = specHash(loadTeamSpec(mkTeam(DUO_YAML + 'patrol:\n  no_progress_minutes: 45\n')))

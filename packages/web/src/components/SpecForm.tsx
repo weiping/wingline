@@ -137,6 +137,7 @@ const PATROL_FLAGS: Array<[string, boolean]> = [
   ['auto_recover', false],
   ['worktree_comment', false],
   ['workspace_status', true],
+  ['unread_mark', true],
 ]
 const BUDGETS: Array<[string, number]> = [
   ['max_gate_failures', 3],
