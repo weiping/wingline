@@ -72,4 +72,7 @@ export const MIGRATIONS: readonly string[] = [
   CREATE TABLE orca_sync (worktree TEXT NOT NULL, team TEXT NOT NULL, status TEXT, comment TEXT, written_at TEXT,
     fail_count INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (worktree, team));
   `,
+  `
+  CREATE TABLE unread_marks (team TEXT NOT NULL, item_key TEXT NOT NULL, marked_at TEXT NOT NULL, PRIMARY KEY (team, item_key));
+  `,
 ]
