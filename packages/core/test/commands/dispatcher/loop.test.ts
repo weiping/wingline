@@ -1,4 +1,5 @@
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { expect, test } from 'vitest'
 import { PATROL_INTERVAL_MS } from '../../../src/commands/dispatcher/advance.js'
@@ -76,6 +77,21 @@ test('the first scan happens one interval after start and only observes; the nex
   expect(w.registry.getPatrolState('duo', 'checker@duo', 'no_progress', id)!.level).toBe(0)
   w.c.advance(PATROL_INTERVAL_MS); await w.once(st)
   expect(w.registry.getPatrolState('duo', 'checker@duo', 'no_progress', id)!.level).toBe(1)
+})
+test('3D-1: the first scan only records attention keys; a later new item marks the lead worktree once', async () => {
+  const w = dsp(); const st = await w.start()
+  const { id } = await w.o.taskCreate({ spec: 's', taskTitle: 't', run: 'run-1', from: 'term-dsp' })
+  w.registry.insertTaskExt({ taskId: id, team: 'duo', tags: [], kind: 'work', claimedBy: 'builder@duo' })
+  await w.o.dispatch({ task: id, to: 'term-gone', from: 'term-dsp' })
+  w.c.advance(PATROL_INTERVAL_MS); await w.once(st)
+  expect(w.registry.listUnreadMarks('duo')).toEqual([`stale:${id}`])
+  expect(w.o.comments.filter((c) => c.unread === true)).toEqual([])
+  w.registry.freezePost({ post: 'checker@duo', team: 'duo', reason: 'patrol: no_progress' })
+  w.c.advance(PATROL_INTERVAL_MS); await w.once(st)
+  w.c.advance(PATROL_INTERVAL_MS); await w.once(st)
+  expect(w.o.comments.filter((c) => c.unread === true)).toEqual([{ worktree: `path:${os.tmpdir()}`, unread: true }])
+  // 巡查自己升起的 dead_assignee 信号也是 wl attention 里的一条，同一批新键只标记一次
+  expect(w.registry.listUnreadMarks('duo').sort()).toEqual(['frozen:checker@duo', `signal:dead_assignee:builder@duo:${id}`, `stale:${id}`])
 })
 test('wall clock running ahead of the monotonic clock is a wake-up; a merely slow round is not', async () => {
   const w = dsp(); const st = await w.start()
