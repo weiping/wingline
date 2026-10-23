@@ -1,5 +1,5 @@
 import {
-  WinglineError, type DoneResult, type DownResult, type PsRow, type RestorePost, type RestoreResult, type SendResultRow, type ShownTask, type StaleItem,
+  WinglineError, type DoneResult, type DownResult, type PsRow, type RestoreAllResult, type RestorePost, type RestoreResult, type SendResultRow, type ShownTask, type StaleItem,
   type TaskRow, type TimelineEvent, type UpResult,
   type AttentionReport, type DispatcherHealth, type DispatcherStatus, type createTask, type escalateTask, type reassignTask, type recoverTask, type resolveGate, type startTask,
 } from '@wingline/core'
@@ -290,6 +290,43 @@ export function renderRestore(r: RestoreResult): string {
     '调度员：', ...dispatcher,
     '任务：', ...tasks,
   ].join('\n') + '\n'
+}
+
+export function renderRestoreAll(r: RestoreAllResult): string {
+  if (r.teams.length === 0) return '没有处于运行状态的团队，无需恢复\n'
+  return r.teams.map((t) => t.result
+    ? renderRestore(t.result)
+    : `团队 ${t.team}\n  失败：${t.error!.code}  ${t.error!.message}${t.error!.hint ? `\n  提示：${t.error!.hint}` : ''}\n`).join('\n')
+}
+
+const quoteWord = (w: string) => (/[\s"']/.test(w) ? JSON.stringify(w) : w)
+
+export function renderAutostartInstall(r: { platform: string; file: string; command: string[]; logPath: string; waitOrca: string }): string {
+  return [
+    `已安装自启动（${r.platform === 'darwin' ? 'macOS launchd' : 'Linux systemd 用户服务'}）`,
+    `  位置：${r.file}`,
+    `  命令：${r.command.map(quoteWord).join(' ')}`,
+    `  登录后最多等 Orca 就绪 ${r.waitOrca}；日志：${r.logPath}`,
+    ...(r.platform === 'darwin' ? ['macOS 上安装即执行一次 wl restore --all，结果见上面的日志。'] : []),
+  ].join('\n') + '\n'
+}
+
+export function renderAutostartUninstall(r: { file: string; removed: boolean }): string {
+  return r.removed ? `已卸载自启动：${r.file}（日志保留）\n` : '没有安装过自启动，无需卸载\n'
+}
+
+export function renderAutostartStatus(r: {
+  installed: boolean; platform: string; user?: string; location: string; command: string[]; commandMissing: string[]
+  logTail: string[]; linger?: boolean; logPath: string
+}): string {
+  const lines = [r.installed ? '自启动：已安装' : '自启动：未安装', `  位置：${r.location}`]
+  if (r.installed) lines.push(`  命令：${r.command.map(quoteWord).join(' ')}`)
+  if (r.commandMissing.length > 0) lines.push(`  ⚠ 命令里的 ${r.commandMissing.join('、')} 已经不存在（Node 路径已变化），请重新执行 wl autostart install`)
+  if (r.platform === 'linux' && r.installed && r.linger === false) {
+    lines.push(`  ⚠ 用户 ${r.user ?? '<user>'} 没有开启 linger：无界面或 SSH 场景需要 loginctl enable-linger ${r.user ?? '<user>'}`)
+  }
+  lines.push(r.logTail.length > 0 ? `日志 ${r.logPath}（最后 ${r.logTail.length} 行）：` : `日志 ${r.logPath}：暂无`, ...r.logTail.map((l) => `  ${l}`))
+  return lines.join('\n') + '\n'
 }
 
 const TASK_OUTCOME = { recovered: '已恢复', queued: '已排队', ready: '本就不该重派', skipped: '未恢复', failed: '恢复失败' } as const
