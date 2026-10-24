@@ -9,6 +9,8 @@ export interface PostSpec {
   agent: string
   model?: string
   launch: string
+  /** Orca 里已配对环境的名字（如 Lima VM）；未写即本机，此时没有这个键，也不进规格哈希。 */
+  environment?: string
   worktree: string
   briefPaths: string[]
   selfClaim: boolean
@@ -209,6 +211,16 @@ function patrolOf(raw: RawTeam['patrol'], platform: NodeJS.Platform, at: Located
   }
 }
 
+const ENVIRONMENT = /^[a-z0-9._-]{1,64}$/
+
+function environmentOf(p: RawTeam['posts'][number], i: number, at: Located): { environment?: string } {
+  if (p.environment === undefined) return {}
+  if (!ENVIRONMENT.test(p.environment)) {
+    at.fail('environment_invalid', ['posts', i, 'environment'], `posts.${i}.environment：只能用小写字母、数字、连字符、下划线和点，1–64 个字符`, '环境名见 orca environment list')
+  }
+  return { environment: p.environment }
+}
+
 function launchOf(p: RawTeam['posts'][number], i: number, at: Located): string {
   if (p.launch) return p.launch
   if (!p.model) return p.agent
@@ -276,6 +288,7 @@ function specFromRaw(raw: unknown, at: Located, abs: string, platform: NodeJS.Pl
       agent: p.agent,
       ...(p.model ? { model: p.model } : {}),
       launch: launchOf(p, i, at),
+      ...environmentOf(p, i, at),
       worktree: p.worktree,
       briefPaths: p.brief.map((b, j) => resolveFile(dir, b, at, ['posts', i, 'brief', j])),
       selfClaim: p.self_claim,

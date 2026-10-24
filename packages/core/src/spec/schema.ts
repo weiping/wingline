@@ -57,6 +57,8 @@ export const postSchema = z
     agent: z.string().min(1),
     model: z.string().min(1).optional(),
     launch: z.string().min(1).optional(),
+    // 格式（小写字母、数字、连字符、下划线、点，1–64 字符）在 load.ts 校验，这样出错时是 environment_invalid 而不是笼统的 spec_invalid
+    environment: z.string().min(1).optional(),
     worktree: z.string().min(1).default('current'),
     brief: z.array(z.string().min(1)).default([]),
     self_claim: z.boolean().default(false),

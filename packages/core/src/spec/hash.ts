@@ -39,6 +39,8 @@ export function specHash(spec: TeamSpec, readFile: (p: string) => Buffer = (p) =
       agent: p.agent,
       model: p.model ?? null,
       launch: p.launch,
+      // 未写 environment 的岗位保持原哈希
+      ...(p.environment !== undefined ? { environment: p.environment } : {}),
       worktree: p.worktree,
       brief: p.briefPaths.map(ref),
       selfClaim: p.selfClaim,

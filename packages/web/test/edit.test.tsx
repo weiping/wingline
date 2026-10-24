@@ -201,6 +201,27 @@ test('the error is shown next to its field (path posts.0.agent)', async () => {
   expect(field.querySelector('[data-path="posts.0.agent"]')).toBeTruthy()
 })
 
+test('3D-2: the post form has an environment field; editing it sends its path and its error is shown next to it', async () => {
+  const s = server({
+    validate: (b) => ({
+      yaml: YAML_TEXT,
+      parsed: PARSED,
+      errors: b.set ? [{ path: ['posts', 0, 'environment'], code: 'environment_invalid', message: 'posts.0.environment：只能用小写字母、数字、连字符、下划线和点', line: 7 }] : [],
+      preview: null,
+    }),
+  })
+  const { container } = render(<Edit team="duo" />)
+  await loaded(container)
+  const input = container.querySelector('[data-path="posts.0.environment"]') as HTMLInputElement
+  expect(input).toBeTruthy()
+  fireEvent.input(input, { target: { value: 'Lima Agent' } })
+  await waitFor(() => expect(s.validates().some((c) => c.body?.set?.path?.join('.') === 'posts.0.environment' && c.body.set.value === 'Lima Agent')).toBe(true))
+  await waitFor(() => {
+    const el = container.querySelector('[data-field="posts.0.environment"]') as HTMLElement
+    expect(within(el).getByText(/只能用小写字母/)).toBeTruthy()
+  })
+})
+
 test('preview lists post changes and commands; closeSuggested shows the --close hint', async () => {
   server({
     validate: (b) => ({

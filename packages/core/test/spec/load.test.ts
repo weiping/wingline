@@ -174,3 +174,26 @@ test('on Windows a .cmd/.bat notify command → notify_command_unsupported', () 
   expect(() => loadTeamSpec(mkTeam(y), { platform: 'win32' })).toThrow(expect.objectContaining({ code: 'notify_command_unsupported' }))
   expect(() => loadTeamSpec(mkTeam(y), { platform: 'linux' })).not.toThrow()
 })
+
+// —— 3D-2：posts[].environment ——
+
+const ENV_YAML = DUO_YAML.replace('    agent: claude\n    model: opus\n', '    agent: claude\n    model: opus\n    environment: lima-agent\n')
+
+test('posts[].environment is read when written and absent from PostSpec when not', () => {
+  expect(ENV_YAML).not.toBe(DUO_YAML)
+  expect(loadTeamSpec(mkTeam(ENV_YAML)).posts[0]!.environment).toBe('lima-agent')
+  expect('environment' in loadTeamSpec(mkTeam(DUO_YAML)).posts[0]!).toBe(false)
+  expect('environment' in loadTeamSpec(mkTeam(ENV_YAML)).posts[1]!).toBe(false)
+})
+
+test.each(['Lima Agent', 'LIMA', 'a/b', 'x'.repeat(65)])('environment %j → environment_invalid (input), not spec_invalid', (bad) => {
+  expect(() => loadTeamSpec(mkTeam(ENV_YAML.replace('lima-agent', `'${bad}'`)))).toThrow(expect.objectContaining({ kind: 'input', code: 'environment_invalid' }))
+})
+
+test.each(['lima-agent', 'vm_1.local', 'a', 'x'.repeat(64)])('environment %j is accepted', (ok) => {
+  expect(loadTeamSpec(mkTeam(ENV_YAML.replace('lima-agent', ok))).posts[0]!.environment).toBe(ok)
+})
+
+test('an empty environment is a schema error (spec_invalid)', () => {
+  expect(() => loadTeamSpec(mkTeam(ENV_YAML.replace('lima-agent', "''")))).toThrow(expect.objectContaining({ code: 'spec_invalid' }))
+})
