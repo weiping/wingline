@@ -805,3 +805,20 @@ WINGLINE_SPIKE_WORKTREE=<专用测试 worktree 选择器> pnpm tsx spikes/worktr
 - 清理：每轮结束 `wl down --close`，终端与 VM 里的 claude 进程均已清空。VM 的 `~/.claude` 里又多了几个会话记录，没有删除。
 - 没有做：搜得到但很慢（3 次都没搜到）的真机、没有同路径挂载的 VM。
 
+## 3D-2（块 c）探针 2（部分）：从 claude 2.1.310 程序本体提取的提示原文（2026-10-24）
+
+**来源与局限**：对本机安装的 `claude`（`~/.local/share/claude/versions/2.1.310`，261 MB 的单文件程序）做只读的字符串搜索，取出界面提示的模板原文。**这不是屏幕截图**：看不到真实画面里的排版、换行、截断和与其它行的相对位置，也不知道提示在什么条件下出现（阈值）。按 spec 的约定属于“文档来源，未截屏”的临时样本，测试名标 `(provisional)`；真实画面样本（`spikes/phase-3d2.ts sample`）仍然需要。其它 agent（Codex 等）没有查。
+
+**上下文**（红色，`wrap: truncate`，在底部状态区）：
+- `Context low (N% remaining) · Run /compact to compact & continue`
+- 关闭自动压缩时没有后缀：`Context low (N% remaining)`；有别的状态文字时后缀换成 `· <那段文字>`。
+- 另有一个**一直显示**的暗色指示器（不是警告）：`N% until auto-compact` 或 `N% context used`。
+- 因此 spec 里猜的 “`Context left until auto-compact: N%`” 是错的，不要照写。`context_low` 的信号应是 `Context low (N% remaining)`；`wrap: truncate` 说明窄面板下只能保证前缀完整，后缀会被截成 `…`（探针 1 补充里已看到 44 列面板截断长行）。
+
+**用量上限**：
+- 模板 `You've hit your ${limitName}${suffix}${" · progress saved"?}`，`limitName` 取 `session limit` / `weekly limit` / `Opus limit` / `Sonnet limit` / `Fable limit` / `usage credit limit`（还有 `You've hit your monthly spend limit`、`You've hit your team's shared budget`、`You're out of usage credits`、`You're out of extra usage`）。`suffix` 里放重置时间等，具体格式没有取到。
+- **2.1.310 有“限额重置后自动继续”**（quota auto-resume）：`Usage limit reached · continuing automatically {when} · esc to cancel`、`Usage limit reached again · continuing automatically {when} · esc to cancel`、`Continuing automatically {when} · esc to cancel`；取消后显示 `Automatic continue cancelled · /rate-limit-options to re-arm`。还有 `/rate-limit-options` 命令（所以限额时弹出选项菜单的猜测有出处）和 `/usage-credits to continue now`。
+- **对 spec 的影响**：第 4.3 节的设计是“到点由雁阵发一行‘继续’”。agent 自己会在重置后继续时，这一行是多余的，甚至可能打断它的倒计时。需要区分：画面上有 `continuing automatically` → 只通知、暂停升级，到点不发“继续”（agent 会自己继续，继续不了再走“没进展”）；有 `Automatic continue cancelled` 或没有自动继续的提示 → 才按原设计到点发“继续”。
+
+**下一步**：块 (c) 的 plan 可以开始写了，但模式表必须以“provisional”标注，并保留用 `sample` 取真实画面后核对的步骤。
+

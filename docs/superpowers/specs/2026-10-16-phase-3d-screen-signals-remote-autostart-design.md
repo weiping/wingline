@@ -71,8 +71,8 @@ plan 按此拆成两份：**3D-1**（块 a + b；探针只有 3 和 6，可立�
 
 | 信号 | 含义 | 提取 | 模式 |
 | --- | --- | --- | --- |
-| `context_low` | 上下文快满 | 剩余百分比（`percent: number \| null`） | 以探针 2 的样本为准。Claude Code 状态栏的 `Context left until auto-compact: N%`（N ≤ 10 成立）是已知形态，仍须样本确认；只有明确的“快满”文字而无数字时也成立，`percent = null` |
-| `usage_limit` | 用量用完 | 重置时间（`resetsAt: Date \| null`） | **待探针 2**：真实措辞与重置后提示是否留屏都未知。模式表不预先写入推测措辞（原稿里的 “usage limit reached … resets” 是推测，不要照写）；没有样本的 agent 不写这一行 |
+| `context_low` | 上下文快满 | 剩余百分比（`percent: number \| null`） | 以探针 2 的样本为准。**2026-10-24 从 claude 2.1.310 程序本体取出的原文**（非截图，见 `spikes/REPORT.md` “3D-2（块 c）探针 2（部分）”）：红色的 `Context low (N% remaining)`，后缀可能是 `· Run /compact to compact & continue` 或别的状态文字；原先猜的 `Context left until auto-compact: N%` 是错的。信号 = 出现 `Context low (N% remaining)`（Claude Code 自己决定何时显示，不再用“N ≤ 10”的阈值）；`wrap: truncate`，窄面板下只能依赖前缀。仍须真实画面样本核对 |
+| `usage_limit` | 用量用完 | 重置时间（`resetsAt: Date \| null`） | **2026-10-24 取得部分原文（非截图）**：`You've hit your <session limit｜weekly limit｜Opus limit｜Sonnet limit｜…>…`；2.1.310 还有“重置后自动继续”（`Usage limit reached · continuing automatically {when} · esc to cancel`、`Automatic continue cancelled · /rate-limit-options to re-arm`），第 4.3 节第 3 步据此调整（见该节）。以下为原稿，**待探针 2**：真实措辞与重置后提示是否留屏都未知。模式表不预先写入推测措辞（原稿里的 “usage limit reached … resets” 是推测，不要照写）；没有样本的 agent 不写这一行 |
 
 - 每个命中同时带 `notice`（命中的那一行原文），用于去重指纹：`noticeHash = sha256(notice).slice(0, 12)`。
 - 同一 `kind` 在窗口内多处命中时**只取最靠近画面底部的一处**（最新的提示）；它的 `noticeHash` 若等于已处理行的 `noticeHash` 则视为同一条，不再触发（第 4.3 节第 5 步）。
@@ -99,7 +99,7 @@ plan 按此拆成两份：**3D-1**（块 a + b；探针只有 3 和 6，可立�
    - 岗位就是牵头岗时只走外部通知与 `wl attention`（2B “不通知自己”）。
    首轮（重启后）只建 level 0 的观察行；下一轮仍在则升到 level 1 并通知。已有的 level 1 行及其 `next_due_at` 从注册表读回，重启不丢失、不重复通知。
 2. **暂停升级**：在 `next_due_at` 之前，该岗位的 `no_progress`、`owner_idle`、`overdue` 三种信号只观察、不升级（level 保持不变，不发提示、不通知、不冻结）；判定放在 `advance.ts` 的 `step()` 里（`isUsagePaused`）。暂停结束后从当前 level 继续，不补发。
-3. **到达 `next_due_at`**（首轮观察期间不做，下一轮再做）：
+3. **到达 `next_due_at`**（首轮观察期间不做，下一轮再做）。**2026-10-24 补充**：claude 2.1.310 自带“限额重置后自动继续”，画面上写着 `continuing automatically …`（取消后为 `Automatic continue cancelled · /rate-limit-options to re-arm`）。画面上有 `continuing automatically` 时 agent 会自己继续，**不发“继续”**（只保留通知与暂停升级，重置后它若没动再走“没进展”）；没有自动继续的提示，或已取消，才按下面的原设计发：
    - **`resetsAt` 已知**：重置时间已过并加了宽限，就视为已重置，**不等待“提示消失”**（限额提示是对话输出，不会自行消失；等它会永远等不到）。经 `typeTo` 发一行“[雁阵] 用量已重置，请继续手上的任务 <id>”（没有在办任务时“…请继续”）。发出（`ok` / `unconfirmed`）→ 清除行并记 `detail.resumedAt = now`；画面不是 `clear` 等原因没发出 → 保留行，下一轮再试，最多 3 轮，仍失败 → 清除行并记事件 `resume_skipped`，不再重试，并按第 1 步的规则通知人一次：“[雁阵] <岗位> 用量应已重置，但画面停在选项 / 确认框上，没有自动继续，请手动处理”（岗位是牵头岗时只走外部通知与 `wl attention`）。限额若以带编号选项的菜单呈现（待探针 2），“继续”不会被发出，正是走这条路径：雁阵不替人选菜单项。“提示是否仍在屏幕上”只写进事件 detail 作参考，不参与决定。
    - **`resetsAt` 未知**（暂停截止是猜的）：若画面上同 `noticeHash` 的提示仍在，延期 1 小时（`detail.extensions += 1`，最多 3 次，对应 2B 的最大退避 4 小时）；提示已消失或延期用尽 → 与上一条相同地发“继续”提示。
 4. **与 `no_progress` 的顺序**：暂停刚结束时，“距上次输出超过 `no_progress_minutes`”往往同一轮就成立，会与“继续”提示一起 nudge。因此每轮先 `advanceScreenSignals`，再 `detectSignals` / `advancePatrol`；`noProgress`（`signals.ts`）的计时起点取 `max(原起点, usage_limit 行的 detail.resumedAt)`，把基线重置到继续提示的时刻。
