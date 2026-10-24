@@ -4,6 +4,8 @@
 
 **Goal:** 写了 `environment` 的岗位接回后，`wl restore` 核对“接回提示”确实落进了要接回的那个会话；落进了别的会话（包装脚本没透传 `--resume`，VM 里起的是全新会话）就报 `uncertain`，不再静默地声称接回成功。
 
+> **状态（2026-10-24）：已实现并在 Lima 真机上验证**（Task 1–3；全量 115 个文件、1598 个用例通过）。真机暴露了标识会重复的缺陷，已改为并入会话标记（`resumeToken`），见 `spikes/REPORT.md` “续二”。
+
 **起因:** 真机反例（`spikes/REPORT.md` “包装脚本不透传参数的反例”）：包装脚本丢掉 `--resume <id>` 时，VM 里起的是同样空闲的全新 claude，`restore` 报“已接回原会话”、退出码 0、岗位 `live`，接回提示落进了新会话。
 
 **Architecture:** 只动 `restore/posts.ts` 的 `settleResume`。远端岗位的接回提示末尾带一个**每次接回唯一**的标识 `WLR-<8 位十六进制>`（由该次接回的请求键哈希得到，重试时不变）；发出后用 `orca search --environment` 按标识搜，看命中它的会话 ID 是不是要接回的那个。

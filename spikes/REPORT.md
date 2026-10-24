@@ -791,3 +791,17 @@ WINGLINE_SPIKE_WORKTREE=<专用测试 worktree 选择器> pnpm tsx spikes/worktr
 
 **可行的检测思路（未实现，需要决定）**：接回提示发出后，用 `orca search --environment <env> "<提示里的独特文字>"` 看命中的会话 ID 是否等于要接回的那个；不等就把岗位记为 `uncertain` 并提示检查包装脚本。代价是多一次远端搜索，且要等索引（本机 `--fresh` 最多等 5 秒）。
 
+### 续二：接回后核对的真机结果（2026-10-24，同一台机器，Lima VM `agent` 里的 claude）
+
+实现见 `docs/superpowers/plans/2026-10-24-phase-3d2d2-verify-remote-resume.md`。同一个脚本跑两种包装脚本：用户自己的 `~/.local/bin/claude-lima`（透传）与 `claude-lima-noargs`（不透传）。
+
+| 包装脚本 | `wl restore` | 耗时 | VM 里的进程参数 |
+| --- | --- | --- | --- |
+| 透传 | `已接回原会话 b63a4341-…`，退出码 0，没有 `注：` | 3.8 秒 | `claude --permission-mode acceptEdits --resume b63a4341-…` |
+| 不透传 | `不确定`：接回提示落进了另一个会话（`f8c02349-…`），不是要接回的 `b45aaa26-…`，很可能没透传 `--resume`；退出码 3 | 5.5 秒 | `claude --permission-mode acceptEdits`（没有 `--resume`） |
+
+- 按标识搜到提示在几秒内就能做到（四次运行的整个 `restore` 都在 6 秒内，含接回、等空闲、发提示与核对），3 次 × 2 秒目前够用；样本只有这几次，没有测慢索引的情形。
+- **一个设计缺陷被真机暴露并修了**：第一版标识只由 (团队, 岗位, 代数) 的请求键哈希得到。第二轮测试换了注册表（同名团队），标识撞了，报告里“落进的会话”指向了上一轮留在 VM 里的老会话 `fe2056e5-…`，判对只是运气（新会话的提示还没索引到）；反过来，要接回的会话里若残留同样的标识会误判为通过。已改为并入会话标记（`resumeToken`），复测后落点指向这次新起的会话。
+- 清理：每轮结束 `wl down --close`，终端与 VM 里的 claude 进程均已清空。VM 的 `~/.claude` 里又多了几个会话记录，没有删除。
+- 没有做：搜得到但很慢（3 次都没搜到）的真机、没有同路径挂载的 VM。
+

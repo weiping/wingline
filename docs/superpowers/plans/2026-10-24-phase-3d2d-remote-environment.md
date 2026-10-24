@@ -235,5 +235,5 @@ test('remote post: dry-run reports resumed without creating a terminal', async (
 
 - [ ] 在 VM 里启动一个带标记的 claude 会话（用 `wl up` 起一个 `environment: lima-agent` 的岗位，`launch` 指向透传参数的包装脚本），确认岗位上线、启动包送达。
 - [ ] 模拟重启（关掉岗位终端），`wl restore <team> --dry-run`：显示 `resumed` 与会话 ID；再 `wl restore <team>`：新终端里执行 `<launch> --resume <id>`，岗位收到接回提示，`wl ps` 为 `live`。
-- [x] 把 `launch` 换成不透传参数的包装脚本再试一次（2026-10-24 已做）。**原先写的预期“应停在 `uncertain`”是错的**：参数被丢掉后，VM 里起的是一个全新但同样空闲的 claude，`wl restore` 报“已接回原会话”、退出码 0、岗位 `live`、会话 ID 已缓存，接回提示落进了新会话。静默的上下文丢失，雁阵检测不到；README 已改写。结果见 `spikes/REPORT.md`。
+- [x] 把 `launch` 换成不透传参数的包装脚本再试一次（2026-10-24 已做）。**原先写的预期“应停在 `uncertain`”是错的**：参数被丢掉后，VM 里起的是一个全新但同样空闲的 claude，`wl restore` 报“已接回原会话”、退出码 0、岗位 `live`、会话 ID 已缓存，接回提示落进了新会话。静默的上下文丢失；后来已加核对（见 `2026-10-24-phase-3d2d2-verify-remote-resume.md`）。结果见 `spikes/REPORT.md`。
 - [ ] 结果记入 `spikes/REPORT.md`（“3D-2 远端环境真机验证”），并在本 plan 顶部写明状态。
