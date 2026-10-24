@@ -6,7 +6,7 @@ Wingline adds a team layer to Orca: a declarative team spec, long-lived posts (`
 
 雁阵在 Orca 之上加一层“常驻团队”：用一份 `team.yaml` 描述团队，每个岗位是一个常驻的 Orca 终端；任务在岗位之间流转，完成时自动跑质量闸门、自动派出评审；调度员替你盯着团队，转述岗位的提问、发现卡住的任务并逐级提醒。
 
-> 状态：阶段 0–1（团队与岗位）、阶段 2A（任务工作流）、阶段 2B（调度员与巡查）、阶段 3A（重启恢复与审计时间线）、阶段 3B（本地控制台）已完成；3C（团队编辑器 / Orca 界面同步 / `wl tui`）及后续阶段见[设计总纲](docs/superpowers/specs/2026-10-10-wingline-design.md)。
+> 状态：阶段 0–1（团队与岗位）、阶段 2A（任务工作流）、阶段 2B（调度员与巡查）、阶段 3A（重启恢复与审计时间线）、阶段 3B（本地控制台）、阶段 3C（团队编辑器 / Orca 界面同步 / `wl tui`）已完成；阶段 3D 已实现登录后自动恢复（`wl restore --all` / `wl autostart`）、未读标记与远端环境（Lima 等）的会话恢复，读画面的巡查信号（上下文快满、用量上限）及后续阶段见[设计总纲](docs/superpowers/specs/2026-10-10-wingline-design.md)。
 
 ## 功能
 
@@ -64,6 +64,8 @@ wl down duo --close                # 停止团队并关闭终端
 `wl send` 返回退出码 3（`send_unconfirmed`）表示消息已输入但没观察到对方开始处理，常见于岗位正忙。先看对方终端；要确认是否送达而不重复发送，用错误提示里的命令：`wl send <地址> <同一条消息> --retry-request <Orca 请求 ID>`。
 
 所有命令支持 `--json`。退出码：0 成功；1 输入有误；2 Orca 明确报错；3 结果不确定（不会自动重发或关闭）；4 内部错误。
+
+> **在 Orca 自己的终端里运行 `wl up`**（比如在 Orca 里开的 Claude Code 里）：Orca 会把调用者认成那个终端，报 `This terminal is attested as … and cannot act as …`，Run 建不出来。先去掉三个身份变量再运行：`env -u ORCA_TERMINAL_HANDLE -u ORCA_AGENT_LAUNCH_TOKEN -u ORCA_AGENT_LAUNCH wl up teams/duo/team.yaml`。岗位终端里的 agent 执行 `wl` 不受影响（那正是隐式身份解析要用的）。
 
 ## 用例
 
