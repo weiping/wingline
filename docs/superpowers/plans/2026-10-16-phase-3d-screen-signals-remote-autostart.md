@@ -25,9 +25,9 @@ Windows 自启动单列，等探针 5。
 
 | 任务 | 内容 | 探针 |
 | --- | --- | --- |
-| A | 探针 1、2、4：`terminal read` 窗口、真实限额 / 上下文措辞与是否阻塞菜单、`--environment` 命中的 `snippet` / `cwd`；样本与回执入库。脚本 `spikes/phase-3d2.ts`（`read` / `sample` / `remote`）已写好；**探针 1 已跑完（成立）**，探针 2、4 待真机素材 | 真机 |
+| A | 探针 1、2、4：`terminal read` 窗口、真实限额 / 上下文措辞与是否阻塞菜单、`--environment` 命中的 `snippet` / `cwd`；样本与回执入库。脚本 `spikes/phase-3d2.ts`（`read` / `sample` / `remote`）已写好；**探针 1 已跑完（成立，含真实 Claude Code 画面）、探针 4 已跑完（成立：远端命中带 snippet）**，探针 2 仍缺“上下文快满 / 用量上限”真实画面 | 真机 |
 | B | `screen/patterns.ts`（迁入 2A 的 `at_prompt` / `shell` 判定）与 `screen/reset-time.ts`；`detectScreen(agent, text, now)` | A 之后 |
 | C | `OrcaClient.terminalRead`、`READ_ONLY_CALLS`、FakeOrca；`scan()` 每轮读存活岗位画面进 `previews`，`quietScreens` 优先取它 | 探针 1 |
 | D | 迁移 `patrol_state.detail`；`ScreenSignalKind`；`screen-signals.ts`（`advanceScreenSignals`、`isUsagePaused`）；`advance.ts` 暂停判定；`registry` 跳过画面信号；`signals.ts` 的 `noProgress` 基线；修 `server/api-read.ts:138`（岗位详情的信号恒为空） | B、C |
 | E | 展示：`AttentionReport.signals` 带 `summary` / `detail`；3C 注释标记与同级取舍；控制台收件箱、岗位详情、TUI 收件箱 | D |
-| F | 远端环境：字段与校验、哈希、`SpecForm.tsx`、`findSession` / `restorePost` 传参、README；自动搜索（探针 4 成立时） | 探针 4 仅限自动搜索 |
+| F | 远端环境：字段与校验、哈希、`SpecForm.tsx`、`findSession` / `restorePost` 传参、README；自动搜索（探针 4 已成立，可做；`FakeOrca.search` 带 `environment` 时改为带 snippet） | 探针 4 已完成 |

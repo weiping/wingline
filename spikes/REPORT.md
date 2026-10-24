@@ -734,3 +734,29 @@ WINGLINE_SPIKE_WORKTREE=<专用测试 worktree 选择器> pnpm tsx spikes/worktr
 - `wl restore --all --wait-orca 2m --actor autostart`：约 51 秒（含 30 秒的终端列表稳定等待）。两个岗位 `新起`（占位进程没有会话可接，上下文已丢失，符合预期）、Run 重新认领、调度员已重启，退出码 0。
 - `wl log duo --source command`：多出一行 `restore`，**执行者为 `autostart`**，且只有一行；手动执行（不带 `--actor`）仍按原规则解析执行者。
 - 验证结束后 `wl dispatcher down --close`、`wl down --close`，终端全部关闭。
+
+## 3D-2 探针 1（补充）与探针 4（2026-10-24，macOS，Orca 1.4.237，claude 2.1.x）
+
+### 探针 1 补充：真实 Claude Code 全屏画面的 `terminal read --screen --limit 40`
+
+对象是当前正在用的 Claude Code 会话终端（只读，原始画面只留在本地临时目录，**不入库**，里面有对话内容）。
+
+- `source: "screen"`，`returnedLineCount = 29`（面板高度），`limited: false`：全屏 TUI 也能读到渲染后的画面，不是被重绘搅乱的碎片。
+- 画面结构（自上而下）：对话正文若干行（`⏺`、`⎿` 开头的工具调用与输出）→ 一行 `● high · /effort` → 分隔线 `────…` → 输入框 `❯` → 分隔线 → **两行底部状态**：自定义 statusline（本机是 `context-mode  ●  … this chat  ·  …`）与模式行 `⏵⏵ accept edits on (shift+tab to cycle)`。**底部状态栏确实出现在 `tail` 的最后几行**，所以“信号只看最后 N 行”的方案成立；窗口（40 行）里还混着大量对话正文，模式必须锚定状态栏格式（spec 第 4.1 节）。
+- **面板宽度会截断长行**：这次面板只有 44 列，长的状态行被截成 `…`（例如 `context-mode  ●  192 KB this chat  ·  5…`）。窄面板下 “Context left until auto-compact: N%” 这类较长的文字有可能被截断，模式不能依赖行尾内容；这是探针 2 要用真实样本确认的风险。
+- 用户可以自定义 statusline，所以底部第一行不是固定格式，不能把它当作 Claude Code 的标准输出来匹配。
+- **仍未取得**：真正出现“上下文快满”或“用量上限”时的画面（无法主动触发）。探针 2 保持待办：在画面出现时用 `spikes/phase-3d2.ts sample <handle> <样本名>` 存样本。
+
+### 探针 4：`orca search --environment` 的命中
+
+本机有一个已配对的环境 `lima-agent`（`ssh-tunnel`，`ws://127.0.0.1:16768`，即 Lima VM 里的 Orca server）。`spikes/phase-3d2.ts remote lima-agent the claude`，再与本机同一查询对比。
+
+**实测结论：成立（与 3A 的结论相反）**
+- 远端命中 15 条，与本机命中的会话 ID **零重叠**，确实是 VM 里的会话。
+- 15/15 条**带 `evidence.snippet`**（68–132 字符），且都含 `[[…]]` 高亮，形态与本机一致——3A 记录的“`--environment` 命中扣留 snippet（`snippet` 为 null）”在 1.4.237 上不再成立（可能是版本差异，3A 当时的环境未核实）。
+- 命中字段：`agent, branch, cwd, evidence{role,snippet,timestamp}, messageCount, score, sessionId, source, title, updatedAt`；**没有 `resumeCommand`**（0/15；本机 19/20 有）。雁阵从不使用它，只用 `sessionId`，不受影响。
+- `cwd` 全是 `/Users/liuweiping/workspace/dev/wingline`——**宿主机的路径**，因为 Lima 默认把宿主的 home 以同样的路径挂进 VM。所以在这种配置下，现有的“`cwd` 与岗位 worktree 路径相同”规则对远端也成立。**没有挂载同路径的 VM 里 `cwd` 会是 VM 内路径**，本机无法验证，3D-2 要保守处理（不放松整串高亮这一道）。
+- 引号包起来的 `"WLS-"`（部分 token）在远端返回 0 条，没有因为部分 token 召回而误命中。
+- **没有做的**：用真实标记（`WLS-xxxxxxxx`）在 VM 的会话里搜一次完整的恢复流程（需要在 VM 里放一个带标记的会话）。
+
+**据此的改动**：spec 第 5.3 节自动搜索不再降级为“只支持 `--session`”，可以做；`FakeOrca.search` 带 `environment` 时默认 `snippet: null` 的假设要改成带 snippet（3D-2 的 Task F）。

@@ -56,7 +56,7 @@ plan 按此拆成两份：**3D-1**（块 a + b；探针只有 3 和 6，可立�
 | 1 | `terminal show` 的 `preview` 真实窗口；`orca terminal read --terminal <h> --screen --limit N` 能否稳定拿到状态栏与限额行 | 实测 `preview` 只有末尾约 300 字符、首行被截断（`spikes/out/session-id/{darwin,linux}/terminal-show.json`、`spikes/out/explore/linux/show.json` 长度均为 300；REPORT.md:448、491）。`--screen` 已在 `test/live/duo.live.test.ts:79` 使用，`--limit` 未验证。默认流式输出会被 TUI 重绘搅乱，必须带 `--screen`。**2026-10-23 已在真机核实**（普通命令行输出，macOS）：`--screen --limit 8/40/80` 恰好返回最后 N 行，上限为渲染出的屏幕行数（实测 80），文本在回执的 `terminal.tail`（行数组），`source` 为 `screen`；`preview` 只有 53 字符 / 6 行。全屏 TUI 的状态栏是否出现在 `tail` 里待探针 2，见 `spikes/REPORT.md` “3D-2 探针 1” | 第 4.2 节读取方式；块 (c) 能否开工 | `terminal read` 也读不到所需行数 → 块 (c) 整体搁置，不拿 300 字符窗口硬凑 |
 | 2 | Claude Code / Codex“上下文将满”“用量上限”的真实措辞；限额重置后提示是否仍留在屏幕上；**用量上限是普通文字，还是带编号选项的阻塞菜单**（此时 `screenGuard` 会判成什么） | 仅有推测措辞，没有样本 | 模式表内容；第 4.3 节第 3 步的分支（限额以菜单呈现时“继续”发不出去，走该步的放弃分支） | 抓不到的 agent / 信号不写模式行；用文档原文做样本时在文件头注明“文档来源，未截屏”，对应测试名标 `(provisional)` |
 | 3 | `worktree set --unread` / `--read` 的行为；Orca 红点何时自动清除；写 `--comment` / `--workspace-status` 是否改变未读状态 | 引自复审对 `orca worktree set --help` 的转述（`--unread\|--read`，“Mark the workspace unread in the sidebar”）；仓库内无记录 | 第 6 节的写入顺序与“已标记过”的含义 | 不起作用 → `ORCA_WORKTREE_SUPPORT.unread = false`，`wl attention` 告警提示一次“Orca 不支持未读标记” |
-| 4 | `orca search --environment <env>` 的命中是否带 `snippet` / `cwd`，`cwd` 是 VM 内路径还是空 | `--environment` 命中扣留 evidence（`snippet` 为 null，REPORT.md:468）；`cwd` 形态未知 | 第 5.3 节自动搜索是否可做 | 无 `snippet` → 不做自动搜索，只支持 `--session`（第 5.2 节即最终形态） |
+| 4 | `orca search --environment <env>` 的命中是否带 `snippet` / `cwd`，`cwd` 是 VM 内路径还是空 | `--environment` 命中扣留 evidence（`snippet` 为 null，REPORT.md:468）；`cwd` 形态未知。**2026-10-24 已在真机重新核实（Orca 1.4.237，已配对环境 `lima-agent`）：结论与 3A 相反**——15/15 条命中带 `snippet`（含 `[[…]]` 高亮）、无 `resumeCommand`，`cwd` 是宿主机路径（Lima 默认把 home 以同样路径挂进 VM）；没有同路径挂载的 VM 里 `cwd` 形态仍未验证。见 `spikes/REPORT.md` “3D-2 探针 4” | 第 5.3 节自动搜索是否可做 | 无 `snippet` → 不做自动搜索，只支持 `--session`（第 5.2 节即最终形态） |
 | 5 | Windows：`schtasks /TR` 的长度上限（Windows 文档称 261 字符，未验证）；`/SC ONLOGON` 是否需要管理员 | 未验证 | 第 7.2 节 Windows 一行 | Windows 返回 `autostart_unsupported`，README 给手工做法 |
 | 6（补充） | Orca 启动后终端列表需要多久才稳定（重启后 Orca 会重新纳管并重新拉起终端，REPORT.md:152） | **2026-10-23 已量**（macOS，Orca 1.4.237，一次运行，5 个终端）：重启后约 11 秒不可达，可达后 28 秒终端数才从 2 → 1 → 2 → 3 稳定（平台期最长约 15 秒），重启前 5 个、重启后只剩 3 个。见 `spikes/REPORT.md` “3D-1 探针 6” | 第 7.1 节 `--wait-orca` 的稳定判据常量 | 间隔 10 秒、连续 4 次相同（要求稳定 30 秒，约为实测平台期的两倍）；README 说明可手动重跑 |
 
@@ -154,7 +154,7 @@ posts:
 ### 5.3 自动搜索（待探针 4）
 
 - **原稿（`cwd` 为空即保留、只凭标记判断）作废。** 3A 探针证明 `orca search` 加引号也会按部分 token 召回（REPORT.md:468），所以 `find-session.ts` 有第三道闸 `markerHighlighted(h.snippet, marker)`；而 `--environment` 命中扣留 `snippet`，`markerHighlighted(null)` 一律拒绝——按原稿写，远端命中恒被拒，“cwd null kept”的测试也通不过。
-- 若探针 4 显示 `--environment` 命中带 `snippet`：搜索加 `--environment <env>`（`OrcaClient.search` 已支持该参数），第三道闸原样适用；`cwd` 规则按探针记录的形态定（空 / VM 内路径是否放行），但始终不放松整串高亮这一道。
+- **探针 4 已显示 `--environment` 命中带 `snippet`（2026-10-24）**：搜索加 `--environment <env>`（`OrcaClient.search` 已支持该参数），第三道闸原样适用；`cwd` 规则按探针记录的形态定（空 / VM 内路径是否放行），但始终不放松整串高亮这一道。
 - 若无 `snippet`：不做自动搜索，第 5.2 节就是最终形态。
 - `FakeOrca.search` 对带 `environment` 的查询默认 `snippet: null`（与真机一致），否则单测假绿。
 
