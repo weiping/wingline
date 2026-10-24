@@ -2,7 +2,7 @@ import path from 'node:path'
 import { WinglineError } from '../../errors.js'
 import { ORCA_WORKTREE_SUPPORT } from '../../orca/client.js'
 import type { WorkspaceStatus } from '../../orca/types.js'
-import type { DoneVerdictRow, OrcaSyncRow, PatrolSignal, PostRow, TeamRow } from '../../registry/registry.js'
+import type { DoneVerdictRow, OrcaSyncRow, PatrolSignal, PostRow, ScreenSignalKind, TeamRow } from '../../registry/registry.js'
 import { loadTeamSpec, type TeamSpec } from '../../spec/load.js'
 import { plainText } from '../../view/plain-text.js'
 import type { CommandDeps } from '../deps.js'
@@ -17,7 +17,7 @@ const COMMENT_MAX = 500
 const MAX_FAILS = 3
 const PRIORITY: Record<WorkspaceStatus, number> = { 'in-review': 3, 'in-progress': 2, todo: 1, completed: 0 }
 
-export const SIGNAL_LABEL: Record<PatrolSignal, string> = {
+export const SIGNAL_LABEL: Record<PatrolSignal | ScreenSignalKind, string> = {
   no_progress: '无进展',
   waiting_approval: '等待批准',
   waiting_answer: '等待回答',
@@ -28,6 +28,8 @@ export const SIGNAL_LABEL: Record<PatrolSignal, string> = {
   bypassed: '绕过流程',
   call_uncertain: '调用结果不确定',
   gate_streak: 'gate 连续失败',
+  context_low: '上下文快满',
+  usage_limit: '用量用完',
 }
 
 const TASK_LABEL: Partial<Record<TaskRow['status'], string>> = { dispatched: '进行中', ready: '排队', blocked: '阻塞' }
@@ -73,7 +75,7 @@ function currentTask(p: { address: string; handle: string | null }, tasks: TaskR
 const flat = (s: string) => plainText(s).replace(/[\r\n\t]+/g, ' ')
 
 /** 一个岗位在注释里的一行；任务标题是外部文本，先剥控制字符、折成一行。 */
-export function postLine(id: string, task: TaskRow | null, flags: { signal: PatrolSignal | null; frozen: boolean }): string {
+export function postLine(id: string, task: TaskRow | null, flags: { signal: PatrolSignal | ScreenSignalKind | null; frozen: boolean }): string {
   const head = task ? `${id}：${flat(task.title)}（${TASK_LABEL[task.status] ?? task.status}，第 ${task.epoch + 1} 轮）` : `${id}：空闲`
   return `${head}${flags.signal ? ` ⚠ ${SIGNAL_LABEL[flags.signal]}` : ''}${flags.frozen ? ' ❄ 已冻结' : ''}`
 }

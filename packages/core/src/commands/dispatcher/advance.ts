@@ -1,5 +1,5 @@
 import { WinglineError } from '../../errors.js'
-import type { PatrolSignal, PatrolStateRow, TeamRow } from '../../registry/registry.js'
+import { isScreenSignal, type PatrolSignal, type PatrolStateRow, type TeamRow } from '../../registry/registry.js'
 import type { TeamSpec } from '../../spec/load.js'
 import type { CommandDeps } from '../deps.js'
 import { doneTask } from '../task/done.js'
@@ -192,7 +192,8 @@ export async function advancePatrol(
   const rows = new Map(deps.registry.listPatrolState(ctx.team.name).map((r) => [keyOf(r.post, r.signal, r.taskId), r]))
   const hitKeys = new Set(hits.map((h) => keyOf(h.post, h.signal, h.taskId)))
   for (const [k, r] of rows) {
-    if (!r.clearedAt && !hitKeys.has(k)) await clearRow(e, r)
+    // 画面信号（context_low / usage_limit）由 screen-signals.ts 推进，detectSignals 永远不会产生它们——不跳过的话每轮都会被清掉
+    if (!r.clearedAt && !hitKeys.has(k) && !isScreenSignal(r.signal)) await clearRow(e, r)
   }
   for (const h of hits) {
     try {

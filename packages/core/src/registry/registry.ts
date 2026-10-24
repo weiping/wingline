@@ -149,10 +149,18 @@ const logRow = (r: Row): TaskLogRow => ({
 export type PatrolSignal =
   | 'no_progress' | 'waiting_approval' | 'waiting_answer' | 'dead_assignee' | 'owner_idle'
   | 'overdue' | 'done_unfinished' | 'bypassed' | 'call_uncertain' | 'gate_streak'
+/**
+ * 读画面得到的信号（3D）。**不并入 PatrolSignal**：它们没有梯子，由 screen-signals.ts 单独推进；
+ * 并进去会让 LADDERS 和 noticeBody 的穷举全部要改，还会被 advancePatrol 的清除循环当成“本轮没命中”每轮清掉。
+ */
+export type ScreenSignalKind = 'context_low' | 'usage_limit'
+export const SCREEN_SIGNAL_KINDS: readonly ScreenSignalKind[] = ['context_low', 'usage_limit']
+export const isScreenSignal = (s: string): s is ScreenSignalKind => (SCREEN_SIGNAL_KINDS as readonly string[]).includes(s)
+
 export interface PatrolStateRow {
   team: string
   post: string
-  signal: PatrolSignal
+  signal: PatrolSignal | ScreenSignalKind
   taskId: string
   level: number
   since: string
@@ -161,6 +169,8 @@ export interface PatrolStateRow {
   notifyCount: number
   nextDueAt: string | null
   clearedAt: string | null
+  /** 画面信号的附加信息（JSON 对象）：百分比、重置时间、noticeHash、延期次数、resumedAt 等；普通信号为 null。 */
+  detail?: Record<string, unknown> | null
 }
 export interface FrozenRow {
   post: string
@@ -212,7 +222,7 @@ const orcaSyncRow = (r: Row): OrcaSyncRow => ({
 const patrolRow = (r: Row): PatrolStateRow => ({
   team: r.team as string,
   post: r.post as string,
-  signal: r.signal as PatrolSignal,
+  signal: r.signal as PatrolSignal | ScreenSignalKind,
   taskId: r.task_id as string,
   level: r.level as number,
   since: r.since as string,
@@ -221,6 +231,7 @@ const patrolRow = (r: Row): PatrolStateRow => ({
   notifyCount: r.notify_count as number,
   nextDueAt: r.next_due_at as string | null,
   clearedAt: r.cleared_at as string | null,
+  detail: r.detail === null || r.detail === undefined ? null : (JSON.parse(r.detail as string) as Record<string, unknown>),
 })
 
 const frozenRow = (r: Row): FrozenRow => ({
@@ -667,7 +678,7 @@ export class Registry {
 
   // —— 阶段 2B：巡查状态、冻结、静默、游标、提问、巡查事件 ——
 
-  getPatrolState(team: string, post: string, signal: PatrolSignal, taskId: string): PatrolStateRow | null {
+  getPatrolState(team: string, post: string, signal: PatrolSignal | ScreenSignalKind, taskId: string): PatrolStateRow | null {
     const r = this.db.prepare('SELECT * FROM patrol_state WHERE team = ? AND post = ? AND signal = ? AND task_id = ?').get(team, post, signal, taskId) as Row | undefined
     return r ? patrolRow(r) : null
   }
@@ -679,17 +690,18 @@ export class Registry {
   putPatrolState(s: PatrolStateRow): void {
     this.db
       .prepare(
-        `INSERT INTO patrol_state(team, post, signal, task_id, level, since, level_at, last_nudged_at, notify_count, next_due_at, cleared_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO patrol_state(team, post, signal, task_id, level, since, level_at, last_nudged_at, notify_count, next_due_at, cleared_at, detail)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(team, post, signal, task_id) DO UPDATE SET level = excluded.level, since = excluded.since, level_at = excluded.level_at,
-           last_nudged_at = excluded.last_nudged_at, notify_count = excluded.notify_count, next_due_at = excluded.next_due_at, cleared_at = excluded.cleared_at`,
+           last_nudged_at = excluded.last_nudged_at, notify_count = excluded.notify_count, next_due_at = excluded.next_due_at, cleared_at = excluded.cleared_at,
+           detail = excluded.detail`,
       )
-      .run(s.team, s.post, s.signal, s.taskId, s.level, s.since, s.levelAt, s.lastNudgedAt, s.notifyCount, s.nextDueAt, s.clearedAt)
+      .run(s.team, s.post, s.signal, s.taskId, s.level, s.since, s.levelAt, s.lastNudgedAt, s.notifyCount, s.nextDueAt, s.clearedAt, s.detail ? JSON.stringify(s.detail) : null)
   }
 
-  /** unfreeze 用：该岗位所有巡查行回到 level 0 并标记已清除（spec 第 7 节）。 */
+  /** unfreeze 用：该岗位所有巡查行回到 level 0 并标记已清除（spec 第 7 节）。画面信号的行不动：解冻不该清掉用量暂停，也不该在提示仍留屏时让它重新通知一次。 */
   resetPatrolForPost(post: string, at: string): void {
-    this.db.prepare('UPDATE patrol_state SET level = 0, cleared_at = ?, last_nudged_at = NULL WHERE post = ?').run(at, post)
+    this.db.prepare("UPDATE patrol_state SET level = 0, cleared_at = ?, last_nudged_at = NULL WHERE post = ? AND signal NOT IN ('context_low', 'usage_limit')").run(at, post)
   }
 
   freezePost(a: { post: string; team: string; reason: string; signal?: string | null }): void {

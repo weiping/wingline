@@ -63,9 +63,9 @@ test('an unparsable verdict result does not count as in-review', () => {
   expect(postWorkspaceStatus(builder, reviewTasks, () => sentForReview('builder@duo', null))).toBe('completed')
 })
 
-test('SIGNAL_LABEL names every patrol signal', () => {
+test('SIGNAL_LABEL names every patrol signal and the two screen signals', () => {
   expect(Object.keys(SIGNAL_LABEL).sort()).toEqual([
-    'bypassed', 'call_uncertain', 'dead_assignee', 'done_unfinished', 'gate_streak', 'no_progress', 'overdue', 'owner_idle', 'waiting_answer', 'waiting_approval',
+    'bypassed', 'call_uncertain', 'context_low', 'dead_assignee', 'done_unfinished', 'gate_streak', 'no_progress', 'overdue', 'owner_idle', 'usage_limit', 'waiting_answer', 'waiting_approval',
   ])
   expect(SIGNAL_LABEL.no_progress).toBe('无进展')
 })

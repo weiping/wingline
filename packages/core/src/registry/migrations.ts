@@ -75,4 +75,7 @@ export const MIGRATIONS: readonly string[] = [
   `
   CREATE TABLE unread_marks (team TEXT NOT NULL, item_key TEXT NOT NULL, marked_at TEXT NOT NULL, PRIMARY KEY (team, item_key));
   `,
+  `
+  ALTER TABLE patrol_state ADD COLUMN detail TEXT;
+  `,
 ]
