@@ -1,4 +1,6 @@
 import os from 'node:os'
+import path from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { afterEach, beforeEach, expect, test } from 'vitest'
 import { attention, warningsOf } from '../../../src/commands/dispatcher/attention.js'
 import { attentionKeys, markUnread } from '../../../src/commands/dispatcher/unread.js'
@@ -203,7 +205,13 @@ test('the give-up warning does not depend on how many events were written after 
   const w = world()
   w.failNext(3)
   for (let i = 0; i < 3; i++) await w.mark(snapWith({ stale: [stale('t1')] }))
-  for (let i = 0; i < 2500; i++) w.registry.appendPatrolEvent({ team: 'duo', action: 'scan', outcome: 'ok' })
+  // 逐条 appendPatrolEvent 写 2500 次在 Windows 上要几十秒（每次落盘），所以走同一个库文件、在一个事务里批量插入
+  const raw = new DatabaseSync(path.join(w.home, 'state.db'))
+  raw.exec('BEGIN')
+  const insert = raw.prepare("INSERT INTO patrol_events(team, at, action, outcome) VALUES ('duo', ?, 'scan', 'ok')")
+  for (let i = 0; i < 2500; i++) insert.run(new Date(i).toISOString())
+  raw.exec('COMMIT')
+  raw.close()
   expect(warningsOf(w.deps, 'duo', w.ctx().spec).some((x) => x.includes('未读标记连续'))).toBe(true)
 })
 
