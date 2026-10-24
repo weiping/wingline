@@ -10,7 +10,15 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-16-phase-3c-editor-sync-tui-design.md`（下称 spec）。
 
-> **状态（2026-10-22）：未开始。** 依赖的 3A、3B 已实现并合并。2026-10-21 复审指出的 5 处前提失效与 2026-10-22 复审的补充，已并入 spec 正文与本计划各 Task，不再需要另行对照。
+> **状态（2026-10-23）：已实现。** 合并于 PR #11（`b071e35`，分支 `worktree-phase-3c-editor-sync-tui`）；实施前的文档复审合并于 PR #10（`d02f83f`，2026-10-21 复审的 5 处前提失效与 2026-10-22 的补充已并入 spec 与本计划）。Task 1–9 的提交信息与本计划一致，依次为 `17e2074`、`f47fa47`、`562012c`、`2e6a67f`、`0a4da0b`、`80d18d7`、`5a25d3a`、`d7ea7e2`、`d1eee45`。验证：`pnpm typecheck` 通过；PR #11 合并时 `vitest` 105 个文件 / 1450 条通过，`pnpm build` 通过，`pnpm test:e2e` 3/3 通过；2026-10-23 在 main 上复核为 107 个文件 / 1465 条通过（8 条按设计跳过）。
+>
+> 与计划正文的差异（正文不再逐项改写，按提交对照）：
+>
+> - **Task 1**：探针脚本先提交（`17e2074`，当时未跑真机，`ORCA_WORKTREE_SUPPORT` 暂按“不支持工作区状态”处理）；真机结论在 `c319150`（macOS，Orca 1.4.237）：`--workspace-status` 成立，`--comment` 支持多行、至少 5000 字符，最终值 `{ workspaceStatus: true, comment: true, commentMax: null }`，回执存 `test/fixtures/receipts/worktree-set.json`。另发现 `--comment ""` 被 Orca CLI 忽略，不能用空串清空注释。
+> - **Task 6**：计划之外多了两项——两个团队共用一个 worktree 时，写给 Orca 的是并上其他在运行团队最近值之后的结果（状态取最高优先级，注释行加 `[团队名]` 前缀，`2dd530a`）；`wl task dispatch` 与 `wl task done` 之后立即调 `syncWorktreeForPost`，不等下一轮巡查（`4f1c62f`）。两项已回写 spec。
+> - **Task 8**：TUI 实际拆成 `command.ts`、`items.ts`、`reduce.ts`、`render.ts`、`text.ts`、`types.ts`，`reduce` 与 `renderView` 分别在 `reduce.ts`、`render.ts`；接口签名不变。
+> - **复审与修订**：作者自评一轮——表单写回按 AST 位置做文本手术（`8d275e1`）、`runTui`/`useEditor`/`Editor` 拆到 50 行内（`3d89f77`）、五个延后小问题（`6bccd3f`）；独立评审（只读、全分支）0 个 Critical、5 个 Important（`122a55e`）、9 个 Minor（`ba70c1e`），均已修复并各有失败在先的测试。
+> - **真机验证**：调度员状态同步与 `wl tui` 对活团队、真实 claude / codex 的完整工作流、共用 worktree、权限确认框信号与同步延迟，记录在 `spikes/REPORT.md`（`a36d0f1`、`de967b0`、`44a8870`、`021eee3`、`d300cb5`），Task 9 的真机用例随 `d1eee45`、`e660846` 落地。Windows 终端的交互没有做真机验证；Windows CI 上的六处用例差异在 `ee34eee` 修复。
 
 ## Global Constraints
 
@@ -73,9 +81,9 @@
 
 > 需要真机。沙箱里无法完成时写好脚本、报告 NEEDS_CONTEXT；Task 2–9 不依赖结论（Task 6 的状态参数默认按 spec 写作 `--workspace-status`，`ORCA_WORKTREE_SUPPORT` 默认 `{ workspaceStatus: false, comment: true, commentMax: null }`，以探针结论为准在 Task 6 修正）。
 
-- [ ] **Step 1: 写探针**：在一个测试 worktree 上依次设置四种状态并 `worktree show --json` 读回；写入 3 行、600 字符的注释并读回；写空注释；输出 `RESULT worktree-status status=<参数名|无> values=<...> comment-multiline=<是|否> comment-max=<N|未知>`。
-- [ ] **Step 2: 真机运行并记录**到 `spikes/REPORT.md`“3C 探针：工作区状态与注释”一节；存回执。
-- [ ] **Step 3: 提交** — `git commit -m "spike: worktree workspace status and comment"`
+- [x] **Step 1: 写探针**：在一个测试 worktree 上依次设置四种状态并 `worktree show --json` 读回；写入 3 行、600 字符的注释并读回；写空注释；输出 `RESULT worktree-status status=<参数名|无> values=<...> comment-multiline=<是|否> comment-max=<N|未知>`。
+- [x] **Step 2: 真机运行并记录**到 `spikes/REPORT.md`“3C 探针：工作区状态与注释”一节；存回执。
+- [x] **Step 3: 提交** — `git commit -m "spike: worktree workspace status and comment"`
 
 ---
 
@@ -100,7 +108,7 @@
   - `discardDraft(specPath: string): { discarded: boolean }`
   - `applyDraft(specPath: string, o: { runningHash: string | null }): void` — 顺序：草稿不存在 → `draft_not_found`；`loadTeamSpec(草稿)` 失败原样抛出；`runningHash` 非空且 `specHash(草稿) !== runningHash` → `team_spec_changed`（提示 `wl down <team>`）；复制为 `.bak` → 改名；改名失败删除刚写的备份后重抛
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```ts
 test('validateSpecText returns parsed and no errors for teams/duo/team.yaml', () => {})
@@ -141,10 +149,10 @@ test('applyDraft allows a comment-only draft while running (same specHash)', () 
 test('applyDraft success writes .bak and replaces the spec; rename failure removes the backup and leaves the spec intact', () => {})
 ```
 
-- [ ] **Step 2: 运行确认失败** — `pnpm vitest run packages/core/test/spec` → FAIL。
-- [ ] **Step 3: 实现。** `planSpecChange` 的字段差异按 `lead`、`links`、`gates`、`budgets`、`patrol` 顶层键做深比较，`path` 用点号拼接（如 `budgets.task.max_rounds`）；岗位比较 `agent`/`model`/`launch`/`worktree` 判 `launch_changed`，只有 `briefPaths` 变化判 `brief_changed`。
-- [ ] **Step 4: 运行确认通过** — `pnpm vitest run packages/core/test/spec` → PASS。
-- [ ] **Step 5: 提交** — `git commit -m "feat(spec): text validation, field write-back, change preview, drafts"`
+- [x] **Step 2: 运行确认失败** — `pnpm vitest run packages/core/test/spec` → FAIL。
+- [x] **Step 3: 实现。** `planSpecChange` 的字段差异按 `lead`、`links`、`gates`、`budgets`、`patrol` 顶层键做深比较，`path` 用点号拼接（如 `budgets.task.max_rounds`）；岗位比较 `agent`/`model`/`launch`/`worktree` 判 `launch_changed`，只有 `briefPaths` 变化判 `brief_changed`。
+- [x] **Step 4: 运行确认通过** — `pnpm vitest run packages/core/test/spec` → PASS。
+- [x] **Step 5: 提交** — `git commit -m "feat(spec): text validation, field write-back, change preview, drafts"`
 
 ---
 
@@ -161,7 +169,7 @@ test('applyDraft success writes .bak and replaces the spec; rename failure remov
   - SSE 快照 `attentionCounts.warnings: number`；`Layout` 顶栏待办数计入
   - `renderAttention` 在最前面输出“告警”一节，每条一行；没有告警时不输出这一节
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```ts
 test('attention lists the draft warning when team.draft.yaml exists and drops it after discard', async () => {
@@ -172,10 +180,10 @@ test('renderAttention prints a 告警 section first only when there are warnings
 test('inbox page shows warnings above the sections; top bar count includes them', () => {})
 ```
 
-- [ ] **Step 2: 运行确认失败。**
-- [ ] **Step 3: 实现。**
-- [ ] **Step 4: 运行确认通过** — `pnpm vitest run packages/core/test/commands/dispatcher packages/core/test/server packages/cli/test packages/web/test` → PASS。
-- [ ] **Step 5: 提交** — `git commit -m "feat(attention): warnings section with pending-draft notice"`
+- [x] **Step 2: 运行确认失败。**
+- [x] **Step 3: 实现。**
+- [x] **Step 4: 运行确认通过** — `pnpm vitest run packages/core/test/commands/dispatcher packages/core/test/server packages/cli/test packages/web/test` → PASS。
+- [x] **Step 5: 提交** — `git commit -m "feat(attention): warnings section with pending-draft notice"`
 
 ---
 
@@ -201,7 +209,7 @@ test('inbox page shows warnings above the sections; top bar count includes them'
   - `about(deps: CommandDeps, o: { version: string; consoleFile: ConsoleFile | null; env?: NodeJS.ProcessEnv }): Promise<{ items: AboutItem[]; teams: Array<{ name: string; specPath: string; status: string; draft: boolean; dispatcher: DispatcherHealth['state'] }> }>` — Orca 版本取不到时 `value: null`、`note` 为错误码
   - `up(deps, { specPath, draft: true })` → `applyDraft(specPath, { runningHash: team?.status === 'up' ? team.specHash : null })` 后照常执行
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```ts
 test('GET spec returns parsed, hash, draft and running', async () => {})
@@ -225,10 +233,10 @@ test('up --draft with the team still up and a different specHash refuses and tou
 test('wl up --draft without a draft exits 1 with draft_not_found', async () => {})
 ```
 
-- [ ] **Step 2: 运行确认失败。**
-- [ ] **Step 3: 实现。**
-- [ ] **Step 4: 运行确认通过** — `pnpm vitest run packages/core/test packages/cli/test` → PASS。
-- [ ] **Step 5: 提交** — `git commit -m "feat: spec editing API, wl up --draft, about"`
+- [x] **Step 2: 运行确认失败。**
+- [x] **Step 3: 实现。**
+- [x] **Step 4: 运行确认通过** — `pnpm vitest run packages/core/test packages/cli/test` → PASS。
+- [x] **Step 5: 提交** — `git commit -m "feat: spec editing API, wl up --draft, about"`
 
 ---
 
@@ -245,7 +253,7 @@ test('wl up --draft without a draft exits 1 with draft_not_found', async () => {
 - 保存请求体：`{ yaml, running, baseHash: running ? draft?.hash ?? null : hash }`（`running`、`hash`、`draft` 取自加载时的 `GET …/spec`；保存成功后用返回的 `hash` 更新本地的基准）。
 - 已有草稿时默认载入 `draft.yaml`。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```tsx
 test('form and YAML views stay in sync after switching', async () => {})
@@ -263,10 +271,10 @@ test('settings page shows each item with its source label', async () => {})
 test('overview shows the pending-draft notice when attention.warnings has one', async () => {})
 ```
 
-- [ ] **Step 2: 运行确认失败。**
-- [ ] **Step 3: 实现。**
-- [ ] **Step 4: 运行确认通过** — `pnpm vitest run packages/web/test` → PASS。
-- [ ] **Step 5: 提交** — `git commit -m "feat(web): team editor, about page and draft notice"`
+- [x] **Step 2: 运行确认失败。**
+- [x] **Step 3: 实现。**
+- [x] **Step 4: 运行确认通过** — `pnpm vitest run packages/web/test` → PASS。
+- [x] **Step 5: 提交** — `git commit -m "feat(web): team editor, about page and draft notice"`
 
 ---
 
@@ -294,7 +302,7 @@ test('overview shows the pending-draft notice when attention.warnings has one', 
   - `PatrolSpec.workspaceStatus: boolean`（默认 `true`，进 `DEFAULT_PATROL`）
   - `warningsOf` 追加：`Orca 不支持工作区状态：patrol.workspace_status 不起作用`（开关为 `true` 且 `!ORCA_WORKTREE_SUPPORT.workspaceStatus`；注释同理，文案“卡片注释”、字段 `patrol.worktree_comment`）；`Orca 同步已停止：<worktree>（连续 3 次失败，重启调度员后重试）`（`listOrcaSync(team)` 中 `failCount >= 3` 的每一行）
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```ts
 test.each([
@@ -330,10 +338,10 @@ test('worktreeSet passes --workspace-status and --comment only when given', asyn
 test('migration from a 3B database adds orca_sync', () => {})
 ```
 
-- [ ] **Step 2: 运行确认失败。**
-- [ ] **Step 3: 实现**（Task 1 结论若与 `--workspace-status` 不同，在 `client.ts` 按实测参数名实现并改契约测试；填写 `ORCA_WORKTREE_SUPPORT`）。
-- [ ] **Step 4: 运行确认通过** — `pnpm vitest run packages/core/test` → PASS；2B 的 `worktree_comment` 测试按新注释格式更新断言。
-- [ ] **Step 5: 提交** — `git commit -m "feat(dispatcher): sync workspace status and comments to Orca"`
+- [x] **Step 2: 运行确认失败。**
+- [x] **Step 3: 实现**（Task 1 结论若与 `--workspace-status` 不同，在 `client.ts` 按实测参数名实现并改契约测试；填写 `ORCA_WORKTREE_SUPPORT`）。
+- [x] **Step 4: 运行确认通过** — `pnpm vitest run packages/core/test` → PASS；2B 的 `worktree_comment` 测试按新注释格式更新断言。
+- [x] **Step 5: 提交** — `git commit -m "feat(dispatcher): sync workspace status and comments to Orca"`
 
 ---
 
@@ -350,7 +358,7 @@ test('migration from a 3B database adds orca_sync', () => {})
   - `type Key = { name: 'up' | 'down' | 'enter' | 'tab' | 'escape' | 'backspace' | 'left' | 'right' | 'ctrl-c' | 'char'; ch?: string }`；`parseKeys(chunk: string): Key[]`
   - `class LineInput { constructor(prompt: string); feed(k: Key): 'continue' | 'submit' | 'cancel'; value: string; view(cols: number): string }` — 只接受可打印字符
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```ts
 test.each([['abc', 3], ['雁阵', 4], ['é', 1], ['é', 1], ['👍', 2], ['\x1b[31m', 0]])('cellWidth(%j) = %i', (s, n) => {
@@ -367,10 +375,10 @@ test('parseKeys decodes arrows, enter, tab, esc, backspace, ctrl-c and CJK chars
 test('LineInput edits with left/right/backspace, ignores control chars, submits on enter, cancels on esc', () => {})
 ```
 
-- [ ] **Step 2: 运行确认失败。**
-- [ ] **Step 3: 实现**（`cellWidth` 先剥 ANSI 序列；东亚宽字符区间表：U+1100–115F、U+2E80–A4CF、U+AC00–D7A3、U+F900–FAFF、U+FE30–FE4F、U+FF00–FF60、U+FFE0–FFE6、U+1F300–1F64F、U+1F900–1F9FF；组合字符 U+0300–036F 计 0；其余控制字符计 0）。
-- [ ] **Step 4: 运行确认通过** — `pnpm vitest run packages/cli/test/tui` → PASS。
-- [ ] **Step 5: 提交** — `git commit -m "feat(tui): display width, diffing screen, keys and line input"`
+- [x] **Step 2: 运行确认失败。**
+- [x] **Step 3: 实现**（`cellWidth` 先剥 ANSI 序列；东亚宽字符区间表：U+1100–115F、U+2E80–A4CF、U+AC00–D7A3、U+F900–FAFF、U+FE30–FE4F、U+FF00–FF60、U+FFE0–FFE6、U+1F300–1F64F、U+1F900–1F9FF；组合字符 U+0300–036F 计 0；其余控制字符计 0）。
+- [x] **Step 4: 运行确认通过** — `pnpm vitest run packages/cli/test/tui` → PASS。
+- [x] **Step 5: 提交** — `git commit -m "feat(tui): display width, diffing screen, keys and line input"`
 
 ---
 
@@ -392,7 +400,7 @@ test('LineInput edits with left/right/backspace, ignores control chars, submits 
   - `runTui(deps: CommandDeps, team: string, io: { stdin: ReadStream; stdout: WriteStream }, o?: { signal?: AbortSignal }): Promise<void>` — 进入时 `Screen.enter`、raw 模式；`stdout` 的 `resize` 事件 → `Screen.invalidate()` 后重绘；`finally`、`process.on('exit')`、SIGINT/SIGTERM/SIGHUP 都调 `restore` 与 `setRawMode(false)`；未捕获异常先恢复再抛出；读取循环异常置 `stale = true`，顶部显示“数据过期”，下一轮继续
   - CLI：`wl tui [team]`；省略团队名时 0 个 → `team_unknown`，1 个直接进入，多个调 `pickTeam`；非 TTY → `tui_not_tty`；列数为 0 → `tui_unsupported_terminal`；`win32` 且没有 `WT_SESSION` 也没有 `TERM_PROGRAM` 时只打印一行警告后继续（复审 M-7）
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```ts
 test('1/2/3 and Tab switch views; j/k move the selection within bounds', () => {})
@@ -421,10 +429,10 @@ test('on win32 without WT_SESSION/TERM_PROGRAM a warning is printed and the TUI 
 test('screen snapshot of the overview view', () => { /* renderView 输出与内联快照比较 */ })
 ```
 
-- [ ] **Step 2: 运行确认失败。**
-- [ ] **Step 3: 实现。**
-- [ ] **Step 4: 运行确认通过** — `pnpm vitest run packages/cli/test/tui` → PASS。
-- [ ] **Step 5: 提交** — `git commit -m "feat(tui): wl tui with overview, inbox and timeline"`
+- [x] **Step 2: 运行确认失败。**
+- [x] **Step 3: 实现。**
+- [x] **Step 4: 运行确认通过** — `pnpm vitest run packages/cli/test/tui` → PASS。
+- [x] **Step 5: 提交** — `git commit -m "feat(tui): wl tui with overview, inbox and timeline"`
 
 ---
 
@@ -433,7 +441,7 @@ test('screen snapshot of the overview view', () => { /* renderView 输出与内�
 **Files:**
 - Modify: `README.md`、`teams/duo/team.yaml`（`patrol:` 注释示例增加 `workspace_status`）、`test/live/duo.live.test.ts`
 
-- [ ] **Step 1: 文档**：README 增加“编辑团队”（草稿与 `wl up --draft`）、“Orca 界面上的状态”（需要调度员在运行；两个开关；该状态由雁阵维护，手动修改会在下次变化时被覆盖）、“终端视图：`wl tui`”（按键表）三节，中文；`team.yaml` 注释示例补 `workspace_status: true`。
-- [ ] **Step 2: 真机用例**：`test/live/duo.live.test.ts` 增加默认跳过、需人工确认的用例：调度员运行时开始一个任务，一个巡查周期后 `worktree show --json` 的工作区状态为 `in-progress`。
-- [ ] **Step 3: 全量验证** — `pnpm typecheck && pnpm test && pnpm build && pnpm test:e2e` → PASS（已知的两例沙箱僵尸进程失败除外）。
-- [ ] **Step 4: 提交** — `git commit -m "docs: editor, Orca status sync and wl tui"`
+- [x] **Step 1: 文档**：README 增加“编辑团队”（草稿与 `wl up --draft`）、“Orca 界面上的状态”（需要调度员在运行；两个开关；该状态由雁阵维护，手动修改会在下次变化时被覆盖）、“终端视图：`wl tui`”（按键表）三节，中文；`team.yaml` 注释示例补 `workspace_status: true`。
+- [x] **Step 2: 真机用例**：`test/live/duo.live.test.ts` 增加默认跳过、需人工确认的用例：调度员运行时开始一个任务，一个巡查周期后 `worktree show --json` 的工作区状态为 `in-progress`。
+- [x] **Step 3: 全量验证** — `pnpm typecheck && pnpm test && pnpm build && pnpm test:e2e` → PASS（已知的两例沙箱僵尸进程失败除外）。
+- [x] **Step 4: 提交** — `git commit -m "docs: editor, Orca status sync and wl tui"`

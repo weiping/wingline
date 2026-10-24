@@ -8,6 +8,8 @@
 
 **Tech Stack:** TypeScript、vitest、FakeOrca；launchd 用户代理、systemd 用户服务（经 `launchctl`、`systemctl --user`）。
 
+> **状态（2026-10-25 回填）：已实现并合并**（PR #12，`1f5c0e8`，分支 `phase-3d1-restore-all-autostart-unread`）。Task 1–7 的提交见各任务末尾；随后有四处复审后的修复：`f9c98e6`（没有运行中的团队时 `restoreAll` 不再等 Orca）、`5a8e80c`（`unread_skipped` 去重，“放弃”告警按动作取最新一条）、`9914d2a`（`uninstall` / `status` 不再依赖安装用的命令）、`c7fa4ab`（macOS 重装时 `bootstrap` 重试，失败后重新加载旧代理）；Windows CI 上“放弃告警”用例超时已在 `530046e` 修复。验证：合并时 114 个文件 / 1540 个用例通过；2026-10-25 在 main 上复核为 120 个文件 / 1654 个用例通过（8 条按设计跳过），`tsc` 通过。**仍未验证**：由重新登录触发的 launchd 恢复（只验证了手动运行同一条命令）；Linux systemd 真机；Windows（探针 5，`autostart_unsupported`）。
+
 **Spec:** `docs/superpowers/specs/2026-10-16-phase-3d-screen-signals-remote-autostart-design.md`（下称 spec）的第 0、6、7、8、10 节与第 11 节对应条目。块 (c)(d) 不在本 plan（3D-2，探针后写）。依赖的 3A、3C 已合并（PR #11）。
 
 ## Global Constraints
@@ -68,9 +70,9 @@
 
 > 沙箱无法完成时写好脚本、报告 NEEDS_CONTEXT，Task 2 按“`--unread` 可用”实现并把 `ORCA_WORKTREE_SUPPORT.unread` 默认 `true`，Task 5 用默认常量（间隔 10 秒、连续 4 次）。
 
-- [ ] **Step 1: 写探针** `spikes/phase-3d1.ts`，两个子命令：`unread`（对一个测试 worktree 依次执行 `orca worktree set --worktree <sel> --unread`、写 `--comment`、`--read`，每步后用 `orca worktree show` 读回状态并存档）、`settle`（重启 Orca 后每 5 秒记录 `terminalList` 的 handle + connected 集合，直到连续 6 次相同）。
-- [ ] **Step 2: 真机运行并记录**到 `spikes/REPORT.md`；成立时存回执为 `test/fixtures/receipts/worktree-unread.json`。
-- [ ] **Step 3: 提交** — `git commit -m "spike: worktree unread mark and terminal-list settle time"`
+- [x] **Step 1: 写探针** `spikes/phase-3d1.ts`，两个子命令：`unread`（对一个测试 worktree 依次执行 `orca worktree set --worktree <sel> --unread`、写 `--comment`、`--read`，每步后用 `orca worktree show` 读回状态并存档）、`settle`（重启 Orca 后每 5 秒记录 `terminalList` 的 handle + connected 集合，直到连续 6 次相同）。
+- [x] **Step 2: 真机运行并记录**到 `spikes/REPORT.md`；成立时存回执为 `test/fixtures/receipts/worktree-unread.json`。
+- [x] **Step 3: 提交** — `git commit -m "spike: worktree unread mark and terminal-list settle time"`（已提交：`5763b85`（探针 1、3、6 同一个提交））
 
 ---
 
@@ -87,7 +89,7 @@
   - `ORCA_WORKTREE_SUPPORT.unread: boolean`（默认 `true`；探针 3 不成立时改 `false`）
   - `FakeOrca.comments` 的元素增加 `unread?: boolean`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```ts
 test('a team without patrol.unread_mark keeps the old spec hash; unread_mark: false changes it', () => {
@@ -106,10 +108,10 @@ test('worktreeSet with no field throws internal', async () => {
 test('worktreeSet with comment and status still builds the old argv', async () => { /* 与改动前的断言一致 */ })
 ```
 
-- [ ] **Step 2: 运行确认失败** — `pnpm vitest run packages/core/test/spec packages/core/test/orca/client.test.ts` → FAIL。
-- [ ] **Step 3: 实现** 上述签名；`FakeOrca.worktreeSet` 把 `unread` 原样记入 `comments`。`view/snapshot.ts` 的 `WRITE_METHODS` 已含 `worktreeSet`，无需改。
-- [ ] **Step 4: 运行确认通过**，连同 `pnpm typecheck`（`SpecForm` 的白名单与 `PatrolSpec` 有类型对照时一并修）。
-- [ ] **Step 5: 提交** — `git commit -m "feat(spec,orca): patrol.unread_mark and worktreeSet unread"`
+- [x] **Step 2: 运行确认失败** — `pnpm vitest run packages/core/test/spec packages/core/test/orca/client.test.ts` → FAIL。
+- [x] **Step 3: 实现** 上述签名；`FakeOrca.worktreeSet` 把 `unread` 原样记入 `comments`。`view/snapshot.ts` 的 `WRITE_METHODS` 已含 `worktreeSet`，无需改。
+- [x] **Step 4: 运行确认通过**，连同 `pnpm typecheck`（`SpecForm` 的白名单与 `PatrolSpec` 有类型对照时一并修）。
+- [x] **Step 5: 提交** — `git commit -m "feat(spec,orca): patrol.unread_mark and worktreeSet unread"`（已提交：`407e3a0`）
 
 ---
 
@@ -126,7 +128,7 @@ test('worktreeSet with comment and status still builds the old argv', async () =
   - `removeUnreadMarks(team: string, keys: string[]): void`
 - 迁移 SQL：`CREATE TABLE unread_marks (team TEXT NOT NULL, item_key TEXT NOT NULL, marked_at TEXT NOT NULL, PRIMARY KEY (team, item_key))`
 
-- [ ] **Step 1: 写失败测试** `migrate-3d1.test.ts`
+- [x] **Step 1: 写失败测试** `migrate-3d1.test.ts`
 
 ```ts
 test('a 3C database upgrades and gains unread_marks; spec hashes unchanged', () => {
@@ -146,10 +148,10 @@ test('add / list / remove unread marks per team; duplicates ignored', () => {
 
 同时修两处既有断言：`migrate-3c.test.ts:22` 的 `toBe(5)` 改成 `toBeGreaterThanOrEqual(5)`；`patrol.review.test.ts:149-150` 的 `MIGRATIONS.length - 1` 改成固定的 `slice(0, 2)` 与 `user_version = 2`（它测的是 2A 库升级）。
 
-- [ ] **Step 2: 运行确认失败** — `pnpm vitest run packages/core/test/registry` → 新测试 FAIL，`migrate-3c` 在加迁移后会失败（所以先改它）。
-- [ ] **Step 3: 实现** 迁移与三个方法。
-- [ ] **Step 4: 运行确认通过** — `packages/core/test/registry` 全部 PASS。
-- [ ] **Step 5: 提交** — `git commit -m "feat(registry): unread_marks table"`
+- [x] **Step 2: 运行确认失败** — `pnpm vitest run packages/core/test/registry` → 新测试 FAIL，`migrate-3c` 在加迁移后会失败（所以先改它）。
+- [x] **Step 3: 实现** 迁移与三个方法。
+- [x] **Step 4: 运行确认通过** — `packages/core/test/registry` 全部 PASS。
+- [x] **Step 5: 提交** — `git commit -m "feat(registry): unread_marks table"`（已提交：`5ce21c2`）
 
 ---
 
@@ -167,7 +169,7 @@ test('add / list / remove unread marks per team; duplicates ignored', () => {
   - `markUnread(deps: CommandDeps, ctx: { team: TeamRow; spec: TeamSpec }, snap: ScanSnapshot, o: { observeOnly: boolean; failures: { count: number } }): Promise<void>` — 流程：`spec.patrol.unreadMark` 为假或 `ORCA_WORKTREE_SUPPORT.unread` 为假 → 直接返回；算出键；首轮（`observeOnly`）只 `addUnreadMarks`；否则有新键 → 标记牵头岗 worktree，成功后写入新键；已从键集消失的键 `removeUnreadMarks`；`failures.count >= 3` 不再尝试
   - `LoopState` 增加 `unreadFailures: { count: number }`；`warningsOf` 在 `count >= 3` 时追加一条 “Orca 未读标记连续失败，本次调度员运行期间已停止尝试”（读自 `patrol_events`，事件 `unread_gave_up`）
 
-- [ ] **Step 1: 写失败测试**（FakeOrca + `clock()`；牵头岗 worktree 为 `path:/w/lead`）
+- [x] **Step 1: 写失败测试**（FakeOrca + `clock()`；牵头岗 worktree 为 `path:/w/lead`）
 
 ```ts
 test('a new attention key marks the lead worktree once; the same keys do not mark again', async () => {
@@ -195,10 +197,10 @@ test('does not call attention(): taskList / terminalList call counts are unchang
 test('attentionKeys matches the entries attention() reports (stale, questions, frozen, signals)', async () => {})
 ```
 
-- [ ] **Step 2: 运行确认失败** — `pnpm vitest run packages/core/test/commands/dispatcher/unread.test.ts` → FAIL。
-- [ ] **Step 3: 实现** 上述两个函数与 `scan()` 接入；`worktreeSet` 的选择器用 `` `path:${abs}` ``（同 3C）。
-- [ ] **Step 4: 运行确认通过** — 连同 `packages/core/test/commands/dispatcher` 全部 PASS。
-- [ ] **Step 5: 提交** — `git commit -m "feat(patrol): unread mark on the lead worktree for new attention items"`
+- [x] **Step 2: 运行确认失败** — `pnpm vitest run packages/core/test/commands/dispatcher/unread.test.ts` → FAIL。
+- [x] **Step 3: 实现** 上述两个函数与 `scan()` 接入；`worktreeSet` 的选择器用 `` `path:${abs}` ``（同 3C）。
+- [x] **Step 4: 运行确认通过** — 连同 `packages/core/test/commands/dispatcher` 全部 PASS。
+- [x] **Step 5: 提交** — `git commit -m "feat(patrol): unread mark on the lead worktree for new attention items"`（已提交：`8bf7157`）
 
 ---
 
@@ -217,7 +219,7 @@ test('attentionKeys matches the entries attention() reports (stale, questions, f
   - `restoreAllExitCode(r: RestoreAllResult): 0 | 1 | 2 | 3 | 4`
   - CLI：`wl restore [team] --all [--wait-orca <时长>] [--dry-run] [--no-tasks] [--json]`；`--all` 与 `<team>`、`--session` 互斥（输入错误，退出码 1）；`restoreOne` 在 CLI 层传入已审计的 `commands.restore`；`restoreAll` 由 CLI 直接调用核心函数，不放进 `Commands`，所以不进 `AUDIT` / `WRITE_COMMANDS`，`main.test.ts` 的审计表断言无需改；没有 `up` 团队时人读输出“没有处于运行状态的团队，无需恢复”、`--json` 为 `{ teams: [] }`、退出码 0
 
-- [ ] **Step 1: 写失败测试**（FakeOrca；`sleep` 注入为立即返回并计数）
+- [x] **Step 1: 写失败测试**（FakeOrca；`sleep` 注入为立即返回并计数）
 
 ```ts
 test('only teams with status up are restored, one restoreOne call each, in order', async () => {
@@ -248,10 +250,10 @@ test('--actor autostart is recorded as the audit actor, one audit row per team, 
 test('--dry-run --all is not audited (AUDIT.restore.skip)', async () => {})
 ```
 
-- [ ] **Step 2: 运行确认失败** — `pnpm vitest run packages/core/test/commands/restore/restore-all.test.ts packages/cli/test/main.test.ts` → FAIL。
-- [ ] **Step 3: 实现** 上述签名；`--wait-orca` 的整个等待共用一个期限（`waitForOrca` 内部分配给“可达”与“稳定”两个阶段）；不替用户启动 Orca。`restore` 子命令同时声明 `--home` / `--orca` 并经 `execute(..., overrides)` 生效（照 `dispatcher run`，`cli.ts:170`）。
-- [ ] **Step 4: 运行确认通过** — 连同 `packages/core/test/commands/restore`、`packages/cli` 全部 PASS。
-- [ ] **Step 5: 提交** — `git commit -m "feat(restore): --all with --wait-orca and autostart actor"`
+- [x] **Step 2: 运行确认失败** — `pnpm vitest run packages/core/test/commands/restore/restore-all.test.ts packages/cli/test/main.test.ts` → FAIL。
+- [x] **Step 3: 实现** 上述签名；`--wait-orca` 的整个等待共用一个期限（`waitForOrca` 内部分配给“可达”与“稳定”两个阶段）；不替用户启动 Orca。`restore` 子命令同时声明 `--home` / `--orca` 并经 `execute(..., overrides)` 生效（照 `dispatcher run`，`cli.ts:170`）。
+- [x] **Step 4: 运行确认通过** — 连同 `packages/core/test/commands/restore`、`packages/cli` 全部 PASS。
+- [x] **Step 5: 提交** — `git commit -m "feat(restore): --all with --wait-orca and autostart actor"`（已提交：`7efa1e2`（restoreAll、waitForOrca）与 `8219057`（CLI））
 
 ---
 
@@ -275,7 +277,7 @@ test('--dry-run --all is not audited (AUDIT.restore.skip)', async () => {})
   - `autostartStatus(plan: AutostartPlan, exec: Exec, io: { readFile: (p: string) => string; exists: (p: string) => boolean }): Promise<{ installed: boolean; location: string; command: string[]; commandMissing: string[]; logTail: string[]; linger: boolean | undefined }>` — `command` 是从**已安装的文件**里解析出的词（`installedCommand`，不是按当前环境重算的），`commandMissing` 列出命令中已不存在的 node / 入口脚本；Linux 上用 `loginctl show-user <user> -p Linger` 填 `linger`，未开启时 CLI 渲染提示“无界面或 SSH 场景需要 loginctl enable-linger <user>”
   - CLI：`wl autostart install [--wait-orca <时长，默认 15m>] [--json]`、`uninstall`、`status`
 
-- [ ] **Step 1: 写失败测试**（`path.posix` 显式构造期望值，不用宿主 `path`）
+- [x] **Step 1: 写失败测试**（`path.posix` 显式构造期望值，不用宿主 `path`）
 
 ```ts
 test('macOS plan: plist has RunAtLoad, absolute ProgramArguments, log paths and a PATH containing the node and orca dirs', () => {
@@ -312,10 +314,10 @@ test('status lists a node path that no longer exists in commandMissing', async (
 test('uninstall plan runs launchctl bootout / systemctl disable and deletes only our own file', async () => {})
 ```
 
-- [ ] **Step 2: 运行确认失败** — `pnpm vitest run packages/core/test/commands/autostart packages/core/test/commands/self.test.ts` → FAIL。
-- [ ] **Step 3: 实现** 上述签名（`exec` 在 CLI 层为 `spawn(file, args, { shell: false })` 的 Promise 包装）。README 增加“登录后自动恢复”一节：两个平台的位置、安装即执行一次（macOS）、`loginctl enable-linger` 说明、Orca 以系统服务运行时依靠 `--wait-orca`、卸载方法、Windows 暂不支持。
-- [ ] **Step 4: 运行确认通过** — 连同 `packages/core/test/commands` 全部 PASS。
-- [ ] **Step 5: 提交** — `git commit -m "feat(cli): wl autostart for login-time restore (macOS, Linux)"`
+- [x] **Step 2: 运行确认失败** — `pnpm vitest run packages/core/test/commands/autostart packages/core/test/commands/self.test.ts` → FAIL。
+- [x] **Step 3: 实现** 上述签名（`exec` 在 CLI 层为 `spawn(file, args, { shell: false })` 的 Promise 包装）。README 增加“登录后自动恢复”一节：两个平台的位置、安装即执行一次（macOS）、`loginctl enable-linger` 说明、Orca 以系统服务运行时依靠 `--wait-orca`、卸载方法、Windows 暂不支持。
+- [x] **Step 4: 运行确认通过** — 连同 `packages/core/test/commands` 全部 PASS。
+- [x] **Step 5: 提交** — `git commit -m "feat(cli): wl autostart for login-time restore (macOS, Linux)"`（已提交：`8219057`（与 Task 5 的 CLI 同一个提交））
 
 ---
 
@@ -326,6 +328,11 @@ test('uninstall plan runs launchctl bootout / systemctl disable and deletes only
 **Files:**
 - Modify: `docs/superpowers/specs/2026-10-16-phase-3d-screen-signals-remote-autostart-design.md`（顶部状态行标注 3D-1 已实现）、`docs/superpowers/plans/2026-10-16-phase-3d-screen-signals-remote-autostart.md`（索引状态）
 
-- [ ] **Step 1: 全量验证** — `pnpm typecheck && pnpm test`（已知的两例沙箱僵尸进程失败除外）→ PASS；贴出输出再声明完成。
-- [ ] **Step 2: 真机检查（人执行，逐项勾选）**：(a) macOS `wl autostart install` 后立即执行一次，`autostart.log` 有结果；(b) 重新登录后 Orca 就绪时所有 `up` 团队被恢复，时间线每个团队一行、执行者 `autostart`；(c) launchd 最小环境下 `node` 与 `orca` 都能启动，日志里没有 “command not found”；(d) 有新待办时 Orca 侧栏里牵头岗 workspace 出现未读标记，同一批不重复标记。
-- [ ] **Step 3: 更新 spec 与索引 plan 的状态行；提交** — `git commit -m "docs: mark phase 3d-1 done"`
+- [x] **Step 1: 全量验证** — `pnpm typecheck && pnpm test`（已知的两例沙箱僵尸进程失败除外）→ PASS；贴出输出再声明完成。
+- [ ] **Step 2: 真机检查（人执行，逐项勾选）**：
+  - [x] (a) macOS `wl autostart install` 后立即执行一次，`autostart.log` 有结果（`spikes/REPORT.md` “3D-1 真机验证”）；
+  - [ ] (b) **重新登录后** Orca 就绪时所有 `up` 团队被恢复，时间线每个团队一行、执行者 `autostart`。**未验证“由登录触发”**；手动执行同一条 `restore --all --wait-orca 2m --actor autostart` 已通过（占位团队，时间线一行、执行者 `autostart`）；
+  - [x] (c) launchd 最小环境下 `node` 与 `orca` 都能启动，日志里没有 “command not found”；
+  - [x] (d) 有新待办时 Orca 侧栏里牵头岗 workspace 出现未读标记，同一批不重复标记（占位团队，`isUnread` 读回 `true`，第三轮没有再次标记）。
+  - 另：Linux systemd 只有单元测试，没有真机。
+- [x] **Step 3: 更新 spec 与索引 plan 的状态行；提交** — `git commit -m "docs: mark phase 3d-1 done"`（已提交：`3226c0d`、`d073ea4`）

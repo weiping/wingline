@@ -8,6 +8,8 @@
 
 **Tech Stack:** TypeScript、vitest、FakeOrca。
 
+> **状态（2026-10-25 回填）：Task 1–7 已实现并合并**（PR #18，`6b1f348`，分支 `feat/screen-signals`；CI 三个系统 + e2e 全绿）。**Task 8 的两项真机核对未做**：这两种提示在真机上还没出现过，样本与模式仍是 provisional（来自 claude 2.1.310 程序本体字符串，非截图）。验证：2026-10-25 在 main 上 `tsc` 通过，120 个文件 / 1654 个用例通过（8 条按设计跳过）。与计划的差异：新增 `commands/dispatcher/signal-summary.ts`（`signalSummary`、`resetClock`、`topSignal`，被 attention、orca-sync、api-read 共用）；`terminalRead` 回执多返回 `rows`；`ScreenSignal` 多带 `noticeHash`，`usage_limit` 多带 `autoResume`；Task 6 的测试是实现之后补的。
+
 **Spec:** `docs/superpowers/specs/2026-10-16-phase-3d-screen-signals-remote-autostart-design.md` 第 4、8、11 节（块 c）。依据：探针 1（`terminal read --screen` 可用，`tail` 是行数组，屏幕行数由面板大小决定，窄面板会把长行截成 `…`）、探针 2 的**部分**结果（`spikes/REPORT.md` “3D-2（块 c）探针 2（部分）”：从 claude 2.1.310 程序本体取出的提示原文，**非截图**）。
 
 ## 与 spec 的差异（先读这一节）
@@ -70,7 +72,7 @@
 
 样本文件每个首行 `# source: claude 2.1.310 binary strings, not captured`，后面是一个 40 行以内的屏幕：若干行对话正文，然后（视样本）底部的 `Context low (7% remaining) · Run /compact to compact & continue` 或 `You've hit your session limit · resets 3pm (Asia/Shanghai)` 等，再接 `────`、`❯`、`────` 和模式行 `⏵⏵ accept edits on (shift+tab to cycle)`。限额行里 `· resets …` 的写法是**假设**（没取到原文），样本里注明。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```ts
 test.each([
@@ -89,10 +91,10 @@ test('unparseable reset text → null; a 12am / 12pm edge is handled', () => {
   expect(parseResetTime('resets 12pm', new Date('2026-10-16T10:00:00Z'), 'UTC')?.toISOString()).toBe('2026-10-16T12:00:00.000Z')
 })
 ```
-- [ ] **Step 2: 运行确认失败** — `vitest run packages/core/test/screen/reset-time.test.ts` → FAIL（模块不存在）。
-- [ ] **Step 3: 实现** `parseResetTime`；用 `Intl.DateTimeFormat(..., { timeZone })` 求时区偏移，不引入依赖。
-- [ ] **Step 4: 运行确认通过。**
-- [ ] **Step 5: 提交** — `git commit -m "feat(screen): parseResetTime 与画面样本（provisional）"`
+- [x] **Step 2: 运行确认失败** — `vitest run packages/core/test/screen/reset-time.test.ts` → FAIL（模块不存在）。
+- [x] **Step 3: 实现** `parseResetTime`；用 `Intl.DateTimeFormat(..., { timeZone })` 求时区偏移，不引入依赖。
+- [x] **Step 4: 运行确认通过。**
+- [x] **Step 5: 提交** — `git commit -m "feat(screen): parseResetTime 与画面样本（provisional）"`（已提交：`a861543`）
 
 ### Task 2: 模式表与 `detectScreen`
 
@@ -107,7 +109,7 @@ test('unparseable reset text → null; a 12am / 12pm edge is handled', () => {
   - `detectScreen(agent: string, text: string, now: Date): { guard: ScreenState; signals: ScreenSignal[] }` — 未知 agent 只返回 `guard`
   - `SIGNAL_TAIL_LINES = 40`
 
-- [ ] **Step 1: 写失败测试**（样本从 `test/fixtures/screens/` 读，LF 与 CRLF 各喂一份；测试名带 `(provisional)`）
+- [x] **Step 1: 写失败测试**（样本从 `test/fixtures/screens/` 读，LF 与 CRLF 各喂一份；测试名带 `(provisional)`）
 
 ```ts
 test('claude context-low sample → context_low 7 with the whole footer line as notice (provisional)', () => {
@@ -136,10 +138,10 @@ test('unknown agent yields guard only; guard still looks at the last 8 lines (sa
 })
 test('CRLF text gives the same result as LF', () => {})
 ```
-- [ ] **Step 2: 运行确认失败。**
-- [ ] **Step 3: 实现。** 模式：`context_low` 用 `/^[\s⎿⏺●·]*Context low \((\d{1,3})% remaining\)/`；`usage_limit` 用 `/^[\s⎿⏺●·]*You've hit your (?:session|weekly|Opus|Sonnet|Fable|usage credit) limit\b/` 与 `/^[\s⎿⏺●·]*You're out of (?:extra )?usage/`；自动继续看同窗口里以 `Usage limit reached` / `Continuing automatically` 打头的行（含 `continuing automatically` → armed），`Automatic continue cancelled` → cancelled；重置时间从命中行里交给 `parseResetTime`。
-- [ ] **Step 4: 运行确认通过** — 连同 `packages/core/test/commands/task` 全部 PASS（`classifyPreview` 未动）。
-- [ ] **Step 5: 提交** — `git commit -m "feat(screen): detectScreen 模式表（provisional）"`
+- [x] **Step 2: 运行确认失败。**
+- [x] **Step 3: 实现。** 模式：`context_low` 用 `/^[\s⎿⏺●·]*Context low \((\d{1,3})% remaining\)/`；`usage_limit` 用 `/^[\s⎿⏺●·]*You've hit your (?:session|weekly|Opus|Sonnet|Fable|usage credit) limit\b/` 与 `/^[\s⎿⏺●·]*You're out of (?:extra )?usage/`；自动继续看同窗口里以 `Usage limit reached` / `Continuing automatically` 打头的行（含 `continuing automatically` → armed），`Automatic continue cancelled` → cancelled；重置时间从命中行里交给 `parseResetTime`。
+- [x] **Step 4: 运行确认通过** — 连同 `packages/core/test/commands/task` 全部 PASS（`classifyPreview` 未动）。
+- [x] **Step 5: 提交** — `git commit -m "feat(screen): detectScreen 模式表（provisional）"`（已提交：`1ac1a91`）
 
 ### Task 3: `terminalRead` 与 FakeOrca 的画面模型
 
@@ -152,9 +154,9 @@ test('CRLF text gives the same result as LF', () => {})
 - Produces: `OrcaClient.terminalRead(a: { handle: string; lines: number }): Promise<{ text: string; rows: number }>` — argv `terminal read --terminal <h> --screen --limit <n>`；`text = terminal.tail.join('\n')`，`rows = terminal.returnedLineCount`；`terminal.source !== 'screen'`（含 `screen-unavailable`）→ 抛 `WinglineError('orca', 'screen_unavailable', …)`
 - Produces（FakeOrca）：`screens: Map<handle, string>` 模型——`terminalRead` 返回其最后 `lines` 行；`terminalShow` 的 `preview` 改为取同一份文本的**末尾 300 个字符**（与真机一致，防止单测假绿）；没给 `screens` 的终端沿用 `previews`
 
-- [ ] **Step 1: 写失败测试**：argv 与回执映射（用 `terminal-read.json`）、`source: 'screen-unavailable'` 抛 `screen_unavailable`；FakeOrca：60 行的屏幕 `terminalRead({ lines: 40 })` 恰好 40 行，`terminalShow` 的 `preview` 长度 ≤ 300 且读不到前面的行。
-- [ ] **Step 2: 运行确认失败。** **Step 3: 实现。** **Step 4: 运行确认通过。**
-- [ ] **Step 5: 提交** — `git commit -m "feat(orca): terminalRead（terminal read --screen）与 FakeOrca 画面模型"`
+- [x] **Step 1: 写失败测试**：argv 与回执映射（用 `terminal-read.json`）、`source: 'screen-unavailable'` 抛 `screen_unavailable`；FakeOrca：60 行的屏幕 `terminalRead({ lines: 40 })` 恰好 40 行，`terminalShow` 的 `preview` 长度 ≤ 300 且读不到前面的行。
+- [x] **Step 2: 运行确认失败。** **Step 3: 实现。** **Step 4: 运行确认通过。**
+- [x] **Step 5: 提交** — `git commit -m "feat(orca): terminalRead（terminal read --screen）与 FakeOrca 画面模型"`（已提交：`43ed1f7`）
 
 ### Task 4: 每轮读画面进 `previews`
 
@@ -166,9 +168,9 @@ test('CRLF text gives the same result as LF', () => {})
 - Consumes: Task 3 的 `terminalRead`
 - Produces: `ScanSnapshot.previews`：handle → 文本（读失败 / `screen_unavailable` 的岗位没有条目）
 
-- [ ] **Step 1: 写失败测试**：存活岗位各读一次且只读一次（`terminalRead` 调用次数 = 存活岗位数）；`quietScreens` 的候选岗位不再额外调 `terminalShow`；某岗位 `terminalRead` 抛错 → 它没有 `previews` 条目、其它岗位不受影响、扫描不中断；`screenGuard` 在“往终端打字之前”的即时检查中仍走 `terminalShow`（行为不变，原有测试照跑）。
-- [ ] **Step 2–4:** 失败 → 实现 → 通过（连同 `packages/core/test/commands/dispatcher` 全部）。
-- [ ] **Step 5: 提交** — `git commit -m "feat(patrol): 每轮读岗位画面进 previews，quietScreens 共用"`
+- [x] **Step 1: 写失败测试**：存活岗位各读一次且只读一次（`terminalRead` 调用次数 = 存活岗位数）；`quietScreens` 的候选岗位不再额外调 `terminalShow`；某岗位 `terminalRead` 抛错 → 它没有 `previews` 条目、其它岗位不受影响、扫描不中断；`screenGuard` 在“往终端打字之前”的即时检查中仍走 `terminalShow`（行为不变，原有测试照跑）。
+- [x] **Step 2–4:** 失败 → 实现 → 通过（连同 `packages/core/test/commands/dispatcher` 全部）。
+- [x] **Step 5: 提交** — `git commit -m "feat(patrol): 每轮读岗位画面进 previews，quietScreens 共用"`（已提交：`cc57a3f`）
 
 ### Task 5: 注册表——`detail` 列与 `ScreenSignalKind`
 
@@ -179,9 +181,9 @@ test('CRLF text gives the same result as LF', () => {})
 **Interfaces:**
 - Produces: `type ScreenSignalKind = 'context_low' | 'usage_limit'`；`PatrolStateRow.detail: Record<string, unknown> | null`
 
-- [ ] **Step 1: 写失败测试**：从上一版数据库升级后有 `detail` 列且原有行 `detail = null`；`detail` 往返；`resetPatrolForPost` 不清画面信号行、清其它行；两轮扫描后画面信号行**仍未清除**（`advancePatrol` 不碰它）；`pnpm typecheck` 枚举出的类型使用点都已处理。
-- [ ] **Step 2–4:** 失败 → 实现 → 通过。
-- [ ] **Step 5: 提交** — `git commit -m "feat(registry): patrol_state.detail 与画面信号类型"`
+- [x] **Step 1: 写失败测试**：从上一版数据库升级后有 `detail` 列且原有行 `detail = null`；`detail` 往返；`resetPatrolForPost` 不清画面信号行、清其它行；两轮扫描后画面信号行**仍未清除**（`advancePatrol` 不碰它）；`pnpm typecheck` 枚举出的类型使用点都已处理。
+- [x] **Step 2–4:** 失败 → 实现 → 通过。
+- [x] **Step 5: 提交** — `git commit -m "feat(registry): patrol_state.detail 与画面信号类型"`（已提交：`1dc1f13`）
 
 ### Task 6: 画面信号的状态推进
 
@@ -197,7 +199,7 @@ test('CRLF text gives the same result as LF', () => {})
   - `isUsagePaused(registry: Registry, team: string, post: string, now: Date): boolean`
   - 常量 `CONTEXT_RENOTIFY_MS = 3_600_000`、`AUTO_RESUME_GRACE_MS = 600_000`
 
-- [ ] **Step 1: 写失败测试**（FakeOrca + `clock()`，`mkDeps(o, { now: c.now, monotonic: c.monotonic })`；`o.screens` 给出画面）
+- [x] **Step 1: 写失败测试**（FakeOrca + `clock()`，`mkDeps(o, { now: c.now, monotonic: c.monotonic })`；`o.screens` 给出画面）
 
 ```ts
 // 沿用 orca-sync.test.ts 的 world() 写法：FakeOrca + seedRunningTeam + clock()；牵头岗 builder@duo，被观察的岗位 checker@duo（term-c）。
@@ -263,10 +265,10 @@ test('at reset with "continuing automatically" on screen: no continue line, due 
 //  · 重启后首轮只观察，暂停截止时间从注册表读回：新建 LoopState（initialState）再扫描，不重复通知，到点仍然发“继续”。
 //  · 某岗位 terminalRead 抛错：该岗位没有信号，其它岗位的信号照常；扫描不中断。
 ```
-- [ ] **Step 2: 运行确认失败。**
-- [ ] **Step 3: 实现。** 把识别、通知、到点处理拆成小函数，每个 ≤ 50 行；`step()` 里对 `no_progress` / `owner_idle` / `overdue` 在 `isUsagePaused` 为真时直接返回。
-- [ ] **Step 4: 运行确认通过** — 连同 `packages/core/test/commands/dispatcher` 全部 PASS。
-- [ ] **Step 5: 提交** — `git commit -m "feat(patrol): context_low 与 usage_limit 画面信号（含自动继续）"`
+- [x] **Step 2: 运行确认失败。**
+- [x] **Step 3: 实现。** 把识别、通知、到点处理拆成小函数，每个 ≤ 50 行；`step()` 里对 `no_progress` / `owner_idle` / `overdue` 在 `isUsagePaused` 为真时直接返回。
+- [x] **Step 4: 运行确认通过** — 连同 `packages/core/test/commands/dispatcher` 全部 PASS。
+- [x] **Step 5: 提交** — `git commit -m "feat(patrol): context_low 与 usage_limit 画面信号（含自动继续）"`（已提交：`26e11c8`（实际顺序：先实现后补测试，补了 10 项变异检查——把关键行为逐个改坏，每项都被测试抓到））
 
 ### Task 7: 展示
 
@@ -274,13 +276,13 @@ test('at reset with "continuing automatically" on screen: no continue line, due 
 - Modify: `packages/core/src/commands/dispatcher/attention.ts`（`AttentionReport.signals` 的行多带 `detail` 与服务端算好的 `summary`：`剩余 5%`、`预计 15:00 重置`、`重置后会自动继续`）、`orca-sync.ts`（卡片注释 `⚠ 上下文快满`、`⚠ 用量用完（15:00 重置）`；同一岗位多个信号取舍：level 高者优先，同级 `usage_limit` 优先，其次 `LADDERS` 声明顺序，`context_low` 最后）、`packages/core/src/server/api-read.ts:138`（`listPatrolState(address)` 把岗位地址当团队名传，岗位详情的信号恒为空——必须先修）、`packages/web/src/pages/{Inbox,PostDetail}.tsx`、`packages/cli/src/{output.ts,tui/items.ts}`
 - Test: `attention.test.ts`、`orca-sync.test.ts`（显式打开 `worktree_comment`）、`api-read.test.ts`、`packages/web/test/pages.test.tsx`、`packages/cli/test/`
 
-- [ ] **Step 1: 写失败测试**：`wl attention --json` 里画面信号行带 `summary` 且 `detail` 不含会话标记原文；岗位详情现在能列出该岗位的信号（修复 `api-read.ts:138`）；多信号取舍规则；Inbox / 岗位详情 / TUI 都显示 `summary` 而不是各自解析。
-- [ ] **Step 2–4:** 失败 → 实现 → 通过。
-- [ ] **Step 5: 提交** — `git commit -m "feat(attention): 画面信号的摘要与展示，修复岗位详情的信号取数"`
+- [x] **Step 1: 写失败测试**：`wl attention --json` 里画面信号行带 `summary` 且 `detail` 不含会话标记原文；岗位详情现在能列出该岗位的信号（修复 `api-read.ts:138`）；多信号取舍规则；Inbox / 岗位详情 / TUI 都显示 `summary` 而不是各自解析。
+- [x] **Step 2–4:** 失败 → 实现 → 通过。
+- [x] **Step 5: 提交** — `git commit -m "feat(attention): 画面信号的摘要与展示，修复岗位详情的信号取数"`（已提交：`778ffc7`，另有 `86836a3`（画面信号不产生未读键，Task 7 遗漏））
 
 ### Task 8: 文档与真机核对
 
-- [ ] README：`wl attention` 的“处理中的信号”里多了哪两种、含义、暂停与自动继续的规则；写明模式依据 claude 2.1.310，换版本后若不触发先看 `spikes/REPORT.md`。
-- [ ] **真机核对（取真实画面）**：用 `spikes/phase-3d2.ts sample <handle> claude-context-low` / `claude-usage-limit` 在画面真的出现这两种提示时存样本（入库前人工检查有无对话内容与敏感信息），替换 provisional 样本，核对：模式是否仍然匹配、`·  resets …` 的真实写法、提示在画面里的位置（是否在最后 40 行内）、窄面板的截断、限额时有没有弹 `/rate-limit-options` 菜单、重置后提示是否留屏、自动继续的 `{when}` 写法。
-- [ ] **端到端**：调度员运行时对真实 claude 观察一次 `context_low`（把 `autocompact` 阈值调低或灌入长上下文）；`usage_limit` 无法主动触发，依赖真实遇到或手工往终端打一行样本文字（只能验证识别与暂停，验证不了 Claude 自己的自动继续）。
-- [ ] 结果记入 `spikes/REPORT.md`，把 provisional 标记按核对结果改掉；提交 — `git commit -m "docs: 画面信号的说明与真机结果"`
+- [x] README：`wl attention` 的“处理中的信号”里多了哪两种、含义、暂停与自动继续的规则；写明模式依据 claude 2.1.310，换版本后若不触发先看 `spikes/REPORT.md`。（`738675b`）
+- [ ] **真机核对（取真实画面）**：用 `spikes/phase-3d2.ts sample <handle> claude-context-low` / `claude-usage-limit` 在画面真的出现这两种提示时存样本（入库前人工检查有无对话内容与敏感信息），替换 provisional 样本，核对：模式是否仍然匹配、`·  resets …` 的真实写法、提示在画面里的位置（是否在最后 40 行内）、窄面板的截断、限额时有没有弹 `/rate-limit-options` 菜单、重置后提示是否留屏、自动继续的 `{when}` 写法。（**未做**：画面上还没出现过这两种提示；样本与模式仍是 provisional）
+- [ ] **端到端**：调度员运行时对真实 claude 观察一次 `context_low`（把 `autocompact` 阈值调低或灌入长上下文）；`usage_limit` 无法主动触发，依赖真实遇到或手工往终端打一行样本文字（只能验证识别与暂停，验证不了 Claude 自己的自动继续）。（**未做**，依赖上一项）
+- [ ] 结果记入 `spikes/REPORT.md`，把 provisional 标记按核对结果改掉；提交 — `git commit -m "docs: 画面信号的说明与真机结果"`（部分完成：`738675b` 已把“已实现 / 仍是 provisional”记入 REPORT 与 README；provisional 标记待真机核对后再改）

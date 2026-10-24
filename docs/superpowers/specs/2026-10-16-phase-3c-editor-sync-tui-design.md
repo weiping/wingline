@@ -1,7 +1,7 @@
 # 雁阵 Wingline 阶段 3C：团队编辑器、Orca 界面同步与 `wl tui` 设计
 
 - 日期：2026-10-16
-- 状态：设计中（未实现，2026-10-22 复审已并入正文）—— 实现计划见 `docs/superpowers/plans/2026-10-16-phase-3c-editor-sync-tui.md`
+- 状态：**已实现**（2026-10-23 合并 PR #11；实施前复审已并入正文，实现期的探针结论与两处增补——共用 worktree 的合并写入、`task dispatch`/`done` 后即时同步——已回写正文；改动与实现期差异见 `docs/superpowers/plans/2026-10-16-phase-3c-editor-sync-tui.md`）
 - 范围：阶段 3（控制台与恢复）子项目 C：控制台的团队编辑器（保存 + 预演）与“关于与诊断”页、`wl up --draft`、由调度员把状态同步到 Orca 原生界面（工作区状态、卡片注释）、`wl tui`（总览 / 收件箱 / 时间线，可处理待办）。
 - 依赖：阶段 3B（`docs/superpowers/specs/2026-10-16-phase-3b-console-design.md`，下称 3B：服务、登录与安全、写接口约定、按团队的只读快照）、阶段 3A（`auditedCommands`、`TimelineEvent`、`wl log` 的游标）、阶段 2B（巡查循环与 `PATROL_INTERVAL_MS`、重启后首轮只观察、`patrol:` 字段与 `patrolDelta` 规格哈希规则、`worktree_comment`）、阶段 1（`loadTeamSpec` 的校验、`wl up`）。
 - 不含：页面上的 `up`/`down`/应用草稿、全局配置文件、修改终端标题、未读红点、TUI 中的任务看板与任务详情、编辑 NORMS / brief 文件内容。
@@ -261,7 +261,9 @@ packages/core/src/commands/about.ts    # 关于与诊断（异步）
 packages/core/src/server/api-spec.ts   # GET spec、validate、GET about（buildRouter 注册）
 packages/core/src/server/api-write.ts  # 保存 / 丢弃草稿登记 WRITE_ROUTES、WriteCommands、CONSOLE_AUDIT；auditedWriteCommands(prefix)
 packages/web/src/pages/Edit.tsx、Settings.tsx
-packages/cli/src/tui/                  # screen.ts（备用屏幕、差分、恢复）、width.ts（cellWidth）、keys.ts、views/*.ts、app.ts
+packages/cli/src/tui/                  # 实现时拆成：screen.ts（备用屏幕、差分、恢复）、width.ts（cellWidth）、keys.ts、input.ts（LineInput）、
+                                       #   types.ts、reduce.ts（initialTuiState、reduce）、render.ts（renderView）、items.ts（收件箱 / 总览的条目与动作）、
+                                       #   command.ts、text.ts、views/{overview,inbox,timeline,picker}.ts、app.ts（runTui；重新导出 reduce / renderView）
 ```
 
 3B 的 spec 已把快照模块定在 `core/src/view/`（而不是 `server/`），以便 TUI 复用。

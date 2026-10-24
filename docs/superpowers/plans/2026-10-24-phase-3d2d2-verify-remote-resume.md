@@ -4,7 +4,7 @@
 
 **Goal:** 写了 `environment` 的岗位接回后，`wl restore` 核对“接回提示”确实落进了要接回的那个会话；落进了别的会话（包装脚本没透传 `--resume`，VM 里起的是全新会话）就报 `uncertain`，不再静默地声称接回成功。
 
-> **状态（2026-10-24）：已实现并在 Lima 真机上验证**（Task 1–3；全量 115 个文件、1598 个用例通过）。真机暴露了标识会重复的缺陷，已改为并入会话标记（`resumeToken`），见 `spikes/REPORT.md` “续二”。
+> **状态（2026-10-24）：已实现并在 Lima 真机上验证**（Task 1–3；全量 115 个文件、1598 个用例通过）。真机暴露了标识会重复的缺陷，已改为并入会话标记（`resumeToken`），见 `spikes/REPORT.md` “续二”。 2026-10-25 回填：合并于 PR #15（`7222b82`）。未验证：搜得到但很慢（3 次 × 2 秒都没搜到）的真机、没有同路径挂载的 VM；3 次 × 2 秒只有几次样本支持。
 
 **起因:** 真机反例（`spikes/REPORT.md` “包装脚本不透传参数的反例”）：包装脚本丢掉 `--resume <id>` 时，VM 里起的是同样空闲的全新 claude，`restore` 报“已接回原会话”、退出码 0、岗位 `live`，接回提示落进了新会话。
 
@@ -47,7 +47,7 @@
   - `type Landing = { kind: 'confirmed' } | { kind: 'mismatch'; landed: string[] } | { kind: 'unknown'; why: string }`
   - `verifyLanding(deps: CommandDeps, a: { agent: string; environment: string; token: string; expected: string }, o: { tries: number; pauseMs: number }): Promise<Landing>`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```ts
 test('noticeToken is WLR- plus 8 hex, stable for one key and different across restore generations', () => {
@@ -68,10 +68,10 @@ test('verifyLanding retries until the index catches up', async () => {
   // 第一次 sessions 为空、第二次出现：用 o.faults 或在 pauseMs 回调里 push sessions
 })
 ```
-- [ ] **Step 2: 运行确认失败。**
-- [ ] **Step 3: 实现** 上述四个导出；`verifyLanding` 内部复用 `markerHighlighted`，搜索失败（`WinglineError`）记为 `unknown`。
-- [ ] **Step 4: 运行确认通过。**
-- [ ] **Step 5: 提交** — `git commit -m "feat(restore): 接回提示的唯一标识与落点核对"`
+- [x] **Step 2: 运行确认失败。**
+- [x] **Step 3: 实现** 上述四个导出；`verifyLanding` 内部复用 `markerHighlighted`，搜索失败（`WinglineError`）记为 `unknown`。
+- [x] **Step 4: 运行确认通过。**
+- [x] **Step 5: 提交** — `git commit -m "feat(restore): 接回提示的唯一标识与落点核对"`（已提交：`996fe8d`；真机暴露标识会重复后又有 `849fdb6`（并入会话标记））
 
 ### Task 2: 接进 `settleResume` 与展示
 
@@ -83,7 +83,7 @@ test('verifyLanding retries until the index catches up', async () => {
 - Consumes: Task 1 的四个导出
 - Produces: 远端岗位接回后的结果：通过 → `{ outcome: 'resumed', sessionId }`；没能核对 → 加 `note`；不通过 → `{ outcome: 'uncertain', sessionId, reason, retry }`
 
-- [ ] **Step 1: 写失败测试**（沿用文件里 3D-2 的 `seed(o, {}, ENV_YAML)`；标识用 `noticeToken(restoreKey('duo','builder',0,'notice'))` 算出，不写死）
+- [x] **Step 1: 写失败测试**（沿用文件里 3D-2 的 `seed(o, {}, ENV_YAML)`；标识用 `noticeToken(restoreKey('duo','builder',0,'notice'))` 算出，不写死）
 
 ```ts
 test('remote post: the notice carries the token, and when it landed in the resumed session the result is a plain resumed', async () => {
@@ -108,13 +108,13 @@ test('remote post: when the notice is skipped (screen not clear) there is nothin
 ```
 CLI：`restorePostLines` 把 `note` 显示在岗位行下面（`注：…`），`uncertain` 的退出码仍是 3。
 
-- [ ] **Step 2: 运行确认失败。**
-- [ ] **Step 3: 实现**；`settleResume` 里发提示前后的逻辑拆出 `sendNotice` 与 `landingResult` 两个小函数，保持每个 ≤ 50 行。
-- [ ] **Step 4: 运行确认通过** — `tsc -p tsconfig.typecheck.json` 与全量 `vitest run`。
-- [ ] **Step 5: 提交** — `git commit -m "feat(restore): 远端岗位接回后核对提示落进了原会话"`
+- [x] **Step 2: 运行确认失败。**
+- [x] **Step 3: 实现**；`settleResume` 里发提示前后的逻辑拆出 `sendNotice` 与 `landingResult` 两个小函数，保持每个 ≤ 50 行。
+- [x] **Step 4: 运行确认通过** — `tsc -p tsconfig.typecheck.json` 与全量 `vitest run`。
+- [x] **Step 5: 提交** — `git commit -m "feat(restore): 远端岗位接回后核对提示落进了原会话"`（已提交：`b4891c3`）
 
 ### Task 3: 文档与真机
 
-- [ ] spec 新增第 5.4 节；README 把“后果是静默的”改成“`wl restore` 会核对，落进别的会话会报 `uncertain`”，保留自查办法；`spikes/REPORT.md` 记录真机结果。
-- [ ] **真机**（人或 Claude 在有 `lima-agent` 的机器上做）：(1) 透传的包装脚本：`wl restore` 报 `resumed` 且不带 `note`；(2) 不透传的包装脚本：报 `uncertain`，原因里写出新会话 ID；(3) 两种情形下 `orca search --environment` 能在几秒内搜到带标识的提示（决定 3 次 × 2 秒够不够）。
-- [ ] 提交 — `git commit -m "docs: 远端接回核对的说明与真机结果"`
+- [x] spec 新增第 5.4 节；README 把“后果是静默的”改成“`wl restore` 会核对，落进别的会话会报 `uncertain`”，保留自查办法；`spikes/REPORT.md` 记录真机结果。
+- [x] **真机**（人或 Claude 在有 `lima-agent` 的机器上做）：(1) 透传的包装脚本：`wl restore` 报 `resumed` 且不带 `note`；(2) 不透传的包装脚本：报 `uncertain`，原因里写出新会话 ID；(3) 两种情形下 `orca search --environment` 能在几秒内搜到带标识的提示（决定 3 次 × 2 秒够不够）。
+- [x] 提交 — `git commit -m "docs: 远端接回核对的说明与真机结果"`（已提交：`121eccc`）
