@@ -235,9 +235,12 @@ export async function restoreAll(
   a: { waitOrcaMs?: number; dryRun?: boolean; noTasks?: boolean; as?: string },
   o: { restoreOne: (a: RestoreArgs) => Promise<RestoreResult>; sleep?: (ms: number) => Promise<void> },
 ): Promise<RestoreAllResult> {
+  const up = deps.registry.listTeams().filter((x) => x.status === 'up')
+  // 没有运行中的团队就没什么可恢复的：不用为它等 Orca（登录时 Orca 可能一直没起来，白等整个期限再报错只是噪音）
+  if (up.length === 0) return { teams: [] }
   if (a.waitOrcaMs !== undefined) await waitForOrca(deps, a.waitOrcaMs, o.sleep ?? defaultSleep)
   const teams: RestoreAllResult['teams'] = []
-  for (const t of deps.registry.listTeams().filter((x) => x.status === 'up')) {
+  for (const t of up) {
     const args: RestoreArgs = {
       team: t.name, ...(a.dryRun !== undefined ? { dryRun: a.dryRun } : {}), ...(a.noTasks !== undefined ? { noTasks: a.noTasks } : {}), ...(a.as !== undefined ? { as: a.as } : {}),
     }

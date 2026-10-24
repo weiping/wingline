@@ -61,3 +61,16 @@ test('an empty key list is a no-op and a removed key can be added again', () => 
   expect(r.listUnreadMarks('duo')).toEqual(['question:m1'])
   r.close()
 })
+
+test('lastPatrolEventOf returns the newest event among the given actions, however many other events follow', () => {
+  const r = Registry.open(tmpDb())
+  expect(r.lastPatrolEventOf('duo', ['unread_gave_up', 'unread_reset'])).toBeNull()
+  r.appendPatrolEvent({ team: 'duo', action: 'unread_gave_up', outcome: 'ok' })
+  r.appendPatrolEvent({ team: 'other', action: 'unread_reset', outcome: 'ok' })
+  for (let i = 0; i < 50; i++) r.appendPatrolEvent({ team: 'duo', action: 'scan', outcome: 'ok' })
+  expect(r.lastPatrolEventOf('duo', ['unread_gave_up', 'unread_reset'])).toMatchObject({ team: 'duo', action: 'unread_gave_up' })
+  r.appendPatrolEvent({ team: 'duo', action: 'unread_reset', outcome: 'ok' })
+  expect(r.lastPatrolEventOf('duo', ['unread_gave_up', 'unread_reset'])).toMatchObject({ action: 'unread_reset' })
+  r.close()
+})
+

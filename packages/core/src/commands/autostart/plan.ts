@@ -10,6 +10,8 @@ interface Step {
   args: string[]
   /** 失败不算错（例如 bootout 一个还没加载的代理）。 */
   allowFail?: boolean
+  /** 失败后再试几次（每次间隔 1 秒）：bootout 返回时旧代理可能还没卸载完，紧接着的 bootstrap 会报 I/O 错误。 */
+  retries?: number
 }
 
 export interface AutostartPlan {
@@ -90,25 +92,22 @@ function unitFile(command: string[], env: string, log: string): string {
 const unsupported = (why: string) =>
   new WinglineError('input', 'autostart_unsupported', `这个平台暂不支持自启动：${why}`, { hint: '登录后请手动执行 wl restore --all' })
 
-/** 纯函数：生成文件内容与要执行的系统命令，不碰文件系统。 */
-export function planAutostart(o: PlanOptions): AutostartPlan {
+export type TargetOptions = Pick<PlanOptions, 'platform' | 'homeDir' | 'uid' | 'user' | 'home'>
+
+/**
+ * 文件位置、日志路径与要执行的系统命令（`file.content` 为空）。卸载和查看状态只需要这些：
+ * 不要求命令里的 node / orca 路径能用于安装，否则环境一变（orca 只剩裸名、node 搬家）反而卸载不了已经装好的文件。
+ */
+export function planTargets(o: TargetOptions): AutostartPlan {
   if (o.platform !== 'darwin' && o.platform !== 'linux') throw unsupported(o.platform === 'win32' ? 'Windows 要等探针 5 之后' : o.platform)
-  parseDuration(o.waitOrca)
-  const c = absoluteSelfCommand({
-    platform: o.platform, node: o.node, script: o.script, home: o.home, orca: o.orca,
-    args: ['restore', '--all', '--wait-orca', o.waitOrca, '--actor', 'autostart'],
-  })
-  const command = [c.file, ...c.args]
-  const env = pathEnv(o.node, o.orca)
   const logPath = P.join(o.home, 'logs', 'autostart.log')
   if (o.platform === 'darwin') {
     if (o.uid === undefined) throw unsupported('无法确定用户 ID')
-    const target = `gui/${o.uid}/${LABEL}`
     const file = P.join(o.homeDir, 'Library', 'LaunchAgents', `${LABEL}.plist`)
-    const bootout = { file: '/bin/launchctl', args: ['bootout', target], allowFail: true }
+    const bootout = { file: '/bin/launchctl', args: ['bootout', `gui/${o.uid}/${LABEL}`], allowFail: true }
     return {
-      platform: 'darwin', file: { path: file, content: plist(command, env, logPath) }, logPath,
-      register: [bootout, { file: '/bin/launchctl', args: ['bootstrap', `gui/${o.uid}`, file] }],
+      platform: 'darwin', file: { path: file, content: '' }, logPath,
+      register: [bootout, { file: '/bin/launchctl', args: ['bootstrap', `gui/${o.uid}`, file], retries: 2 }],
       unregister: [bootout],
     }
   }
@@ -116,10 +115,24 @@ export function planAutostart(o: PlanOptions): AutostartPlan {
   return {
     platform: 'linux', ...(o.user !== undefined ? { user: o.user } : {}), logPath,
     probe: { file: systemctl, args: ['--user', 'show-environment'] },
-    file: { path: P.join(o.homeDir, '.config', 'systemd', 'user', UNIT), content: unitFile(command, env, logPath) },
+    file: { path: P.join(o.homeDir, '.config', 'systemd', 'user', UNIT), content: '' },
     register: [{ file: systemctl, args: ['--user', 'daemon-reload'] }, { file: systemctl, args: ['--user', 'enable', UNIT] }],
     unregister: [{ file: systemctl, args: ['--user', 'disable', UNIT], allowFail: true }, { file: systemctl, args: ['--user', 'daemon-reload'], allowFail: true }],
   }
+}
+
+/** 纯函数：生成文件内容与要执行的系统命令，不碰文件系统。 */
+export function planAutostart(o: PlanOptions): AutostartPlan {
+  const plan = planTargets(o)
+  parseDuration(o.waitOrca)
+  const c = absoluteSelfCommand({
+    platform: o.platform, node: o.node, script: o.script, home: o.home, orca: o.orca,
+    args: ['restore', '--all', '--wait-orca', o.waitOrca, '--actor', 'autostart'],
+  })
+  const command = [c.file, ...c.args]
+  const env = pathEnv(o.node, o.orca)
+  const content = plan.platform === 'darwin' ? plist(command, env, plan.logPath) : unitFile(command, env, plan.logPath)
+  return { ...plan, file: { ...plan.file, content } }
 }
 
 /** 把 ExecStart 的一行拆回词（与 execWord 互逆）。 */

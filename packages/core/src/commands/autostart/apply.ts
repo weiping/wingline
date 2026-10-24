@@ -9,8 +9,12 @@ export type FsLike = Pick<typeof fs, 'mkdirSync' | 'writeFileSync' | 'readFileSy
 /** autostart.log 超过这个大小，安装时先改名为 autostart.log.1（覆盖已有的 .1）。 */
 export const LOG_ROTATE_BYTES = 1024 * 1024
 
-type Step = NonNullable<AutostartPlan['probe']>
+type Step = NonNullable<AutostartPlan['probe']> & { retries?: number }
 type Reply = Awaited<ReturnType<Exec>>
+export type Sleep = (ms: number) => Promise<void>
+
+const RETRY_PAUSE_MS = 1000
+const defaultSleep: Sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 /** 命令起不来（ENOENT 等）按退出码 127 处理，不让它直接抛出去。 */
 async function run(exec: Exec, c: Step): Promise<Reply> {
@@ -19,6 +23,16 @@ async function run(exec: Exec, c: Step): Promise<Reply> {
   } catch (err) {
     return { code: 127, stdout: '', stderr: err instanceof Error ? err.message : String(err) }
   }
+}
+
+/** 带 retries 的步骤失败后停一秒再试，最多多试 retries 次。 */
+async function runStep(exec: Exec, c: Step, sleep: Sleep): Promise<Reply> {
+  let r = await run(exec, c)
+  for (let i = 0; r.code !== 0 && i < (c.retries ?? 0); i++) {
+    await sleep(RETRY_PAUSE_MS)
+    r = await run(exec, c)
+  }
+  return r
 }
 
 function failure(c: Step, r: Reply): WinglineError {
@@ -35,10 +49,10 @@ function rotateLog(logPath: string, fsx: FsLike): void {
 }
 
 /**
- * 写文件（先写临时文件再改名）并注册；注册失败则恢复原来的文件（原来没有就删掉刚写的），不留半成品。
+ * 写文件（先写临时文件再改名）并注册；注册失败则恢复原来的文件并重新加载它（原来没有就删掉刚写的），不留半成品。
  * Linux 上没有 systemd 用户会话 → autostart_unsupported，什么都不写。
  */
-export async function applyAutostart(plan: AutostartPlan, exec: Exec, fsx: FsLike = fs): Promise<void> {
+export async function applyAutostart(plan: AutostartPlan, exec: Exec, fsx: FsLike = fs, sleep: Sleep = defaultSleep): Promise<void> {
   if (plan.probe) {
     const r = await run(exec, plan.probe)
     if (r.code !== 0) {
@@ -56,13 +70,17 @@ export async function applyAutostart(plan: AutostartPlan, exec: Exec, fsx: FsLik
     fsx.writeFileSync(tmp, plan.file.content)
     fsx.renameSync(tmp, plan.file.path)
     for (const c of plan.register) {
-      const r = await run(exec, c)
+      const r = await runStep(exec, c, sleep)
       if (r.code !== 0 && !c.allowFail) throw failure(c, r)
     }
   } catch (err) {
     fsx.rmSync(tmp, { force: true })
-    if (previous !== null) fsx.writeFileSync(plan.file.path, previous)
-    else fsx.rmSync(plan.file.path, { force: true })
+    if (previous === null) fsx.rmSync(plan.file.path, { force: true })
+    else {
+      // 旧文件放回去，并把旧代理重新加载回来（register 里的 bootout 可能已经把它卸掉了）；尽力而为，失败不再覆盖原来的错误
+      fsx.writeFileSync(plan.file.path, previous)
+      for (const c of plan.register) await runStep(exec, c, sleep)
+    }
     throw err instanceof WinglineError ? err : new WinglineError('internal', 'autostart_failed', `安装自启动失败：${err instanceof Error ? err.message : String(err)}`, { cause: err })
   }
 }

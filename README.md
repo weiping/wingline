@@ -212,7 +212,7 @@ wl autostart uninstall              # 只删雁阵自己的那一个文件，日
 | Windows | — | 暂不支持（`autostart_unsupported`），请登录后手动执行 `wl restore --all` |
 
 - 日志在 `<WINGLINE_HOME>/logs/autostart.log`；安装时超过 1 MB 会先改名为 `autostart.log.1`。
-- 命令里的 node、入口脚本、`--home`、`--orca` 全部写绝对路径，并显式带上 `PATH`（node 与 orca 所在目录）——登录时没有交互式 shell 的环境。node 升级或搬家后，`wl autostart status` 会提示重新 `wl autostart install`。
+- 命令里的 node、入口脚本、`--home`、`--orca` 全部写绝对路径，并显式带上 `PATH`（node 与 orca 所在目录）——登录时没有交互式 shell 的环境。node 或入口脚本如果来自带版本号的目录（nvm 的 `~/.nvm/versions/node/v24.18.0/bin/node`、pnpm 的 `…/.pnpm/@wingline+cli@x.y.z/…`），升级或清理后路径会失效，登录时会因找不到文件而失败；`wl autostart status` 会列出已不存在的路径，重新 `wl autostart install` 即可。
 - 自启动执行时在时间线上的执行者是 `autostart`。卸载雁阵之前请先 `wl autostart uninstall`，否则登录时仍会尝试执行。
 
 ### 时间线：`wl log`

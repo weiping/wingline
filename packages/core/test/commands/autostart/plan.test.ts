@@ -25,7 +25,7 @@ test('macOS: a LaunchAgent with RunAtLoad, the absolute command, a PATH and the 
   ])
   expect(p.register).toEqual([
     { file: '/bin/launchctl', args: ['bootout', 'gui/501/wingline.restore'], allowFail: true },
-    { file: '/bin/launchctl', args: ['bootstrap', 'gui/501', p.file.path] },
+    { file: '/bin/launchctl', args: ['bootstrap', 'gui/501', p.file.path], retries: 2 },
   ])
   expect(p.unregister).toEqual([{ file: '/bin/launchctl', args: ['bootout', 'gui/501/wingline.restore'], allowFail: true }])
 })
@@ -87,3 +87,9 @@ test('the wait budget is written through; an invalid one is rejected before anyt
   expect(execStart(plan({ waitOrca: '2h' }))).toContain('--wait-orca 2h')
   expect(() => plan({ waitOrca: 'soon' })).toThrow(expect.objectContaining({ code: 'duration_invalid' }))
 })
+
+test('macOS: bootstrap is retried twice (bootout may not have finished unloading the old agent)', () => {
+  const p = plan({ platform: 'darwin', homeDir: '/Users/me', home: '/Users/me/.wingline' })
+  expect(p.register[1]).toMatchObject({ args: ['bootstrap', 'gui/501', p.file.path], retries: 2 })
+})
+

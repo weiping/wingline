@@ -118,3 +118,44 @@ test('uninstall runs unregister, removes only our file and leaves the logs; when
   g.exec.mockResolvedValue({ code: 1, stdout: '', stderr: 'not found' })
   expect(await removeAutostart(g.plan, g.exec)).toEqual({ removed: false })
 })
+
+// —— 评审跟进：macOS 重装的竞态 ——
+
+const bootstrap = { file: '/bin/launchctl', args: ['bootstrap', 'gui/501', 'p'], retries: 2 }
+const bootout = { file: '/bin/launchctl', args: ['bootout', 'gui/501/wingline.restore'], allowFail: true }
+
+test('a step with retries is tried again (after a pause) until it succeeds', async () => {
+  const w = mk({ platform: 'darwin', probe: undefined, register: [bootout, bootstrap] })
+  let n = 0
+  w.exec.mockImplementation(async (_f, args) => (args[0] === 'bootstrap' && ++n < 3 ? { code: 5, stdout: '', stderr: 'Input/output error' } : ok))
+  const sleeps: number[] = []
+  await applyAutostart(w.plan, w.exec, fs, async (ms) => { sleeps.push(ms) })
+  expect(w.exec.mock.calls.map((c) => c[1][0])).toEqual(['bootout', 'bootstrap', 'bootstrap', 'bootstrap'])
+  expect(sleeps).toEqual([1000, 1000])
+})
+
+test('retries that run out are autostart_failed', async () => {
+  const w = mk({ platform: 'darwin', probe: undefined, register: [bootout, bootstrap] })
+  w.exec.mockImplementation(async (_f, args) => (args[0] === 'bootstrap' ? { code: 5, stdout: '', stderr: 'Input/output error' } : ok))
+  await expect(applyAutostart(w.plan, w.exec, fs, async () => {})).rejects.toMatchObject({ code: 'autostart_failed' })
+  expect(w.exec.mock.calls.filter((c) => c[1][0] === 'bootstrap')).toHaveLength(3) // 第一次安装：没有旧代理要重新加载
+})
+
+test('a failed re-install restores the previous file and loads the previous agent again', async () => {
+  const w = mk({ platform: 'darwin', probe: undefined, register: [bootout, { ...bootstrap, retries: 0 }] })
+  fs.mkdirSync(path.dirname(w.plan.file.path), { recursive: true })
+  fs.writeFileSync(w.plan.file.path, 'OLD')
+  w.exec.mockImplementation(async (_f, args) => (args[0] === 'bootstrap' ? { code: 5, stdout: '', stderr: 'Input/output error' } : ok))
+  await expect(applyAutostart(w.plan, w.exec, fs, async () => {})).rejects.toMatchObject({ code: 'autostart_failed' })
+  expect(fs.readFileSync(w.plan.file.path, 'utf8')).toBe('OLD')
+  expect(w.exec.mock.calls.map((c) => c[1][0])).toEqual(['bootout', 'bootstrap', 'bootout', 'bootstrap']) // 回滚：重新 bootout + bootstrap 旧文件
+})
+
+test('a failed first install has nothing to reload: only the file is removed', async () => {
+  const w = mk({ platform: 'darwin', probe: undefined, register: [bootout, { ...bootstrap, retries: 0 }] })
+  w.exec.mockImplementation(async (_f, args) => (args[0] === 'bootstrap' ? { code: 5, stdout: '', stderr: 'x' } : ok))
+  await expect(applyAutostart(w.plan, w.exec, fs, async () => {})).rejects.toMatchObject({ code: 'autostart_failed' })
+  expect(fs.existsSync(w.plan.file.path)).toBe(false)
+  expect(w.exec.mock.calls.map((c) => c[1][0])).toEqual(['bootout', 'bootstrap'])
+})
+
