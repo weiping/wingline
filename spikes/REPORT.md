@@ -776,3 +776,32 @@ WINGLINE_SPIKE_WORKTREE=<专用测试 worktree 选择器> pnpm tsx spikes/worktr
 - “包装脚本不透传参数”的反例（plan Task 4 第三项）：需要再起一个团队和一个真实 claude 会话，没做；README 的“包装脚本必须透传参数”仍只是依据 spec 和 3A 的行为写的，没有真机验证。
 - 没有同路径挂载的 VM（`cwd` 是 VM 内路径）和旧版 Orca（命中无 `snippet`）：只有单元测试，对应的 `uncertain` 分支没有真机。
 - 残留：这次在 VM 的 `~/.claude` 里留下了一个 claude 会话记录（`01962f92-…`，内容是雁阵的启动包与接回提示），没有删除。
+
+### 续：包装脚本不透传参数的反例（2026-10-24，同一台机器，claude 在 Lima VM `agent` 里）
+
+把 `launch` 换成 `claude-lima-noargs`：和用户的 `~/.local/bin/claude-lima` 一样，但最后一行 `exec "$HOME/.local/bin/claude" --permission-mode acceptEdits` 没有 `"$@"`。团队、环境、清理方式同上一节。
+
+**结果：静默的假成功（与 plan 原先预期的“应停在 `uncertain`”相反）**
+- `wl up` 后 VM 里的进程是 `claude --permission-mode acceptEdits`，按标记 `WLS-c3a20a55` 在 VM 里搜到原会话 `ad3fd22e-13fe-4b7c-b618-13c31961bf7c`。
+- 按 handle 关掉 builder 终端后，`wl restore --dry-run` 与 `wl restore` 都报“已接回原会话 ad3fd22e-…”，退出码 0，`wl ps` 为 `live`，`posts.session_id` 缓存为 `ad3fd22e-…`。
+- 但 VM 里新进程的参数仍是 `claude --permission-mode acceptEdits`，**没有 `--resume`**：wrapper 把追加的 `--resume <id>` 丢掉了，起的是全新会话。因为它同样空闲、画面正常，`settleResume` 的“等空闲 → 画面检查 → 发接回提示”全部通过。
+- 接回提示 `[雁阵] 重启后已接回本会话…` 落进了**新会话** `8647ac15-282b-430b-9921-143e9e2dcbb2`（以及上一节留下的 `01962f92-…`），**不在** `ad3fd22e-…` 里（用 `orca search --environment lima-agent` 按提示文字搜到的会话 ID 集合验证）。
+- 结论：wrapper 不透传参数时，雁阵会声称接回、缓存一个并没有接回的会话 ID，而岗位实际是丢了上下文的全新会话；目前没有任何检测。
+- 清理：`wl down --close`，终端与 VM 里的 claude 进程均已清空。VM 的 `~/.claude` 里多了一个会话记录（`ad3fd22e-…` 与 `8647ac15-…`），没有删除。
+
+**可行的检测思路（未实现，需要决定）**：接回提示发出后，用 `orca search --environment <env> "<提示里的独特文字>"` 看命中的会话 ID 是否等于要接回的那个；不等就把岗位记为 `uncertain` 并提示检查包装脚本。代价是多一次远端搜索，且要等索引（本机 `--fresh` 最多等 5 秒）。
+
+### 续二：接回后核对的真机结果（2026-10-24，同一台机器，Lima VM `agent` 里的 claude）
+
+实现见 `docs/superpowers/plans/2026-10-24-phase-3d2d2-verify-remote-resume.md`。同一个脚本跑两种包装脚本：用户自己的 `~/.local/bin/claude-lima`（透传）与 `claude-lima-noargs`（不透传）。
+
+| 包装脚本 | `wl restore` | 耗时 | VM 里的进程参数 |
+| --- | --- | --- | --- |
+| 透传 | `已接回原会话 b63a4341-…`，退出码 0，没有 `注：` | 3.8 秒 | `claude --permission-mode acceptEdits --resume b63a4341-…` |
+| 不透传 | `不确定`：接回提示落进了另一个会话（`f8c02349-…`），不是要接回的 `b45aaa26-…`，很可能没透传 `--resume`；退出码 3 | 5.5 秒 | `claude --permission-mode acceptEdits`（没有 `--resume`） |
+
+- 按标识搜到提示在几秒内就能做到（四次运行的整个 `restore` 都在 6 秒内，含接回、等空闲、发提示与核对），3 次 × 2 秒目前够用；样本只有这几次，没有测慢索引的情形。
+- **一个设计缺陷被真机暴露并修了**：第一版标识只由 (团队, 岗位, 代数) 的请求键哈希得到。第二轮测试换了注册表（同名团队），标识撞了，报告里“落进的会话”指向了上一轮留在 VM 里的老会话 `fe2056e5-…`，判对只是运气（新会话的提示还没索引到）；反过来，要接回的会话里若残留同样的标识会误判为通过。已改为并入会话标记（`resumeToken`），复测后落点指向这次新起的会话。
+- 清理：每轮结束 `wl down --close`，终端与 VM 里的 claude 进程均已清空。VM 的 `~/.claude` 里又多了几个会话记录，没有删除。
+- 没有做：搜得到但很慢（3 次都没搜到）的真机、没有同路径挂载的 VM。
+

@@ -271,6 +271,7 @@ function restorePostLines(p: RestorePost, team: string): string[] {
   for (const c of p.candidates ?? []) {
     out.push(`      候选 ${c.sessionId}  最后活动 ${c.updatedAt ?? '-'}  ${c.messageCount ?? 0} 条消息`)
   }
+  if (p.note) out.push(`      注：${p.note}`)
   const retry = p.retry ?? (p.outcome === 'ambiguous' && p.candidates?.length ? `wl restore ${team} --session ${p.address.split('@')[0]}=<id>` : undefined)
   if (retry) out.push(`      试：${retry}`)
   return out

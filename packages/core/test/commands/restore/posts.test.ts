@@ -1,12 +1,13 @@
 import os from 'node:os'
 import { expect, test } from 'vitest'
+import { WinglineError } from '../../../src/errors.js'
 import { renderBriefing } from '../../../src/brief/render.js'
 import type { PostRow } from '../../../src/registry/registry.js'
 import { loadTeamSpec } from '../../../src/spec/load.js'
 import { specHash } from '../../../src/spec/hash.js'
 import { DUO_YAML, mkTeam } from '../../spec/helpers.js'
 import { FakeOrca, mkDeps } from '../fake-client.js'
-import { restoreKey, restorePost } from '../../../src/commands/restore/posts.js'
+import { noticeToken, restoreKey, restorePost, resumeNotice, resumeToken, verifyLanding } from '../../../src/commands/restore/posts.js'
 import type { Launch } from '../../../src/commands/launch.js'
 
 /** 建一个 duo 团队：builder（claude，牵头岗）失效中、带标记 WLS-aaaa1111；worktree 已固定为 path:。 */
@@ -212,16 +213,22 @@ test('the lead is processed first and handle/status are updated', async () => {
 
 // —— 3D-2：写了 environment 的岗位 ——
 
+const T0 = resumeToken(restoreKey('duo', 'builder', 0, 'notice'), 'WLS-aaaa1111')
+const quick = { tries: 1, pauseMs: 0 }
 const ENV_YAML = DUO_YAML.replace('    agent: claude\n    model: opus\n', '    agent: claude\n    model: opus\n    environment: lima-agent\n')
 const vm = (over: Record<string, unknown> = {}) => ({ marker: 'WLS-aaaa1111', agent: 'claude', sessionId: 'vm-1', cwd: os.tmpdir(), environment: 'lima-agent', ...over })
 
 test('remote post: resumes the VM session found through --environment with launch + --resume', async () => {
   const s = seed(new FakeOrca(), {}, ENV_YAML)
-  s.o.sessions.push(vm())
-  const r = await restorePost(s.l, s.post, { dryRun: false, briefing: s.briefing })
+  s.o.sessions.push(vm(), vm({ marker: T0 }))
+  const r = await restorePost(s.l, s.post, { dryRun: false, briefing: s.briefing, verify: quick })
   expect(r).toEqual({ address: 'builder@duo', outcome: 'resumed', sessionId: 'vm-1' })
   expect(s.o.created.at(-1)!.command).toBe('claude --model opus --resume vm-1')
-  expect(s.o.searches).toEqual([{ query: '"WLS-aaaa1111"', agent: 'claude', environment: 'lima-agent' }])
+  expect(s.o.searches).toEqual([
+    { query: '"WLS-aaaa1111"', agent: 'claude', environment: 'lima-agent' },
+    { query: `"${T0}"`, agent: 'claude', environment: 'lima-agent' },
+  ])
+  expect(s.o.sent.at(-1)!.text).toBe(resumeNotice('builder@duo', T0))
   expect(s.registry.getPost('builder@duo')!.sessionId).toBe('vm-1')
 })
 
@@ -234,9 +241,9 @@ test('remote post: a local session with the same marker is not used, so it start
 
 test('remote post: --session skips the search entirely', async () => {
   const s = seed(new FakeOrca(), {}, ENV_YAML)
-  const r = await restorePost(s.l, s.post, { dryRun: false, override: 'vm-9', briefing: s.briefing })
+  const r = await restorePost(s.l, s.post, { dryRun: false, override: 'vm-9', briefing: s.briefing, verify: quick })
   expect(r).toMatchObject({ outcome: 'resumed', sessionId: 'vm-9' })
-  expect(s.o.searches).toEqual([])
+  expect(s.o.searches.map((x) => x.query)).toEqual([`"${T0}"`]) // 没有按会话标记搜；只有接回后核对的那一次
 })
 
 test('remote post: a VM-path cwd is uncertain, with nothing created and the retry command named', async () => {
@@ -260,4 +267,125 @@ test('a post without environment still searches locally (no --environment)', asy
   s.o.sessions.push(hit('s1'))
   await restorePost(s.l, s.post, { dryRun: false, briefing: s.briefing })
   expect(s.o.searches).toEqual([{ query: '"WLS-aaaa1111"', agent: 'claude' }])
+})
+
+// —— 核对远端岗位真的接回了原会话 ——
+
+const TOKEN = 'WLR-1a2b3c4d'
+const landed = (over: Record<string, unknown> = {}) => ({ marker: TOKEN, agent: 'claude', sessionId: 'vm-1', cwd: null, environment: 'lima-agent', ...over })
+const check = (deps: Parameters<typeof verifyLanding>[0]) => verifyLanding(deps, { agent: 'claude', environment: 'lima-agent', token: TOKEN, expected: 'vm-1' }, { tries: 3, pauseMs: 0 })
+
+test('noticeToken is WLR- plus 8 hex, stable for one key and different across restore generations', () => {
+  const k0 = restoreKey('duo', 'builder', 0, 'notice')
+  expect(noticeToken(k0)).toMatch(/^WLR-[0-9a-f]{8}$/)
+  expect(noticeToken(k0)).toBe(noticeToken(k0))
+  expect(noticeToken(k0)).not.toBe(noticeToken(restoreKey('duo', 'builder', 1, 'notice')))
+})
+
+test('resumeNotice without a token is exactly the old text; with one it ends with the token', () => {
+  expect(resumeNotice('builder@duo')).toBe('[雁阵] 重启后已接回本会话，你的地址仍是 builder@duo。')
+  expect(resumeNotice('builder@duo', TOKEN)).toBe(`[雁阵] 重启后已接回本会话，你的地址仍是 builder@duo。（接回标识 ${TOKEN}）`)
+})
+
+test('verifyLanding: confirmed when the token landed in the expected session, even next to a hit in another one', async () => {
+  const o = new FakeOrca(); const { deps } = mkDeps(o)
+  o.sessions.push(landed())
+  expect(await check(deps)).toEqual({ kind: 'confirmed' })
+  expect(o.searches).toEqual([{ query: `"${TOKEN}"`, agent: 'claude', environment: 'lima-agent' }])
+  o.sessions.unshift(landed({ sessionId: 'vm-new' }))
+  expect(await check(deps)).toEqual({ kind: 'confirmed' })
+})
+
+test('verifyLanding: mismatch when the token landed only in other sessions; an older notice with another token in the expected session does not help', async () => {
+  const o = new FakeOrca(); const { deps } = mkDeps(o)
+  o.sessions.push(landed({ marker: 'WLR-00000000' }), landed({ sessionId: 'vm-new' }))
+  expect(await check(deps)).toEqual({ kind: 'mismatch', landed: ['vm-new'] })
+})
+
+test('verifyLanding: no hit after all the tries is unknown, and so is a failing search (it never throws)', async () => {
+  const o = new FakeOrca(); const { deps } = mkDeps(o)
+  expect(await check(deps)).toMatchObject({ kind: 'unknown', why: expect.stringContaining('没有命中') })
+  expect(o.searches).toHaveLength(3)
+  o.searchError = new WinglineError('orca', 'runtime_unavailable', 'tunnel down')
+  expect(await check(deps)).toMatchObject({ kind: 'unknown', why: expect.stringContaining('tunnel down') })
+})
+
+test('verifyLanding retries until the index catches up', async () => {
+  const o = new FakeOrca(); const { deps } = mkDeps(o)
+  o.sessions.push(landed())
+  const real = o.search.bind(o)
+  let calls = 0
+  o.search = async (a) => (++calls === 1 ? [] : real(a))
+  expect(await check(deps)).toEqual({ kind: 'confirmed' })
+  expect(calls).toBe(2)
+})
+
+test('verifyLanding: a hit whose snippet does not highlight the whole token (partial-token recall) is not a hit', async () => {
+  const o = new FakeOrca(); const { deps } = mkDeps(o)
+  o.sessions.push(landed({ snippet: 'x [[wlr]] y' }))
+  expect(await check(deps)).toMatchObject({ kind: 'unknown' })
+})
+
+test('remote post: the notice landing in another session (the wrapper dropped --resume) is uncertain, names both sessions, keeps the cached session id', async () => {
+  const s = seed(new FakeOrca(), {}, ENV_YAML)
+  s.o.sessions.push(vm(), vm({ marker: T0, sessionId: 'vm-new' }))
+  const r = await restorePost(s.l, s.post, { dryRun: false, briefing: s.briefing, verify: quick })
+  expect(r).toMatchObject({ address: 'builder@duo', outcome: 'uncertain', sessionId: 'vm-1', retry: 'wl restore duo' })
+  expect(r.reason).toContain('vm-new')
+  expect(r.reason).toContain('vm-1')
+  expect(r.reason).toContain('--resume')
+  expect(s.registry.getPost('builder@duo')!.status).toBe('uncertain')
+  expect(s.registry.getPost('builder@duo')!.sessionId).toBe('vm-1')
+})
+
+test('remote post: an older notice in the resumed session does not make a dropped --resume pass (the token differs per restore generation)', async () => {
+  const s = seed(new FakeOrca(), {}, ENV_YAML)
+  s.o.sessions.push(vm(), vm({ marker: 'WLR-00000000', sessionId: 'vm-1' }), vm({ marker: T0, sessionId: 'vm-new' }))
+  expect((await restorePost(s.l, s.post, { dryRun: false, briefing: s.briefing, verify: quick })).outcome).toBe('uncertain')
+})
+
+test('remote post: nothing found or a failing search is resumed with a note, not a failure', async () => {
+  const s = seed(new FakeOrca(), {}, ENV_YAML)
+  s.o.sessions.push(vm())
+  const r = await restorePost(s.l, s.post, { dryRun: false, briefing: s.briefing, verify: quick })
+  expect(r).toMatchObject({ outcome: 'resumed', sessionId: 'vm-1', note: expect.stringContaining('未能确认') })
+  expect(s.registry.getPost('builder@duo')!.status).toBe('live')
+})
+
+test('remote post: the verification is retried while the index catches up', async () => {
+  const s = seed(new FakeOrca(), {}, ENV_YAML)
+  s.o.sessions.push(vm(), vm({ marker: T0 }))
+  const real = s.o.search.bind(s.o)
+  let tokenSearches = 0
+  s.o.search = async (a) => (a.query === `"${T0}"` && ++tokenSearches === 1 ? [] : real(a))
+  const r = await restorePost(s.l, s.post, { dryRun: false, briefing: s.briefing, verify: { tries: 3, pauseMs: 0 } })
+  expect(r).toEqual({ address: 'builder@duo', outcome: 'resumed', sessionId: 'vm-1' })
+  expect(tokenSearches).toBe(2)
+})
+
+test('local post: the notice text is unchanged and no verification search runs', async () => {
+  const s = seed(new FakeOrca())
+  s.o.sessions.push(hit('s1'))
+  const r = await restorePost(s.l, s.post, { dryRun: false, briefing: s.briefing })
+  expect(r).toEqual({ address: 'builder@duo', outcome: 'resumed', sessionId: 's1' })
+  expect(s.o.sent).toEqual([{ handle: 'term-1', text: '[雁阵] 重启后已接回本会话，你的地址仍是 builder@duo。', retryRequest: undefined }])
+  expect(s.o.searches).toHaveLength(1)
+})
+
+test('remote post: when the notice is skipped (screen not clear) there is nothing to verify', async () => {
+  const s = seed(new FakeOrca(), {}, ENV_YAML)
+  s.o.onCreate = () => { s.o.previews.set('term-1', 'Do you want to proceed?\n❯ 1. Yes') }
+  s.o.sessions.push(vm())
+  const r = await restorePost(s.l, s.post, { dryRun: false, briefing: s.briefing, verify: quick })
+  expect(r).toMatchObject({ outcome: 'resumed', noticeSkipped: expect.stringContaining('at_prompt') })
+  expect(s.o.searches.map((x) => x.query)).toEqual(['"WLS-aaaa1111"'])
+})
+
+test('resumeToken also depends on the post\'s session marker, so two registries (or a rebuilt team) with the same team/post/generation never share a token', () => {
+  const k = restoreKey('duo', 'builder', 0, 'notice')
+  expect(resumeToken(k, 'WLS-aaaa1111')).toMatch(/^WLR-[0-9a-f]{8}$/)
+  expect(resumeToken(k, 'WLS-aaaa1111')).toBe(resumeToken(k, 'WLS-aaaa1111'))
+  expect(resumeToken(k, 'WLS-aaaa1111')).not.toBe(resumeToken(k, 'WLS-bbbb2222'))
+  expect(resumeToken(k, 'WLS-aaaa1111')).not.toBe(noticeToken(k))
+  expect(resumeToken(k, null)).toMatch(/^WLR-[0-9a-f]{8}$/)
 })
