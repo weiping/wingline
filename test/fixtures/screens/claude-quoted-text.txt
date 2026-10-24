@@ -1,0 +1,16 @@
+# source: claude 2.1.310 binary strings, not captured (provisional)
+# negative sample: quoted or mid-line mentions only; nothing here is a real status line
+⏺ 好的，我先看一下这个文件。
+  ⎿  Read 120 lines
+⏺ 改动已完成，测试通过。
+  ⎿  $ pnpm test
+     ✓ 12 passed
+
+⏺ 屏幕底部会显示 Context low (5% remaining)，然后提示压缩。
+> 用户：You've hit your session limit 是什么意思？
+  下面是原文：“You've hit your session limit · resets 3pm”
+⏺ 这条提示 Usage limit reached · continuing automatically 表示它会自己继续。
+────────────────────────────────────────
+❯ 
+────────────────────────────────────────
+  ⏵⏵ accept edits on (shift+tab to cycle)

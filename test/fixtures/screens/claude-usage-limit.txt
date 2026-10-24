@@ -1,0 +1,13 @@
+# source: claude 2.1.310 binary strings, not captured (provisional)
+# layout and the "· resets 3pm (Asia/Shanghai)" suffix are assumed, not verified
+⏺ 好的，我先看一下这个文件。
+  ⎿  Read 120 lines
+⏺ 改动已完成，测试通过。
+  ⎿  $ pnpm test
+     ✓ 12 passed
+
+  ⎿  You've hit your session limit · resets 3pm (Asia/Shanghai)
+────────────────────────────────────────
+❯ 
+────────────────────────────────────────
+  ⏵⏵ accept edits on (shift+tab to cycle)
