@@ -21,7 +21,7 @@ export function samePath(a: string, b: string): boolean {
  * 整串高亮判据：Orca search 会把 `WLS-xxxx` 拆成 token，整串不在索引里时按部分 token（如 `wls`）
  * 召回任何含该 token 的会话（真机回执 search-claude：snippet 只高亮了 `[[wls]]`）。
  * 只有标记的每个字符都落在高亮区间里，才认定这条会话真的包含该标记；
- * snippet 为 null（如 --environment 命中扣留 evidence）一律不认。
+ * snippet 为 null（如旧版 Orca 扣留 evidence）一律不认。Orca 1.4.237 的 --environment 命中带 snippet（3D 探针 4），远端岗位另见 pick。
  * 小写化并去掉非字母数字后比较；相邻高亮区间拼接视为一个（高亮可能把拆开的 token 分开渲染）。
  */
 export function markerHighlighted(snippet: string | null, marker: string): boolean {
@@ -83,6 +83,12 @@ export async function findSession(
     hits = await deps.orca.search({ query: `"${post.sessionMarker}"`, agent: post.agent, ...(environment !== undefined ? { environment } : {}) })
   } catch (err) {
     if (!(err instanceof WinglineError)) throw err
+    // 环境名拼错：Orca 回 invalid_argument（经 run.ts 成为 orca 类），重跑永远是同样的结果，所以当输入错误抛出
+    if (environment !== undefined && err.kind === 'orca' && err.code === 'invalid_argument' && /--environment/.test(err.message)) {
+      throw new WinglineError('input', 'environment_not_found', `环境 ${environment} 没有登记：${err.message}`, {
+        hint: '环境名见 orca environment list；改了 team.yaml 里的 posts[].environment 之后需要 wl down 再 wl up',
+      })
+    }
     const reason = `会话搜索失败：${err.message}；重跑 wl restore ${post.team}`
     if (err.kind === 'input' || err.kind === 'internal') throw err
     return { kind: 'uncertain', reason }

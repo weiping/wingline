@@ -200,11 +200,23 @@ test('environment post: two matching sessions are ambiguous; a session reserved 
   expect(await findSession(deps, postRow(), '/wt', undefined, ['vm-2'], ENV)).toEqual({ kind: 'found', sessionId: 'vm-1', via: 'search' })
 })
 
-test('environment unreachable (orca error) is uncertain with a rerun hint; an unknown environment (input error) is thrown', async () => {
+test('environment unreachable (orca error) is uncertain with a rerun hint', async () => {
   const o = new FakeOrca(); const { deps } = mkDeps(o)
   o.searchError = new WinglineError('orca', 'runtime_unavailable', 'tunnel down')
   expect(await findSession(deps, postRow(), '/wt', undefined, [], ENV)).toMatchObject({ kind: 'uncertain', reason: expect.stringContaining('wl restore duo') })
-  o.searchError = new WinglineError('input', 'environment_not_found', 'no such environment')
-  await expect(findSession(deps, postRow(), '/wt', undefined, [], ENV)).rejects.toMatchObject({ code: 'environment_not_found' })
 })
 
+test('an unknown environment name fails loudly: Orca answers invalid_argument (an orca-kind error), which becomes an input error naming the known ones', async () => {
+  const o = new FakeOrca(); const { deps } = mkDeps(o)
+  // 真机回执：orca search --environment no-such-env → error.code = invalid_argument，经 run.ts 成为 kind 'orca'
+  o.searchError = new WinglineError('orca', 'invalid_argument', 'Unknown Orca server in --environment lima-agnt: no paired Orca server is named or has id lima-agnt.')
+  await expect(findSession(deps, postRow(), '/wt', undefined, [], 'lima-agnt')).rejects.toMatchObject({
+    kind: 'input', code: 'environment_not_found', hint: expect.stringContaining('orca environment list'),
+  })
+  // 其它 invalid_argument（与 --environment 无关）仍是 orca 类的不确定，不被误判成环境名错误
+  o.searchError = new WinglineError('orca', 'invalid_argument', 'bad --limit')
+  expect(await findSession(deps, postRow(), '/wt', undefined, [], ENV)).toMatchObject({ kind: 'uncertain' })
+  // 本机岗位不带 environment：同样的错误不会被当成环境名错误
+  o.searchError = new WinglineError('orca', 'invalid_argument', 'Unknown Orca server in --environment x')
+  expect(await findSession(deps, postRow(), '/wt')).toMatchObject({ kind: 'uncertain' })
+})
