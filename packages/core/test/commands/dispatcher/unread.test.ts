@@ -47,6 +47,15 @@ test('attentionKeys: one key per entry kind, gate items keyed by gate id, cleare
   expect(keys.sort()).toEqual(['frozen:checker@duo', 'gate:g7', 'question:msg-1', 'signal:no_progress:builder@duo:t1', 'stale:t1'])
 })
 
+test('3D: context_low and usage_limit rows never produce an unread key (they are already told to the lead and shown by wl attention)', () => {
+  const row = { team: 'duo', post: 'builder@duo', taskId: '', level: 1, since: 'A', levelAt: 'A', lastNudgedAt: null, notifyCount: 0, nextDueAt: null, clearedAt: null }
+  const keys = attentionKeys({
+    stale: [], questions: [], frozen: [],
+    signals: [{ ...row, signal: 'usage_limit' }, { ...row, signal: 'context_low', taskId: 'sk-0123456789ab' }, { ...row, signal: 'no_progress', taskId: 't1' }],
+  })
+  expect(keys).toEqual(['signal:no_progress:builder@duo:t1'])
+})
+
 test('a new attention key marks the lead worktree once; the same keys do not mark again', async () => {
   const w = world()
   await w.mark(snapWith({ stale: [stale('t1')] }))

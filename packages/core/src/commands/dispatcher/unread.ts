@@ -1,6 +1,6 @@
 import { ORCA_WORKTREE_SUPPORT } from '../../orca/client.js'
 import { WinglineError } from '../../errors.js'
-import type { PostRow, TeamRow } from '../../registry/registry.js'
+import { isScreenSignal, type PostRow, type TeamRow } from '../../registry/registry.js'
 import type { TeamSpec } from '../../spec/load.js'
 import type { CommandDeps } from '../deps.js'
 import { resolveWorktrees } from './orca-sync.js'
@@ -19,13 +19,13 @@ export interface AttentionParts {
   signals: Array<{ signal: string; post: string; taskId: string; level: number; clearedAt: string | null }>
 }
 
-/** 键 = 分节 + 任务 id / 岗位 / 消息 id / gate id；只含 `level >= 1` 且未清除的信号行。 */
+/** 键 = 分节 + 任务 id / 岗位 / 消息 id / gate id；只含 `level >= 1` 且未清除的信号行。画面信号（上下文快满 / 用量用完）已经当场通知了牵头岗，不再打未读标记。 */
 export function attentionKeys(p: AttentionParts): string[] {
   const keys = new Set<string>()
   for (const s of p.stale) keys.add(s.gateId ? `gate:${s.gateId}` : `stale:${s.taskId}`)
   for (const q of p.questions) keys.add(`question:${q.messageId}`)
   for (const f of p.frozen) keys.add(`frozen:${f.post}`)
-  for (const s of p.signals) if (!s.clearedAt && s.level >= 1) keys.add(`signal:${s.signal}:${s.post}:${s.taskId}`)
+  for (const s of p.signals) if (!s.clearedAt && s.level >= 1 && !isScreenSignal(s.signal)) keys.add(`signal:${s.signal}:${s.post}:${s.taskId}`)
   return [...keys]
 }
 
