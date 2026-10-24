@@ -182,3 +182,28 @@ test('warningsOf says once that Orca lacks unread support, only while patrol.unr
   const off = loadTeamSpec(w.registry.getTeam('duo')!.specPath)
   expect(warningsOf(w.deps, 'duo', { ...off, patrol: { ...off.patrol, unreadMark: false } }).some((x) => x.includes('不支持未读标记'))).toBe(false)
 })
+
+test('unread_skipped is recorded once while the lead worktree stays unresolvable, and again after a successful mark', async () => {
+  const w = world()
+  w.registry.upsertPost({ ...w.registry.getPost('builder@duo')!, worktree: 'current' })
+  const unresolvable = () => w.o.faults.push({ method: 'worktreeShow', when: 'before', error: new WinglineError('orca', 'runtime_unavailable', 'x') })
+  for (let i = 0; i < 3; i++) { unresolvable(); await w.mark(snapWith({ stale: [stale('t1')] })) }
+  expect(w.events('unread_skipped')).toHaveLength(1)
+
+  w.o.worktreePaths.set('current', os.tmpdir())
+  await w.mark(snapWith({ stale: [stale('t1')] })) // 解析得到了：标记成功
+  expect(w.events('unread_mark').map((e) => e.outcome)).toEqual(['ok'])
+
+  w.o.worktreePaths.delete('current')
+  for (let i = 0; i < 2; i++) { unresolvable(); await w.mark(snapWith({ stale: [stale('t1'), stale('t2')] })) }
+  expect(w.events('unread_skipped')).toHaveLength(2)
+})
+
+test('the give-up warning does not depend on how many events were written after it', async () => {
+  const w = world()
+  w.failNext(3)
+  for (let i = 0; i < 3; i++) await w.mark(snapWith({ stale: [stale('t1')] }))
+  for (let i = 0; i < 2500; i++) w.registry.appendPatrolEvent({ team: 'duo', action: 'scan', outcome: 'ok' })
+  expect(warningsOf(w.deps, 'duo', w.ctx().spec).some((x) => x.includes('未读标记连续'))).toBe(true)
+})
+

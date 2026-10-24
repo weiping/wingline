@@ -789,6 +789,14 @@ export class Registry {
     return this.pageRows('patrol_events', team, o).map(eventRow)
   }
 
+  /** 给定动作里最新的一条巡查事件（按 id 倒序取一条，不受后面写了多少别的事件影响）。 */
+  lastPatrolEventOf(team: string, actions: string[]): (PatrolEvent & { id: number; at: string }) | null {
+    if (actions.length === 0) return null
+    const marks = actions.map(() => '?').join(', ')
+    const r = this.db.prepare(`SELECT * FROM patrol_events WHERE team = ? AND action IN (${marks}) ORDER BY id DESC LIMIT 1`).get(team, ...actions) as Row | undefined
+    return r ? eventRow(r) : null
+  }
+
   // —— 阶段 3A：审计事件、团队任务日志、时间线游标 ——
   // 三者共用 pageRows 的分页语义：id 升序；不带 afterId 取最新 limit 条；带 afterId 取游标之后最早的 limit 条。
 

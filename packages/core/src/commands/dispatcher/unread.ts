@@ -10,8 +10,6 @@ type Ctx = { team: TeamRow; spec: TeamSpec }
 
 /** 连续失败这么多次后，本次调度员运行期间不再尝试（重启后重新尝试）。 */
 export const UNREAD_MAX_FAILS = 3
-/** 判断“是否已放弃”时回看的事件条数；放弃事件落到更早的历史之外后，告警会随之消失。 */
-const EVENT_LOOKBACK = 2000
 
 /** `wl attention` 各条目的最小形状；调度员用快照 + 注册表推导，`attention()` 的结果也满足它。 */
 export interface AttentionParts {
@@ -33,8 +31,7 @@ export function attentionKeys(p: AttentionParts): string[] {
 
 /** 最近一次“放弃 / 重置”事件是放弃，即本次调度员运行期间已停止标记（`wl attention` 据此告警）。 */
 export function unreadGaveUp(deps: CommandDeps, team: string): boolean {
-  const last = deps.registry.listPatrolEvents(team, { limit: EVENT_LOOKBACK }).findLast((e) => e.action === 'unread_gave_up' || e.action === 'unread_reset')
-  return last?.action === 'unread_gave_up'
+  return deps.registry.lastPatrolEventOf(team, ['unread_gave_up', 'unread_reset'])?.action === 'unread_gave_up'
 }
 
 function recordFailure(deps: CommandDeps, team: string, err: unknown, failures: { count: number }): void {
@@ -53,7 +50,10 @@ async function markLead(deps: CommandDeps, team: string, fresh: string[], failur
   const lead = deps.registry.listPosts(team).find((p) => p.isLead)
   const abs = lead ? await leadWorktree(deps, lead) : null
   if (!abs) {
-    deps.registry.appendPatrolEvent({ team, action: 'unread_skipped', outcome: 'ok', detail: { reason: 'lead_worktree_unresolved' } })
+    // 条件持续期间每轮都会走到这里：只在上一条相关事件不是 unread_skipped 时记一次，免得刷满事件表
+    if (deps.registry.lastPatrolEventOf(team, ['unread_skipped', 'unread_mark'])?.action !== 'unread_skipped') {
+      deps.registry.appendPatrolEvent({ team, action: 'unread_skipped', outcome: 'ok', detail: { reason: 'lead_worktree_unresolved' } })
+    }
     return
   }
   // 独立一次调用，不与 comment / status 合并：失败互不牵连，也不动 orca_sync.fail_count
