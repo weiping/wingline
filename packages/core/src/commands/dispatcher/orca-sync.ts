@@ -2,12 +2,13 @@ import path from 'node:path'
 import { WinglineError } from '../../errors.js'
 import { ORCA_WORKTREE_SUPPORT } from '../../orca/client.js'
 import type { WorkspaceStatus } from '../../orca/types.js'
-import type { DoneVerdictRow, OrcaSyncRow, PatrolSignal, PostRow, TeamRow } from '../../registry/registry.js'
+import type { DoneVerdictRow, OrcaSyncRow, PatrolSignal, PostRow, ScreenSignalKind, TeamRow } from '../../registry/registry.js'
 import { loadTeamSpec, type TeamSpec } from '../../spec/load.js'
 import { plainText } from '../../view/plain-text.js'
 import type { CommandDeps } from '../deps.js'
 import { fetchTasks, type TaskRow } from '../task/query.js'
 import { dispatcherHealth } from './lifecycle.js'
+import { resetClock, topSignal } from './signal-summary.js'
 import type { ScanSnapshot } from './signals.js'
 
 type Ctx = { team: TeamRow; spec: TeamSpec }
@@ -17,7 +18,7 @@ const COMMENT_MAX = 500
 const MAX_FAILS = 3
 const PRIORITY: Record<WorkspaceStatus, number> = { 'in-review': 3, 'in-progress': 2, todo: 1, completed: 0 }
 
-export const SIGNAL_LABEL: Record<PatrolSignal, string> = {
+export const SIGNAL_LABEL: Record<PatrolSignal | ScreenSignalKind, string> = {
   no_progress: '无进展',
   waiting_approval: '等待批准',
   waiting_answer: '等待回答',
@@ -28,6 +29,8 @@ export const SIGNAL_LABEL: Record<PatrolSignal, string> = {
   bypassed: '绕过流程',
   call_uncertain: '调用结果不确定',
   gate_streak: 'gate 连续失败',
+  context_low: '上下文快满',
+  usage_limit: '用量用完',
 }
 
 const TASK_LABEL: Partial<Record<TaskRow['status'], string>> = { dispatched: '进行中', ready: '排队', blocked: '阻塞' }
@@ -73,9 +76,9 @@ function currentTask(p: { address: string; handle: string | null }, tasks: TaskR
 const flat = (s: string) => plainText(s).replace(/[\r\n\t]+/g, ' ')
 
 /** 一个岗位在注释里的一行；任务标题是外部文本，先剥控制字符、折成一行。 */
-export function postLine(id: string, task: TaskRow | null, flags: { signal: PatrolSignal | null; frozen: boolean }): string {
+export function postLine(id: string, task: TaskRow | null, flags: { signal: PatrolSignal | ScreenSignalKind | null; frozen: boolean; note?: string | null }): string {
   const head = task ? `${id}：${flat(task.title)}（${TASK_LABEL[task.status] ?? task.status}，第 ${task.epoch + 1} 轮）` : `${id}：空闲`
-  return `${head}${flags.signal ? ` ⚠ ${SIGNAL_LABEL[flags.signal]}` : ''}${flags.frozen ? ' ❄ 已冻结' : ''}`
+  return `${head}${flags.signal ? ` ⚠ ${SIGNAL_LABEL[flags.signal]}${flags.note ? `（${flags.note}）` : ''}` : ''}${flags.frozen ? ' ❄ 已冻结' : ''}`
 }
 
 /** 多个岗位共用一个 worktree：状态取优先级最高的，注释每岗位一行；超长截断并以 … 结尾（… 计入长度）。 */
@@ -179,10 +182,10 @@ function composeGroup(deps: CommandDeps, ctx: Ctx, tasks: TaskRow[], addresses: 
   const verdictOf: VerdictOf = (id, epoch) => deps.registry.getVerdict(id, epoch)
   const rows = addresses.map((address) => {
     const p = { address, handle: deps.registry.getPost(address)?.handle ?? null }
-    const top = signals.filter((s) => s.post === address).sort((a, b) => b.level - a.level)[0]
+    const top = topSignal(signals.filter((s) => s.post === address))
     return {
       status: postWorkspaceStatus(p, tasks, verdictOf),
-      line: postLine(address.split('@')[0]!, currentTask(p, tasks), { signal: top?.signal ?? null, frozen: deps.registry.getFrozen(address) !== null }),
+      line: postLine(address.split('@')[0]!, currentTask(p, tasks), { signal: top?.signal ?? null, note: top && resetClock(top) ? `${resetClock(top)} 重置` : null, frozen: deps.registry.getFrozen(address) !== null }),
     }
   })
   return summarize(rows, commentLimit())

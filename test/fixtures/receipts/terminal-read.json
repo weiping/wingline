@@ -1,0 +1,57 @@
+{
+  "terminal": {
+    "handle": "term_fixture",
+    "status": "running",
+    "tail": [
+      "LINE-113",
+      "LINE-114",
+      "LINE-115",
+      "LINE-116",
+      "LINE-117",
+      "LINE-118",
+      "LINE-119",
+      "LINE-120"
+    ],
+    "truncated": false,
+    "limited": true,
+    "oldestCursor": "0",
+    "nextCursor": "121",
+    "latestCursor": "121",
+    "returnedLineCount": 8,
+    "tailRows": [
+      {
+        "wrapped": false,
+        "trailingSpaces": 0
+      },
+      {
+        "wrapped": false,
+        "trailingSpaces": 0
+      },
+      {
+        "wrapped": false,
+        "trailingSpaces": 0
+      },
+      {
+        "wrapped": false,
+        "trailingSpaces": 0
+      },
+      {
+        "wrapped": false,
+        "trailingSpaces": 0
+      },
+      {
+        "wrapped": false,
+        "trailingSpaces": 0
+      },
+      {
+        "wrapped": false,
+        "trailingSpaces": 0
+      },
+      {
+        "wrapped": false,
+        "trailingSpaces": 0
+      }
+    ],
+    "source": "screen"
+  }
+}

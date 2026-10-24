@@ -54,6 +54,8 @@ export class FakeOrca implements OrcaClient {
   ledger = new Map<string, LedgerEntry>()
   pendingIds = new Set<string>()
   previews = new Map<string, string>()
+  /** 终端的完整渲染画面（3D 探针 1）：terminalRead 取它的最后 N 行，terminalShow 的 preview 只留末尾 300 个字符，和真机一样。没给的终端沿用 previews。 */
+  screens = new Map<string, string>()
   worktreePaths = new Map<string, string>()
   faults: Fault[] = []
   orch: Array<{ m: string; a: Args }> = []
@@ -326,7 +328,15 @@ export class FakeOrca implements OrcaClient {
     this.read('terminalShow', a)
     const t = this.terminals.find((x) => x.handle === a.handle)
     if (!t) throw orcaError('terminal_handle_stale', `终端 ${a.handle} 不存在`)    // 真机：orca terminal show --terminal <不存在的 handle> → terminal_handle_stale
-    return { handle: t.handle, title: t.title, connected: t.connected, preview: this.previews.get(t.handle) ?? '❯ ' }
+    const screen = this.screens.get(t.handle)
+    return { handle: t.handle, title: t.title, connected: t.connected, preview: screen !== undefined ? screen.slice(-300) : (this.previews.get(t.handle) ?? '❯ ') }
+  }
+
+  async terminalRead(a: { handle: string; lines: number }): Promise<{ text: string; rows: number }> {
+    this.read('terminalRead', a)
+    if (!this.terminals.some((x) => x.handle === a.handle)) throw orcaError('terminal_handle_stale', `终端 ${a.handle} 不存在`)
+    const lines = (this.screens.get(a.handle) ?? this.previews.get(a.handle) ?? '❯ ').split('\n').slice(-a.lines)
+    return { text: lines.join('\n'), rows: lines.length }
   }
 
   async worktreeShow(a: { worktree: string }) {

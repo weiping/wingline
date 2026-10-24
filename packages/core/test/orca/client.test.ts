@@ -328,3 +328,20 @@ test('search adds --environment when given and maps missing fields to null', asy
   ])
   expect(calls[0]!.slice(-2)).toEqual(['--environment', 'lima-agent'])
 })
+
+test('terminalRead runs `terminal read --screen --limit N` and joins terminal.tail (probe 1 receipt)', async () => {
+  const receipt = fixture('terminal-read')
+  const { client, calls } = clientWith({ 'terminal read': receipt })
+  const r = await client.terminalRead({ handle: 'term_x', lines: 8 })
+  expect(calls[0]).toEqual(['terminal', 'read', '--terminal', 'term_x', '--screen', '--limit', '8'])
+  expect(r).toEqual({ text: receipt.terminal.tail.join('\n'), rows: 8 })
+})
+
+test('terminalRead: a receipt whose source is not "screen" (screen-unavailable) is screen_unavailable, not stale stream text', async () => {
+  const receipt = fixture('terminal-read')
+  const { client } = clientWith({ 'terminal read': { terminal: { ...receipt.terminal, source: 'screen-unavailable' } } })
+  await expect(client.terminalRead({ handle: 'term_x', lines: 8 })).rejects.toMatchObject({ kind: 'orca', code: 'screen_unavailable' })
+  const { client: bare } = clientWith({ 'terminal read': { terminal: { tail: ['x'] } } })
+  await expect(bare.terminalRead({ handle: 'term_x', lines: 8 })).rejects.toMatchObject({ code: 'screen_unavailable' })
+})
+

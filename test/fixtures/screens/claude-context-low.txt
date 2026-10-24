@@ -1,0 +1,13 @@
+# source: claude 2.1.310 binary strings, not captured (provisional)
+# layout: the footer line position is assumed, not verified against a real screen
+⏺ 好的，我先看一下这个文件。
+  ⎿  Read 120 lines
+⏺ 改动已完成，测试通过。
+  ⎿  $ pnpm test
+     ✓ 12 passed
+
+────────────────────────────────────────
+❯ 
+────────────────────────────────────────
+  Context low (7% remaining) · Run /compact to compact & continue
+  ⏵⏵ accept edits on (shift+tab to cycle)

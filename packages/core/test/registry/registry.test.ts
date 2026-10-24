@@ -336,7 +336,7 @@ test('patrol_state is keyed by (team, post, signal, task) and round-trips every 
   const r = Registry.open(tmpDb()); r.upsertTeam(running2b)
   const row: PatrolStateRow = { team: 'duo', post: 'builder@duo', signal: 'no_progress', taskId: 't1', level: 1, since: 'A', levelAt: 'B', lastNudgedAt: 'B', notifyCount: 0, nextDueAt: null, clearedAt: null }
   r.putPatrolState(row); r.putPatrolState({ ...row, taskId: 't2', level: 0 }); r.putPatrolState({ ...row, signal: 'gate_streak', taskId: '' })
-  expect(r.getPatrolState('duo', 'builder@duo', 'no_progress', 't1')).toEqual(row)
+  expect(r.getPatrolState('duo', 'builder@duo', 'no_progress', 't1')).toEqual({ ...row, detail: null }) // 读出来的行总带 detail（普通信号为 null）
   expect(r.listPatrolState('duo')).toHaveLength(3)
   r.putPatrolState({ ...row, level: 2, notifyCount: 1, clearedAt: 'C' })
   expect(r.getPatrolState('duo', 'builder@duo', 'no_progress', 't1')).toMatchObject({ level: 2, notifyCount: 1, clearedAt: 'C' })

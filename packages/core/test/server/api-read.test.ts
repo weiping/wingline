@@ -168,3 +168,18 @@ test('no response contains a session marker', async () => {
     expect(JSON.stringify(res)).not.toContain('WLS-1234abcd')
   }
 })
+
+test('3D: post detail lists that post\'s own live signals with a summary (it used to pass the address where the team name belongs)', async () => {
+  const o = new FakeOrca()
+  const { deps, registry } = seedRunningTeam(o)
+  const d = { ...deps, orca: cachedOrca(o) }
+  const r = new Router(); registerReadRoutes(r)
+  const base = { team: 'duo', level: 1, since: 'A', levelAt: 'A', lastNudgedAt: null, notifyCount: 0, nextDueAt: null, clearedAt: null }
+  registry.putPatrolState({ ...base, post: 'builder@duo', signal: 'usage_limit', taskId: '', detail: { resetsAt: null, noticeHash: 'x' } })
+  registry.putPatrolState({ ...base, post: 'checker@duo', signal: 'no_progress', taskId: 't1' })                      // 别的岗位
+  registry.putPatrolState({ ...base, post: 'builder@duo', signal: 'no_progress', taskId: 't0', clearedAt: 'Z' })        // 已清除
+  registry.putPatrolState({ ...base, post: 'builder@duo', signal: 'owner_idle', taskId: 't2', level: 0 })              // 只是观察
+  const route = r.match('GET', '/api/teams/duo/posts/builder')!
+  const res = (await route.h({ deps: d, params: { team: 'duo', post: 'builder' }, query: new URLSearchParams(), body: null })) as any
+  expect(res.signals.map((s: { signal: string; summary: string | null }) => [s.signal, s.summary])).toEqual([['usage_limit', '重置时间未知']])
+})

@@ -822,3 +822,15 @@ WINGLINE_SPIKE_WORKTREE=<专用测试 worktree 选择器> pnpm tsx spikes/worktr
 
 **下一步**：块 (c) 的 plan 可以开始写了，但模式表必须以“provisional”标注，并保留用 `sample` 取真实画面后核对的步骤。
 
+## 3D-2（块 c）实现状态与未核对项（2026-10-25）
+
+**已实现并通过自动测试**（分支 `feat/screen-signals`，FakeOrca + 样本文件）：读画面（`terminal read --screen --limit 40`，读失败只让该岗位本轮没有画面）、`detectScreen` 模式表、`context_low` / `usage_limit` 的状态推进（首轮只观察、暂停、自动继续识别、重置后发“继续”并重新计 `no_progress`、去重、最多 3 轮重试后放弃）、`patrol_state.detail`、摘要在网页 / CLI / TUI / Orca 注释里的显示、画面信号不产生未读键。
+
+**仍是 provisional（没有真实画面核对）**：
+- 样本文件（`test/fixtures/screens/*.txt`）首行都是 `# source: claude 2.1.310 binary strings, not captured`，是按程序本体字符串拼出来的，不是截屏。
+- 限额行里 `· resets 3pm (Asia/Shanghai)` 的真实写法、`resets` 之后有没有日期、`{when}` 的真实写法，全是假设。
+- 提示在画面里的真实位置（是否在最后 40 行内）、窄面板下被截断的样子、限额时是否弹 `/rate-limit-options` 菜单、重置后提示是否留屏，都没验证。
+- `usage_limit` 无法主动触发；`context_low` 需要把自动压缩阈值调低或灌入长上下文。这两项都需要真实遇到，所以这一步留给下次用到时做：用 `pnpm tsx spikes/phase-3d2.ts sample <handle> claude-context-low`（或 `claude-usage-limit`）存样本，入库前人工检查有无对话内容与敏感信息，然后替换 provisional 样本、改掉 `patterns.ts` 与测试名里的 provisional 标记。
+
+**怎么发现模式失效**：画面上明明出现了提示，`wl attention` 却没有 `context_low` / `usage_limit`。多半是 Claude 换了版本、措辞变了；对照 `patterns.ts` 的正则取一份真实画面再改。
+

@@ -499,7 +499,7 @@ test('wl attention renders every section with commands; healthy dispatcher last,
   const base: Omit<AttentionReport, 'dispatcher'> = {
     team: 'duo',
     frozen: [{ post: 'builder@duo', reason: '循环', frozenAt: 'F', skippedChildren: 2 }],
-    signals: [{ team: 'duo', post: 'checker@duo', signal: 'no_progress', taskId: 't2', level: 2, since: 'S', levelAt: 'L', lastNudgedAt: null, notifyCount: 1, nextDueAt: null, clearedAt: null, command: 'wl send checker@duo hi' }],
+    signals: [{ team: 'duo', post: 'checker@duo', signal: 'no_progress', taskId: 't2', level: 2, since: 'S', levelAt: 'L', lastNudgedAt: null, notifyCount: 1, nextDueAt: null, clearedAt: null, command: 'wl send checker@duo hi', summary: null }],
     questions: [{ team: 'duo', messageId: 'msg-7', asker: 'builder@duo', body: '用 a 还是 b', options: ['a', 'b'], taskId: null, dispatchId: null, relayedAt: 'R', answeredAt: null }],
     stale: [
       { taskId: 't3', title: 'G', reason: 'blocked_waiting', owner: null, since: null, command: 'wl task resolve g1 --resolution <决定>' },

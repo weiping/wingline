@@ -116,6 +116,8 @@ export interface OrcaClient {
   gateCreate(a: { task: string; question: string; from: string; retryRequest?: string }): Promise<{ id: string; replayed: boolean }>
   gateResolve(a: { id: string; resolution: string; from: string; retryRequest?: string }): Promise<{ replayed: boolean }>
   terminalShow(a: { handle: string }): Promise<TerminalView>
+  /** 渲染后的屏幕最后 `lines` 行（`terminal read --screen --limit N`，3D 探针 1）；拿不到渲染屏幕（source 不是 screen）→ screen_unavailable。`rows` 是实际返回的行数（屏幕比 N 矮时更少）。 */
+  terminalRead(a: { handle: string; lines: number }): Promise<{ text: string; rows: number }>
   worktreeShow(a: { worktree: string }): Promise<{ path: string }>
   check(a: { terminal: string; run: string; ack?: string; wait?: boolean; timeoutMs?: number }): Promise<CheckResult>
   reply(a: { id: string; body: string; run: string; from: string }): Promise<{ messageId: string; duplicate: boolean }>

@@ -36,3 +36,9 @@ test('renderAttention prints a 告警 section first only when there are warnings
   expect(out.startsWith('告警：\n  有未应用的规格草稿：/t/team.draft.yaml\n  Orca 同步已停止：/w/a\n')).toBe(true)
   expect(out.indexOf('告警')).toBeLessThan(out.indexOf('冻结的岗位'))
 })
+
+test('renderAttention shows the summary of a screen signal right after its name', () => {
+  const row = { team: 'duo', post: 'checker@duo', signal: 'usage_limit' as const, taskId: '', level: 1, since: at, levelAt: at, lastNudgedAt: null, notifyCount: 0, nextDueAt: null, clearedAt: null, detail: null, command: null }
+  expect(renderAttention(report({ signals: [{ ...row, summary: '预计 15:00 重置' }] }))).toContain('L1 usage_limit（预计 15:00 重置）  checker@duo')
+  expect(renderAttention(report({ signals: [{ ...row, signal: 'no_progress', taskId: 't1', summary: null }] }))).toContain('L1 no_progress  checker@duo  t1')
+})

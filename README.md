@@ -301,6 +301,21 @@ wl attention duo                              # 只读汇总：需要人处理�
 
 `wl ps` 在团队有调度员时额外显示一行：运行中（附心跳时间）、已停止或失联。
 
+### 画面信号：上下文快满与用量用完
+
+`wl attention` 的"处理中的信号"里，除了任务相关的信号（`no_progress`、`owner_idle` 等），还有两种从**终端画面**读出来的信号，只对 Claude 岗位生效（每轮巡查读各岗位画面的最后 40 行）：
+
+| 信号 | 画面上的提示 | 雁阵做什么 |
+| --- | --- | --- |
+| `context_low` | `Context low (N% remaining)` | 通知牵头岗一次（同一会话只通一次；清除后再出现，1 小时内不重复），摘要写"剩余 N%" |
+| `usage_limit` | `You've hit your session limit · resets …`（还有 weekly / Opus 等限额） | 通知牵头岗一次，并**暂停**该岗位的 `no_progress`、`owner_idle`、`overdue` 升级，直到预计重置时间后 2 分钟；重置时间读不出来则按 1 小时后复查 |
+
+- 画面信号**只通知、不冻结**，也不往终端打字，唯一的例外是下面的"继续"提示。
+- **到点之后**：Claude 2.1.310 在限额重置后会自己继续（画面上有 `Usage limit reached · continuing automatically … · esc to cancel`），这时雁阵不打扰它，每 10 分钟再看一次（最多 3 次）。提示已取消（`Automatic continue cancelled`）或根本没有这行提示时，雁阵向岗位发一行 `[雁阵] 用量已重置，请继续手上的任务 <id>`，并从这一刻重新计 `no_progress`。画面停在选项 / 确认框上发不出去，最多再试 3 轮，之后记 `resume_skipped` 并通知人手动处理。
+- 摘要显示在网页收件箱和岗位详情、`wl attention`、`wl tui` 的收件箱，以及 Orca 卡片注释里（"⚠ 用量用完（15:00 重置）"）；同一岗位同时有多个信号时，注释只标一个：等级高的优先，同级 `usage_limit` 先、`context_low` 最后。
+- 调度员重启后的第一轮只观察：暂停截止时间从注册表读回，不会重复通知。
+- **模式依据 claude 2.1.310 的程序本体字符串，还没有用真实画面核对**（`spikes/REPORT.md` 的 3D-2 块 c 小节）。换了 Claude 版本、或画面上明明出现了提示却没有信号，先看那一节，再用 `spikes/phase-3d2.ts sample <handle> <名字>` 取一份真实画面对照 `packages/core/src/screen/patterns.ts`。
+
 ### 巡查与通知：`patrol:` 配置
 
 在 `team.yaml` 里加一段可选的 `patrol:` 调整巡查阈值和通知方式；不写就全部用默认值，已有团队的行为与规格哈希都不变。完整示例见 `teams/duo/team.yaml` 末尾的注释。

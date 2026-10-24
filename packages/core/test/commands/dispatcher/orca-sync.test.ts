@@ -63,9 +63,9 @@ test('an unparsable verdict result does not count as in-review', () => {
   expect(postWorkspaceStatus(builder, reviewTasks, () => sentForReview('builder@duo', null))).toBe('completed')
 })
 
-test('SIGNAL_LABEL names every patrol signal', () => {
+test('SIGNAL_LABEL names every patrol signal and the two screen signals', () => {
   expect(Object.keys(SIGNAL_LABEL).sort()).toEqual([
-    'bypassed', 'call_uncertain', 'dead_assignee', 'done_unfinished', 'gate_streak', 'no_progress', 'overdue', 'owner_idle', 'waiting_answer', 'waiting_approval',
+    'bypassed', 'call_uncertain', 'context_low', 'dead_assignee', 'done_unfinished', 'gate_streak', 'no_progress', 'overdue', 'owner_idle', 'usage_limit', 'waiting_answer', 'waiting_approval',
   ])
   expect(SIGNAL_LABEL.no_progress).toBe('无进展')
 })
@@ -449,4 +449,18 @@ test('nothing is written again when no team’s own value changed', async () => 
   await trio.sync([])
   expect(w.o.comments).toHaveLength(n)
   trio.release()
+})
+
+test('3D: one comment mark per post — the higher level wins, at the same level usage_limit beats the ladder signals, context_low comes last', async () => {
+  const put = (w: ReturnType<typeof world>, signal: 'no_progress' | 'usage_limit' | 'context_low', level: number, taskId: string, detail: Record<string, unknown> | null = null) =>
+    w.registry.putPatrolState({ team: 'duo', post: 'builder@duo', signal, taskId, level, since: 'A', levelAt: 'A', lastNudgedAt: null, notifyCount: 0, nextDueAt: null, clearedAt: null, detail })
+  const commentWith = async (setup: (w: ReturnType<typeof world>) => void) => {
+    const w = world(); setup(w); await w.sync([task()])
+    return w.o.comments.at(-1)!.comment!
+  }
+  expect(await commentWith((w) => { put(w, 'no_progress', 1, 't1'); put(w, 'usage_limit', 1, '', { resetsAt: '2026-10-16T07:00:00.000Z' }) })).toMatch(/builder：.*⚠ 用量用完（\d\d:\d\d 重置）/)
+  expect(await commentWith((w) => { put(w, 'no_progress', 2, 't1'); put(w, 'usage_limit', 1, '', { resetsAt: null }) })).toContain('⚠ 无进展')
+  expect(await commentWith((w) => { put(w, 'usage_limit', 1, '', { resetsAt: null }) })).toContain('⚠ 用量用完')
+  expect(await commentWith((w) => { put(w, 'context_low', 1, 'sk-0123456789ab', { percent: 5 }); put(w, 'no_progress', 1, 't1') })).toContain('⚠ 无进展')
+  expect(await commentWith((w) => { put(w, 'context_low', 1, 'sk-0123456789ab', { percent: 5 }) })).toContain('⚠ 上下文快满')
 })

@@ -8,14 +8,15 @@ import type { CommandDeps } from '../deps.js'
 import { taskPreflight } from '../task/preflight.js'
 import { gatherStaleInput, staleReasons, type StaleItem } from '../task/query.js'
 import { dispatcherHealth, type DispatcherHealth } from './lifecycle.js'
+import { signalSummary } from './signal-summary.js'
 import { unreadGaveUp } from './unread.js'
 
 export interface AttentionReport {
   team: string
   dispatcher: DispatcherHealth
   frozen: Array<{ post: string; reason: string; frozenAt: string; skippedChildren: number }>
-  /** cleared_at 为空、level >= 1，按 level 倒序。 */
-  signals: Array<PatrolStateRow & { command: string | null }>
+  /** cleared_at 为空、level >= 1，按 level 倒序。summary：画面信号（上下文快满 / 用量用完）的一句话，普通信号为 null。 */
+  signals: Array<PatrolStateRow & { command: string | null; summary: string | null }>
   questions: QuestionRow[]
   stale: StaleItem[]
   /** 取不到的来源及原因。 */
@@ -83,7 +84,7 @@ export async function attention(deps: CommandDeps, team: string): Promise<Attent
     team,
     dispatcher: dispatcherHealth(deps, team),
     frozen,
-    signals: signals.map((s) => ({ ...s, command: lastCommand(deps, team, s) })),
+    signals: signals.map((s) => ({ ...s, command: lastCommand(deps, team, s), summary: signalSummary(s) })),
     questions: registry.listOpenQuestions(team),
     ...(await staleSource(deps, team)),
     warnings: warningsOf(deps, team, specOf(deps, team)),

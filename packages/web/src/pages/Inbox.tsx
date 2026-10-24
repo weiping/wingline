@@ -161,7 +161,7 @@ export function Inbox({ team }: { team: string }) {
           a.signals.map((s) => (
             <div class="row" key={`${s.post}:${s.signal}:${s.taskId}`}>
               <div>
-                <strong>{postOf(s.post)}</strong> <span class="muted small">{s.signal} · L{s.level}</span>
+                <strong>{postOf(s.post)}</strong> <span class="muted small">{s.signal} · L{s.level}{s.summary ? ` · ${s.summary}` : ''}</span>
               </div>
               <div class="actions">
                 <ActionDialog

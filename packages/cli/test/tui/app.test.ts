@@ -139,7 +139,7 @@ test('a gate offers resolve and resolve-with-reassign', () => {
 })
 
 test('a signal offers hush and send', () => {
-  const signal = dataOf({ attention: attentionOf({ signals: [{ team: 'duo', post: 'checker@duo', signal: 'no_progress', taskId: 't1', level: 2, since: 'A', levelAt: 'A', lastNudgedAt: null, notifyCount: 0, nextDueAt: null, clearedAt: null, command: null }] }) })
+  const signal = dataOf({ attention: attentionOf({ signals: [{ team: 'duo', post: 'checker@duo', signal: 'no_progress', taskId: 't1', level: 2, since: 'A', levelAt: 'A', lastNudgedAt: null, notifyCount: 0, nextDueAt: null, clearedAt: null, command: null, summary: null }] }) })
   expect(press(on('inbox'), signal, ENTER).state.menu!.items.map((i) => i.label)).toEqual(['静音', '发消息'])
 })
 
