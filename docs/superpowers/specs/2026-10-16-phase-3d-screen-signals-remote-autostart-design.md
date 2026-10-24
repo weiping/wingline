@@ -1,7 +1,7 @@
 # 雁阵 Wingline 阶段 3D：画面信号、远端环境恢复、未读标记与登录后自动恢复设计
 
 - 日期：2026-10-16（2026-10-23 按两轮复审重写第 3–8、10–13 节，见末尾“复审修订”）
-- 状态：**3D-1（块 a + b）已实现**，真机项见 `spikes/REPORT.md` “3D-1 真机验证”（重新登录后的恢复、未读红点待在有团队的环境里验证）；**3D-2（块 c + d）未开始**，等探针 2、4 —— 实现计划拆成两份，索引见 `docs/superpowers/plans/2026-10-16-phase-3d-screen-signals-remote-autostart.md`：3D-1（块 a + b）`docs/superpowers/plans/2026-10-23-phase-3d1-restore-all-autostart-unread.md`，3D-2（块 c + d，探针后写）
+- 状态：**3D-1（块 a + b）已实现**，真机验证见 `spikes/REPORT.md` “3D-1 真机验证”（launchd 最小环境、`restore --all --actor autostart`、未读红点已通过；由登录触发的恢复与 Linux 真机尚未验证）；**3D-2（块 c + d）未开始**，等探针 2、4 —— 实现计划拆成两份，索引见 `docs/superpowers/plans/2026-10-16-phase-3d-screen-signals-remote-autostart.md`：3D-1（块 a + b）`docs/superpowers/plans/2026-10-23-phase-3d1-restore-all-autostart-unread.md`，3D-2（块 c + d，探针后写）
 - 范围：阶段 3 的收尾子项目 D，集中前面各份 spec 推迟到阶段 3 的事项：
   1. 读画面的巡查信号：“上下文快满”（`context_low`）与“用量上限”（`usage_limit`）；
   2. 远端 / 配对环境（如 Lima VM）里岗位的会话恢复：字段与 `--session` 手工恢复先做，自动搜索待探针；

@@ -715,7 +715,22 @@ WINGLINE_SPIKE_WORKTREE=<专用测试 worktree 选择器> pnpm tsx spikes/worktr
 - `wl autostart uninstall`：plist 删除、服务注销，`launchctl print` 报 “Could not find service”；日志保留；再次卸载仍成功。验证结束后已卸载，机器恢复原状。
 - `wl restore --all --dry-run`：没有运行中的团队时输出一行说明、退出码 0。
 
-**未验证（需要人在有团队的环境里做）**
-- 重新登录后，Orca 就绪时 `up` 团队被真正恢复，时间线上每个团队一行、执行者为 `autostart`（本机没有登记团队，也没有重新登录）。
-- 有新待办时，Orca 侧栏里牵头岗 workspace 出现未读标记、同一批不重复标记（需要运行中的团队与调度员；未读标记的 `--unread` 本身已在探针 3 验证）。
+**未验证**
+- 真正重新登录后由 launchd 触发的恢复（下面的团队验证是手动运行同一条命令，没有重新登录）。
 - Linux systemd 路径只有单元测试，没有真机。
+
+### 续：有团队时的验证（2026-10-24，同一台机器）
+
+团队 `duo`：占位进程（`node -e "process.stdin.resume()"`，不启动真 agent），临时 `WINGLINE_HOME`，岗位在 wingline worktree 上；调度员持续运行，`patrol` 全默认（`unread_mark: true`）。**必须去掉 `ORCA_TERMINAL_HANDLE` / `ORCA_AGENT_LAUNCH_TOKEN` / `ORCA_AGENT_LAUNCH` 再运行 `wl`**，否则在 Orca 里的终端执行 `wl up` 会报 `This terminal is attested as … and cannot act as …`（与 3C 续二已记录的现象一致）。
+
+**未读标记：通过**
+- 07:03:31 起调度员；07:08:32 第一轮巡查（只观察，无 `unread_mark`）；07:15:18 冻结 `checker@duo` 制造一条新待办。
+- 07:18:36 第二轮巡查：事件 `unread_mark ok {"keys":1}`；`orca worktree show` 读回 wingline worktree 的 `isUnread` 由 `false`（基线）变成 `true`。
+- 07:23:38 第三轮巡查：同一批待办**没有**再次标记（全程只有 1 条 `unread_mark` 事件）；`unread_marks` 表里记着 `frozen:checker@duo`。
+- 调度员默认同步的工作区状态把该 worktree 从 `in-progress` 改成了 `completed`，清理时手动还原；`isUnread` 在清理前已被 Orca 自行清成 `false`（用户一直在这个 worktree 里），与探针 3 的推测一致。
+
+**`wl restore --all --actor autostart`：通过**
+- 关掉 `builder@duo`、`checker@duo`、`dispatcher@duo` 三个终端模拟 Orca 重启；`wl ps` 显示两个岗位 `offline`、调度员“失联”。
+- `wl restore --all --wait-orca 2m --actor autostart`：约 51 秒（含 30 秒的终端列表稳定等待）。两个岗位 `新起`（占位进程没有会话可接，上下文已丢失，符合预期）、Run 重新认领、调度员已重启，退出码 0。
+- `wl log duo --source command`：多出一行 `restore`，**执行者为 `autostart`**，且只有一行；手动执行（不带 `--actor`）仍按原规则解析执行者。
+- 验证结束后 `wl dispatcher down --close`、`wl down --close`，终端全部关闭。
