@@ -172,6 +172,25 @@ wl restore duo --session builder=<会话ID>   # 搜索到多个候选时，指�
 
 结果按「岗位 → Run → 调度员 → 任务」分节输出。`resumed` 表示接回了原会话；`fresh` 表示找不到可接回的会话，已新起终端——**上下文已丢失**，需要靠任务状态与 `wl log` 补上下文。`ambiguous` 时会列出候选会话与重试命令，退出码为 3。没有写入过标记的旧岗位只能走 `fresh`。
 
+### 远端环境（Lima 等已配对环境）
+
+agent 跑在 Orca 已配对的远端环境（`orca environment list` 能看到，如 Lima VM 里的 `lima-agent`）时，给岗位写 `environment`，`launch` 写成能在那个环境里启动 agent 的命令：
+
+```yaml
+posts:
+  - id: builder
+    agent: claude
+    launch: 'claude-lima --dangerously-skip-permissions'
+    environment: lima-agent
+```
+
+重启后 `wl restore` 对这样的岗位用 `orca search --environment lima-agent` 按标记找回 VM 里的会话，再执行 `claude-lima --dangerously-skip-permissions --resume <会话ID>`。几点要求：
+
+- **包装脚本必须把参数原样传给 agent**，否则 `--resume <id>` 到不了 agent，例如 `exec limactl shell agent claude "$@"`。
+- 找回的条件和本机一样严格：会话要整串包含该岗位的标记，且 `cwd` 就是岗位的 worktree。已验证的是 Lima 默认的同路径挂载（宿主的 home 以同样的路径出现在 VM 里）。如果 VM 里 `cwd` 不是宿主路径，或者搜索结果没有证据（旧版 Orca），`wl restore` 会报 `uncertain` 并提示 `--session`，**不会**悄悄新起一个丢上下文的会话。
+- 手工指定：`wl restore <团队> --session builder=<会话ID>`。会话 ID 可以在 VM 内 `claude --resume` 的列表里看，或者 `orca search --environment lima-agent "<关键词>"` 回执里的 `sessionId`。
+- 环境暂时连不上（例如 ssh 隧道断了）时同样报 `uncertain`，连上后重跑 `wl restore` 即可；环境名拼错会直接报错。
+
 ### 登录后自动恢复：`wl restore --all` 与 `wl autostart`
 
 `wl restore --all` 对注册表里所有运行中的团队依次执行 `wl restore`；某个团队出错（例如正好被另一个 `wl` 命令占着锁，报 `team_busy`）只记在该团队名下，不影响其余团队，退出码取最严重的一个（4 > 3 > 2 > 1 > 0）。加 `--wait-orca 15m` 会先等 Orca 可达，再等终端列表稳定（每 10 秒采样一次，连续 4 次相同），避免 Orca 还没接管完终端就把岗位判成 offline、重复拉起 agent；等不到就什么都不恢复。
@@ -323,6 +342,7 @@ patrol:
 | --- | --- |
 | `name`、`repo`、`norms`、`lead` | 团队名、仓库、团队规范文件、牵头岗 |
 | `posts[].id` / `agent` / `model` / `launch` | 岗位 id、agent、模型；`launch` 可整条覆盖启动命令 |
+| `posts[].environment` | 可选。岗位的 agent 跑在 Orca 的已配对环境（如 Lima VM）里时填环境名，格式 `^[a-z0-9._-]{1,64}$`；重启后 `wl restore` 在该环境里找回会话，见「远端环境」。不写即本机 |
 | `posts[].worktree` | `current`（默认，`wl up` 时固定成绝对路径）或 Orca 的 worktree 选择器 |
 | `posts[].brief` | 岗位简报文件列表，随启动包发给岗位 |
 | `posts[].self_claim` / `tags` / `plan_first` | 允许自领、匹配标签、开始前必须先写计划 |
