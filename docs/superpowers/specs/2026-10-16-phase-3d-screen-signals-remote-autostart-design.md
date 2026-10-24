@@ -1,7 +1,7 @@
 # 雁阵 Wingline 阶段 3D：画面信号、远端环境恢复、未读标记与登录后自动恢复设计
 
 - 日期：2026-10-16（2026-10-23 按两轮复审重写第 3–8、10–13 节，见末尾“复审修订”）
-- 状态：**3D-1（块 a + b）已实现**，真机验证见 `spikes/REPORT.md` “3D-1 真机验证”（launchd 最小环境、`restore --all --actor autostart`、未读红点已通过；由登录触发的恢复与 Linux 真机尚未验证）；**3D-2（块 c + d）未开始**，等探针 2、4 —— 实现计划拆成两份，索引见 `docs/superpowers/plans/2026-10-16-phase-3d-screen-signals-remote-autostart.md`：3D-1（块 a + b）`docs/superpowers/plans/2026-10-23-phase-3d1-restore-all-autostart-unread.md`，3D-2（块 c + d，探针后写）
+- 状态：**3D-1（块 a + b）已实现**，真机验证见 `spikes/REPORT.md` “3D-1 真机验证”（launchd 最小环境、`restore --all --actor autostart`、未读红点已通过；由登录触发的恢复与 Linux 真机尚未验证）；**3D-2（块 c + d）未开始**，等探针 2、4 —— 实现计划拆成两份，索引见 `docs/superpowers/plans/2026-10-16-phase-3d-screen-signals-remote-autostart.md`：3D-1（块 a + b）`docs/superpowers/plans/2026-10-23-phase-3d1-restore-all-autostart-unread.md`，3D-2：块 (d) 远端环境 `docs/superpowers/plans/2026-10-24-phase-3d2d-remote-environment.md`（可开工），块 (c) 画面信号（待探针 2）
 - 范围：阶段 3 的收尾子项目 D，集中前面各份 spec 推迟到阶段 3 的事项：
   1. 读画面的巡查信号：“上下文快满”（`context_low`）与“用量上限”（`usage_limit`）；
   2. 远端 / 配对环境（如 Lima VM）里岗位的会话恢复：字段与 `--session` 手工恢复先做，自动搜索待探针；
@@ -20,7 +20,7 @@
 | (a) | `wl restore --all` + `wl autostart`（macOS / Linux） | 无探针依赖；3A §5.2 例外（“接回未定案不报 kept”）已落地 | 最先 |
 | (b) | 未读标记（`worktreeSet({ unread })`） | 无探针依赖；Orca 红点由 Orca 在用户查看时清除（探针 3 已核实） | 次之 |
 | (c) | 画面信号（`context_low` / `usage_limit`） | 探针 1、2 定案之后才能做（`terminal show` 只有约 300 字符，读不到 40 行） | 再次 |
-| (d) | 远端环境 | 字段校验 + 规格哈希 + `--session` 手工恢复不依赖探针（可提前）；自动搜索等探针 4 | 最后 |
+| (d) | 远端环境 | 字段校验 + 规格哈希 + `findSession` 的 `--environment` 搜索；探针 4 已完成（2026-10-24），不再有探针依赖 | 最后 |
 
 Windows 自启动（`schtasks`）单列，等探针 5。
 
@@ -36,7 +36,7 @@ plan 按此拆成两份：**3D-1**（块 a + b；探针只有 3 和 6，可立�
 成功标准：
 
 - 一个 Claude 岗位画面上出现用量上限提示：牵头岗与外部通知各收到一次通知；到重置时间之前该岗位不出现“无进展”的提醒、通知与冻结；重置时间 + 2 分钟宽限之后岗位收到一行“继续”提示（不等待“提示消失”），信号清除，且 `no_progress` 的计时从该时刻重新开始。
-- 岗位写了 `environment: lima-agent`：`wl restore duo --session builder=<id>` 用 `claude-lima --resume <id>` 接回；没给 `--session` 时报 `uncertain` 而不是新开一个丢上下文的会话。
+- 岗位写了 `environment: lima-agent`：重启后 `wl restore duo` 用 `orca search --environment lima-agent` 按标记找回 VM 里的会话，以 `claude-lima --resume <id>` 接回；也可用 `--session builder=<id>` 指定。搜到的会话 `cwd` 与 worktree 不一致、或命中没有 evidence 时报 `uncertain` 而不是新开一个丢上下文的会话。
 - `wl attention` 新出现一条待办：牵头岗所在的 worktree 被标为未读；同一批待办不重复标记。
 - `wl autostart install` 后重新登录：Orca 就绪后所有运行中的团队被恢复，`autostart.log` 记录结果，时间线上每个团队一行、执行者为 `autostart`。
 
@@ -144,19 +144,27 @@ posts:
 - 未写即本机，行为不变，不进规格哈希；写了才进（`posts` 映射条件展开）。
 - `PostRow`（`registry.ts` 的 `posts` 表）没有 `environment` 列，`findSession` 也读不到规格：由 `restorePost` 把 `PostSpec.environment` 作为参数传给 `findSession`，不加列、不加迁移（`restore` 本来就会 `loadTeamSpec`，规格是唯一来源）。
 
-### 5.2 手工恢复（不依赖探针，本阶段确定交付）
+### 5.2 会话的确定顺序
 
-- `wl restore <team> --session <post>=<id>` 对写了 `environment` 的岗位照常工作（3A 的 `override` 路径）；缓存的 `session_id` 同样优先。
-- 写了 `environment`、又没有 `--session` 也没有缓存的 `session_id` 时，`findSession` 返回 `uncertain`（原因：“远端环境岗位暂不做自动搜索，用 wl restore <team> --session <post>=<id> 指定”），**不退回 3A 的 `none → fresh`**：本机的 `orca search` 搜不到 VM 里的会话，退回 fresh 会静默丢上下文并再拉起一个 agent。
+`findSession(deps, post, worktreePath, override?, reserved?, environment?)` 对写了 `environment` 的岗位：
+
+1. `--session <post>=<id>`（3A 的 `override`）和缓存的 `session_id` 照常优先，不搜索。
+2. 否则按标记搜索：`orca search "<标记>" --agent <agent> --fresh --environment <env>`（`OrcaClient.search` 已支持 `environment`），三道闸不变——命中的 `cwd` 与岗位 worktree 相同、`snippet` 里整串标记被高亮（`markerHighlighted`）、会话没被本团队其他岗位占用。
+3. 恰好一条通过 → `found`（`via: 'search'`）；多条 → `ambiguous`。
+4. **不让远端岗位静默退回 `fresh` 丢上下文**，下面两种情形返回 `uncertain`，原因里写明用 `wl restore <team> --session <post>=<id>` 指定：
+   - 有命中的 `snippet` 把标记整串高亮，但 `cwd` 与岗位 worktree 不一致（没有把宿主路径同路径挂进 VM 的环境里，`cwd` 是 VM 内路径；探针 4 只在 Lima 默认的同路径挂载下验证过）；
+   - 有命中没有 `snippet`（旧版 Orca 扣留 evidence，3A 当时的现象），无法确认是不是这个标记。
+5. 以上之外没有命中 → `none`（走 `fresh`，“未找到原会话，上下文已丢失”，与本机岗位一致）；搜索本身失败按 3A 既有规则：Orca / uncertain 类错误 → `uncertain`（环境不可达时重跑即可），input / internal 类错误（例如环境名未登记）原样抛出。
+6. 本机岗位（没写 `environment`）的搜索不带 `--environment`，行为与 3A 完全一致（`cwd` 为 null 的命中仍排除）。
+
 - 恢复命令不变：岗位启动命令加恢复参数（3A 第 5.3 节），例如 `claude-lima --dangerously-skip-permissions --resume <id>`。README 写明：包装脚本必须把参数原样传给 agent（例如 `exec limactl shell agent claude "$@"`），以及怎样拿到会话 ID（VM 内 `claude --resume` 的列表，或 `orca search --environment <env>` 回执里的 `sessionId`）。
-- `orca search` 的 `resumeCommand` 在远端环境被扣留不影响本设计：雁阵从不使用它，只用 `sessionId`。
+- `orca search` 在远端环境不带 `resumeCommand`（探针 4：0/15）不影响本设计：雁阵从不使用它，只用 `sessionId`。
 
-### 5.3 自动搜索（待探针 4）
+### 5.3 探针 4 的结论（2026-10-24）
 
-- **原稿（`cwd` 为空即保留、只凭标记判断）作废。** 3A 探针证明 `orca search` 加引号也会按部分 token 召回（REPORT.md:468），所以 `find-session.ts` 有第三道闸 `markerHighlighted(h.snippet, marker)`；而 `--environment` 命中扣留 `snippet`，`markerHighlighted(null)` 一律拒绝——按原稿写，远端命中恒被拒，“cwd null kept”的测试也通不过。
-- **探针 4 已显示 `--environment` 命中带 `snippet`（2026-10-24）**：搜索加 `--environment <env>`（`OrcaClient.search` 已支持该参数），第三道闸原样适用；`cwd` 规则按探针记录的形态定（空 / VM 内路径是否放行），但始终不放松整串高亮这一道。
-- 若无 `snippet`：不做自动搜索，第 5.2 节就是最终形态。
-- `FakeOrca.search` 对带 `environment` 的查询默认 `snippet: null`（与真机一致），否则单测假绿。
+- 原稿（`cwd` 为空即保留、只凭标记判断）仍然作废：3A 探针证明 `orca search` 加引号也会按部分 token 召回，所以必须保留“整串高亮”这道闸。
+- 3A 记录的“`--environment` 命中扣留 `snippet`”在 Orca 1.4.237 上不再成立：`lima-agent` 的 15/15 条命中带 `snippet`（含 `[[…]]` 高亮），形态与本机一致。因此自动搜索可以做，第 5.2 节第 2 步直接适用。
+- `FakeOrca.search` 已按 `environment` 过滤；`snippet` 缺省时高亮整个标记，需要模拟“扣留 evidence”时显式给 `snippet: null`。不再默认 `null`。
 
 ## 6. 未读标记（块 b）
 
@@ -280,7 +288,7 @@ test/fixtures/screens/ + .gitattributes     # 画面样本（eol=lf）
 - **模式表**：每个模式对应真实或文档样本（待探针 2，临时样本的测试名标 `(provisional)`）——命中、不命中、百分比提取、各种重置时间写法与时区、跨日；**负例**：agent 复述或用户粘贴在正文里的限额 / “快满”文字，即使落在最后 40 行内也不触发；窗口内同一 `kind` 多处命中只取最底部一处；限额以选项菜单呈现时 `guard` 为 `at_prompt`（样本待探针 2）；迁入的 `at_prompt`/`shell` 判定行为不变（原有测试照跑）；只看最后若干行；**样本 `.txt` 在 Windows 检出会变 CRLF（仓库没有 `.gitattributes`）**：`detectScreen` 按 `/\r?\n/` 切行，并给样本目录加 `eol=lf` 的 `.gitattributes`（plan 里单列一步），测试里同时喂 LF 与 CRLF 两份。
 - **FakeOrca**：`terminalShow` 的 `preview` 截成末尾 300 字符（测试断言“40 行里靠前的行读不到”）；`terminalRead` 的 fake；带 `environment` 的 `search` 默认 `snippet: null`。
 - **巡查**（断言写成真实行为，不是空函数体）：`usage_limit` 的完整流程（通知一次 → 暂停三种升级 → 到点发“继续”并清除、`no_progress` 基线重置、提示仍在屏幕上也照发（已知 `resetsAt`）、`resetsAt` 未知时延期 ≤ 3 次、画面非 `clear` 时不打字且最多重试 3 轮）；**两轮扫描后行仍未清除、只通知一次**（`advancePatrol` 不清画面信号行）；牵头岗用完时不通知自己；`context_low` 同一会话只通知一次、换会话后清除且 attention 里只有一条、清除后 1 小时内再次出现只恢复行不通知、超过 1 小时再次出现重新通知；限额菜单挡住“继续”时 3 轮后 `resume_skipped` 并通知人一次；两种信号都不会冻结；重启后首轮只观察、暂停截止时间从注册表读回；`resetPatrolForPost` 不清画面信号行；`patrol_state` 行与 `wl attention --json` 里不出现会话标记原文；3C 注释标记（测试必须显式打开 `worktree_comment`）与同级信号取舍规则。
-- **远端环境**：`environment` 校验（`environment_invalid`）；三种情形——`--session` 覆盖、缓存的 `session_id`、两者皆无 → `uncertain`（不 fresh）；未写 `environment` 时规格哈希不变、写了时变化。自动搜索的用例等探针 4。
+- **远端环境**：`environment` 校验（`environment_invalid`，大小写 / 空格 / 过长）；`findSession` 带 `environment` 时：`--session` 覆盖与缓存的 `session_id` 优先且不搜索；按标记走 `--environment` 搜索，唯一命中 `found`、多条 `ambiguous`；本机同标记的会话不被远端岗位使用；标记高亮但 `cwd` 不一致 → `uncertain`；命中无 `snippet` → `uncertain`；干净的未命中 → `none`（fresh）；环境不可达 → `uncertain`，环境名未登记 → 抛出；本机岗位的搜索不带 `environment`、行为不变；未写 `environment` 时规格哈希不变、写了时变化。真机：对已配对的 `lima-agent` 用真实标记走一遍恢复。
 - **未读标记**：新键才标记；同一批不重复；键消失后再次出现视为新条目；首轮只记录；开关关闭不调用；连续失败后停止并提示；不调用 `attention()`（FakeOrca 的 `taskList` 调用次数不增加）；`attentionKeys` 与 `attention()` 条目一致（排除画面信号）；画面信号行不产生键、不触发标记；`worktreeSet({ unread })` 的 argv。
 - **`restore --all`**：多团队、只处理 `up` 的团队、与 `<team>`/`--session` 互斥、单个团队 `team_busy` 不中断其余团队且聚合退出码为 1、退出码取最严重、`--wait-orca` 的 status 轮询与超时（2）、终端列表稳定判据（采样序列 A,B,B,B,B 才放行，A,B,B,B,C 不放行；一直变化 → `orca_not_settled`）、`as: 'autostart'` 写入审计且每个团队一行；没有任何 `up` 团队 → 输出为空、退出码 0。
 - **autostart**：三个平台生成的文件内容与命令（快照测试，**期望值用 `path.posix` / `path.win32` 显式构造**，不用宿主 `path`，否则 Windows CI 上产出反斜杠）、plist 的 XML 转义（路径含 `&`、`<`）、plist / unit 带显式 PATH（含 node 与 orca 所在目录，去重）、systemd `ExecStart` 的空格 / `%` / `$` 转义、Windows `/TR` 引号（含空格路径、引号字符；探针 5 后）、重复安装、未安装时卸载、`status` 输出与 linger 检查、失败时清理、日志目录被创建、`>1 MB` 轮转；系统命令一律经注入的执行器调用，测试不改动系统。
@@ -305,7 +313,7 @@ test/fixtures/screens/ + .gitattributes     # 画面样本（eol=lf）
 | 误把正文里引用的提示文字当成信号 | 误报通知或误暂停升级 | 只看画面最后若干行；模式锚定到 agent 状态行的格式；暂停只影响升级、不影响任务 |
 | 重置时间解析错（时区、跨日） | 过早或过晚发“继续” | 只在识别瞬间解析一次；已知重置时间则到点（+2 分钟）即发，发早了的后果只是多一行提示；解析不出时 1 小时后复查并最多延期 3 次 |
 | 限额提示不会自行消失 | 若等待“提示消失”则永远等不到，且暂停结束后会重复提示 | 第 4.3 节：到点即视为重置；已处理过的 `noticeHash` 不再触发 |
-| 远端自动搜索被 3A 的整串高亮闸拒绝 | 远端岗位无法自动接回 | 先交付 `--session` 手工恢复；缺 `--session` 报 `uncertain` 而不是 fresh；探针 4 后再定 |
+| 远端自动搜索被 3A 的整串高亮闸或 `cwd` 闸拒绝（没有同路径挂载的 VM、旧版 Orca 扣留 evidence） | 远端岗位静默 `fresh` 丢上下文 | 第 5.2 节第 4 步：这两种情形返回 `uncertain` 并提示用 `--session` 指定，不退回 `fresh` |
 | 包装脚本不透传参数 | 远端岗位接回失败 | README 示例；等不到空闲 → `uncertain`，不重发（3A） |
 | Orca 不提供 / 不按预期处理 `--unread` | 无红点或红点不消失 | 探针 3；`ORCA_WORKTREE_SUPPORT.unread`；`wl attention` 与外部通知照常 |
 | 登录时 Orca “可达”但终端尚未纳管完 | `restore` 判 offline，拉起重复的 agent | `--wait-orca` 的终端列表稳定判据；稳定前超时不做恢复 |

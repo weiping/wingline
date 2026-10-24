@@ -7,11 +7,12 @@
 | 份 | 内容 | 前置 | 状态 |
 | --- | --- | --- | --- |
 | **3D-1** | 块 (a) `wl restore --all` + `wl autostart`（macOS / Linux）；块 (b) 未读标记 | 探针 3、6（Task 1，真机） | **已实现**（2026-10-24，分支 `phase-3d1-restore-all-autostart-unread`）：`docs/superpowers/plans/2026-10-23-phase-3d1-restore-all-autostart-unread.md`；真机已验证 launchd 最小环境、`restore --all --actor autostart`、未读红点；重新登录触发与 Linux 真机待验证 |
-| **3D-2** | 块 (c) 画面信号 `context_low` / `usage_limit`；块 (d) 远端环境恢复 | 探针 1、2（块 c）、探针 4（块 d 的自动搜索） | **待探针**：下面只列任务骨架，探针结论出来后按 writing-plans 补全步骤 |
+| **3D-2 (d)** | 块 (d) 远端环境恢复 | 探针 4 已完成 | **可开工**：`docs/superpowers/plans/2026-10-24-phase-3d2d-remote-environment.md`（4 个任务，含真机检查） |
+| **3D-2 (c)** | 块 (c) 画面信号 `context_low` / `usage_limit` | 探针 1 已完成，探针 2 缺“上下文快满 / 用量上限”的真实画面 | **待探针 2**：下面只列任务骨架，样本出来后按 writing-plans 补全步骤 |
 
 Windows 自启动单列，等探针 5。
 
-## 3D-2 任务骨架（探针后再写成可执行步骤）
+## 3D-2 (c) 任务骨架（探针 2 之后再写成可执行步骤；块 (d) 见上表中的独立 plan）
 
 写 3D-2 时必须遵守 spec 的这些结论，不得回到原稿：
 
@@ -20,7 +21,7 @@ Windows 自启动单列，等探针 5。
 - `context_low` 键用会话标记的哈希；清除后再次出现复用同一行，1 小时内不重复通知（spec 第 4.4 节）。
 - `usage_limit` 到点即发“继续”，不等提示消失；画面不是 `clear`（含限额菜单）时不打字，3 轮后 `resume_skipped` 并通知人一次；`noProgress` 基线取 `max(原起点, resumedAt)`。
 - 模式锚定状态行格式，同一 `kind` 多处命中取最底部一处，必须有“正文引用不触发”的负例；样本放 `test/fixtures/screens/`，并加 `.gitattributes`（`eol=lf`）。
-- 远端环境：`environment` 的格式校验放 `spec/load.ts`（`environment_invalid`，`at.fail`），`schema.ts` 只声明 `z.string().min(1).optional()`；未写时不进哈希；`restorePost` 把 `PostSpec.environment` 传给 `findSession`；有 `environment` 又没有 `--session` 也没有缓存的 `session_id` → `uncertain`，不 fresh；自动搜索等探针 4。
+- 远端环境（块 d）已拆成独立 plan，不再在本骨架里。
 - 不要把画面信号行算进未读键（spec 第 6 节）。
 
 | 任务 | 内容 | 探针 |
@@ -30,4 +31,3 @@ Windows 自启动单列，等探针 5。
 | C | `OrcaClient.terminalRead`、`READ_ONLY_CALLS`、FakeOrca；`scan()` 每轮读存活岗位画面进 `previews`，`quietScreens` 优先取它 | 探针 1 |
 | D | 迁移 `patrol_state.detail`；`ScreenSignalKind`；`screen-signals.ts`（`advanceScreenSignals`、`isUsagePaused`）；`advance.ts` 暂停判定；`registry` 跳过画面信号；`signals.ts` 的 `noProgress` 基线；修 `server/api-read.ts:138`（岗位详情的信号恒为空） | B、C |
 | E | 展示：`AttentionReport.signals` 带 `summary` / `detail`；3C 注释标记与同级取舍；控制台收件箱、岗位详情、TUI 收件箱 | D |
-| F | 远端环境：字段与校验、哈希、`SpecForm.tsx`、`findSession` / `restorePost` 传参、README；自动搜索（探针 4 已成立，可做；`FakeOrca.search` 带 `environment` 时改为带 snippet） | 探针 4 已完成 |
