@@ -23,6 +23,8 @@ export interface RestorePost {
   candidates?: Array<{ sessionId: string; updatedAt: string | null; messageCount: number | null }>
   retry?: string
   noticeSkipped?: string
+  /** 结果是对的但有一点没能确认（例如远端岗位接回后没能核对提示落进了哪个会话）。 */
+  note?: string
 }
 
 /** restore 的请求键独立命名空间（复审 I-1）：与 wl up 的键不冲突，代数各自计数。 */
@@ -81,6 +83,31 @@ const FRESH_REFUSE = {
 
 type StepKey = (step: 'create' | 'wait' | 'notice') => string
 
+/** 写了 environment 的岗位：接回后核对提示落点所需的信息。 */
+interface RemoteCheck {
+  agent: string
+  environment: string
+  verify: { tries: number; pauseMs: number }
+}
+
+/** 搜 3 次、间隔 2 秒（`--fresh` 本身最多再等 5 秒），给远端索引一点时间。 */
+const VERIFY_DEFAULT = { tries: 3, pauseMs: 2000 }
+
+/** 接回提示发出后的核对结果：落进要接回的会话 → 照常 resumed；核对不了 → resumed 加 note；落进别的会话 → uncertain。 */
+async function landingResult(
+  deps: CommandDeps, address: string, sessionId: string, token: string, remote: RemoteCheck, retry: string,
+): Promise<RestorePost> {
+  const landing = await verifyLanding(deps, { agent: remote.agent, environment: remote.environment, token, expected: sessionId }, remote.verify)
+  if (landing.kind === 'confirmed') return { address, outcome: 'resumed', sessionId }
+  if (landing.kind === 'unknown') return { address, outcome: 'resumed', sessionId, note: `未能确认接回提示落在原会话里：${landing.why}` }
+  deps.registry.setPostStatus(address, 'uncertain')
+  return {
+    address, outcome: 'uncertain', sessionId, retry,
+    reason: `接回提示落进了另一个会话（${landing.landed.join('、')}），不是要接回的 ${sessionId}：包装脚本很可能没有把 --resume 透传给 agent，`
+      + '岗位现在是上下文已丢失的新会话。修好包装脚本后，先关掉该岗位的终端再重跑',
+  }
+}
+
 /**
  * 上一代 restore 拉起了接回终端、却没走完（空闲等待未确认，或接回提示未发出且岗位不是 live）：
  * 返回要补完的会话 ID 与请求键；否则 null。会话 ID 没缓存、岗位已 live、句柄对不上都不算。
@@ -96,7 +123,7 @@ function pendingResume(reg: Registry, team: string, post: string, handle: string
 
 /** 等接回的终端空闲 → 画面检查 → 发一次接回提示 → live。首次接回与补完共用；每步都是幂等的账本步骤。 */
 async function settleResume(
-  l: Launch, address: string, handle: string, sessionId: string, rid: StepKey, retry: string,
+  l: Launch, address: string, handle: string, sessionId: string, rid: StepKey, retry: string, remote?: RemoteCheck,
 ): Promise<RestorePost> {
   const { orca, registry } = l.deps
   if (!stepDone(registry, rid('wait'))) {
@@ -120,15 +147,17 @@ async function settleResume(
     registry.setPostStatus(address, 'live')
     return { address, outcome: 'resumed', sessionId, noticeSkipped: `未发送接回提示（${screen}）` }
   }
+  const token = remote ? noticeToken(rid('notice')) : undefined
   if (!stepDone(registry, rid('notice'))) {
     await recorded(
       registry, rid('notice'),
-      () => orca.terminalSend({ handle, text: resumeNotice(address), enter: true, waitSubmitSec: WAIT_SUBMIT_SEC }),
+      () => orca.terminalSend({ handle, text: resumeNotice(address, token), enter: true, waitSubmitSec: WAIT_SUBMIT_SEC }),
       (v) => v.accepted,
     )
   }
   registry.setPostStatus(address, 'live')
-  return { address, outcome: 'resumed', sessionId }
+  if (!remote || token === undefined) return { address, outcome: 'resumed', sessionId }
+  return landingResult(l.deps, address, sessionId, token, remote, retry)
 }
 
 /**
@@ -137,9 +166,10 @@ async function settleResume(
  * 接不回的走 wl up 的新建路径（新标记、启动包）并醒目标注上下文已丢失。
  */
 export async function restorePost(
-  l: Launch, post: PostSpec, o: { dryRun: boolean; override?: string; briefing: string; reserved?: string[] },
+  l: Launch, post: PostSpec, o: { dryRun: boolean; override?: string; briefing: string; reserved?: string[]; verify?: { tries: number; pauseMs: number } },
 ): Promise<RestorePost> {
   const { orca, registry } = l.deps
+  const remote: RemoteCheck | undefined = post.environment === undefined ? undefined : { agent: post.agent, environment: post.environment, verify: o.verify ?? VERIFY_DEFAULT }
   const address = postAddress(post.id, l.spec.name)
   const retry = `wl restore ${l.spec.name}`
   try {
@@ -148,7 +178,7 @@ export async function restorePost(
       // 上次接回没走完（终端是 restore 拉起的、空闲等待或接回提示未定案）：补完它，而不是报 kept
       const pending = pendingResume(registry, l.spec.name, post.id, located.handle)
       if (pending && o.dryRun) return { address, outcome: 'resumed', sessionId: pending.sessionId }
-      if (pending) return await settleResume(l, address, located.handle, pending.sessionId, pending.rid, retry)
+      if (pending) return await settleResume(l, address, located.handle, pending.sessionId, pending.rid, retry, remote)
       if (!o.dryRun) {
         registry.setPostHandle(address, located.handle)
         registry.setPostStatus(address, 'live')
@@ -196,7 +226,7 @@ export async function restorePost(
         registry.setPostHandle(address, handle)
       }
       registry.setSessionId(address, sessionId)
-      return await settleResume(l, address, handle, sessionId, rid, retry)
+      return await settleResume(l, address, handle, sessionId, rid, retry, remote)
     }
 
     // fresh：与 wl up 的新建路径完全相同（新标记、启动包），醒目标注上下文已丢失

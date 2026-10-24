@@ -776,6 +776,20 @@ posixOnly('wl autostart status: not installed, then installed with a missing nod
   expect(gone.out).toContain('loginctl enable-linger me')
 })
 
+test('wl restore shows a post note under the post line, and an uncertain remote resume exits 3 with its reason and retry command', async () => {
+  const note = await exec(['restore', 'duo'], cmds({
+    restore: async () => restoreResult({ posts: [{ address: 'builder@duo', outcome: 'resumed', sessionId: 's1', note: '未能确认接回提示落在原会话里：远端搜索没有命中接回标识' }] }),
+  }))
+  expect(note.code).toBe(0)
+  expect(note.out).toContain('注：未能确认接回提示落在原会话里')
+  const bad = await exec(['restore', 'duo'], cmds({
+    restore: async () => restoreResult({ posts: [{ address: 'builder@duo', outcome: 'uncertain', sessionId: 's1', reason: '接回提示落进了另一个会话（s2）', retry: 'wl restore duo' }] }),
+  }))
+  expect(bad.code).toBe(3)
+  expect(bad.out).toContain('接回提示落进了另一个会话（s2）')
+  expect(bad.out).toContain('试：wl restore duo')
+})
+
 test('wl restore rejects --session without = and lists ambiguous candidates with the retry command', async () => {
   expect((await exec(['restore', 'duo', '--session', 'builder'], cmds())).code).toBe(1)
   const r = await exec(['restore', 'duo'], cmds({
