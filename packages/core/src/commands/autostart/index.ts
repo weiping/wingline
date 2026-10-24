@@ -1,11 +1,11 @@
 import { parseDuration } from '../dispatcher/controls.js'
 import type { CommandDeps } from '../deps.js'
 import { applyAutostart, removeAutostart, type Exec, type FsLike } from './apply.js'
-import { installedCommand, planAutostart, type AutostartPlan } from './plan.js'
+import { installedCommand, planAutostart, planTargets, type AutostartPlan } from './plan.js'
 import { autostartStatus, type AutostartStatus } from './status.js'
 
-export { applyAutostart, removeAutostart, type Exec, type FsLike } from './apply.js'
-export { installedCommand, planAutostart, type AutostartPlan, type AutostartPlatform, type PlanOptions } from './plan.js'
+export { applyAutostart, removeAutostart, type Exec, type FsLike, type Sleep } from './apply.js'
+export { installedCommand, planAutostart, planTargets, type AutostartPlan, type AutostartPlatform, type PlanOptions, type TargetOptions } from './plan.js'
 export { autostartStatus, type AutostartStatus } from './status.js'
 
 /** 登录时 Orca 常常还没起来：默认最多等 15 分钟。 */
@@ -30,6 +30,11 @@ function planOf(deps: CommandDeps, sys: AutostartSys, waitOrca: string): Autosta
   })
 }
 
+/** 卸载与查看状态用：只要位置和系统命令，不要求安装命令里的路径可用。 */
+function targetsOf(deps: CommandDeps, sys: AutostartSys): AutostartPlan {
+  return planTargets({ platform: sys.platform, homeDir: sys.homeDir, uid: sys.uid, user: sys.user, home: deps.home })
+}
+
 export async function autostartInstall(deps: CommandDeps, sys: AutostartSys, a: { waitOrca?: string } = {}) {
   const waitOrca = a.waitOrca ?? DEFAULT_WAIT_ORCA
   parseDuration(waitOrca)
@@ -39,12 +44,12 @@ export async function autostartInstall(deps: CommandDeps, sys: AutostartSys, a: 
 }
 
 export async function autostartUninstall(deps: CommandDeps, sys: AutostartSys) {
-  const plan = planOf(deps, sys, DEFAULT_WAIT_ORCA)
+  const plan = targetsOf(deps, sys)
   return { file: plan.file.path, ...(await removeAutostart(plan, sys.exec, sys.fs)) }
 }
 
 export async function autostartStatusOf(deps: CommandDeps, sys: AutostartSys): Promise<AutostartStatus & { platform: string; user?: string; logPath: string }> {
-  const plan = planOf(deps, sys, DEFAULT_WAIT_ORCA)
+  const plan = targetsOf(deps, sys)
   const status = await autostartStatus(plan, sys.exec, {
     readFile: (p) => sys.fs.readFileSync(p, 'utf8'),
     exists: (p) => sys.fs.existsSync(p),
