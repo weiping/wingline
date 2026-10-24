@@ -776,3 +776,18 @@ WINGLINE_SPIKE_WORKTREE=<专用测试 worktree 选择器> pnpm tsx spikes/worktr
 - “包装脚本不透传参数”的反例（plan Task 4 第三项）：需要再起一个团队和一个真实 claude 会话，没做；README 的“包装脚本必须透传参数”仍只是依据 spec 和 3A 的行为写的，没有真机验证。
 - 没有同路径挂载的 VM（`cwd` 是 VM 内路径）和旧版 Orca（命中无 `snippet`）：只有单元测试，对应的 `uncertain` 分支没有真机。
 - 残留：这次在 VM 的 `~/.claude` 里留下了一个 claude 会话记录（`01962f92-…`，内容是雁阵的启动包与接回提示），没有删除。
+
+### 续：包装脚本不透传参数的反例（2026-10-24，同一台机器，claude 在 Lima VM `agent` 里）
+
+把 `launch` 换成 `claude-lima-noargs`：和用户的 `~/.local/bin/claude-lima` 一样，但最后一行 `exec "$HOME/.local/bin/claude" --permission-mode acceptEdits` 没有 `"$@"`。团队、环境、清理方式同上一节。
+
+**结果：静默的假成功（与 plan 原先预期的“应停在 `uncertain`”相反）**
+- `wl up` 后 VM 里的进程是 `claude --permission-mode acceptEdits`，按标记 `WLS-c3a20a55` 在 VM 里搜到原会话 `ad3fd22e-13fe-4b7c-b618-13c31961bf7c`。
+- 按 handle 关掉 builder 终端后，`wl restore --dry-run` 与 `wl restore` 都报“已接回原会话 ad3fd22e-…”，退出码 0，`wl ps` 为 `live`，`posts.session_id` 缓存为 `ad3fd22e-…`。
+- 但 VM 里新进程的参数仍是 `claude --permission-mode acceptEdits`，**没有 `--resume`**：wrapper 把追加的 `--resume <id>` 丢掉了，起的是全新会话。因为它同样空闲、画面正常，`settleResume` 的“等空闲 → 画面检查 → 发接回提示”全部通过。
+- 接回提示 `[雁阵] 重启后已接回本会话…` 落进了**新会话** `8647ac15-282b-430b-9921-143e9e2dcbb2`（以及上一节留下的 `01962f92-…`），**不在** `ad3fd22e-…` 里（用 `orca search --environment lima-agent` 按提示文字搜到的会话 ID 集合验证）。
+- 结论：wrapper 不透传参数时，雁阵会声称接回、缓存一个并没有接回的会话 ID，而岗位实际是丢了上下文的全新会话；目前没有任何检测。
+- 清理：`wl down --close`，终端与 VM 里的 claude 进程均已清空。VM 的 `~/.claude` 里多了一个会话记录（`ad3fd22e-…` 与 `8647ac15-…`），没有删除。
+
+**可行的检测思路（未实现，需要决定）**：接回提示发出后，用 `orca search --environment <env> "<提示里的独特文字>"` 看命中的会话 ID 是否等于要接回的那个；不等就把岗位记为 `uncertain` 并提示检查包装脚本。代价是多一次远端搜索，且要等索引（本机 `--fresh` 最多等 5 秒）。
+

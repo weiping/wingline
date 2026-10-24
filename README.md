@@ -188,7 +188,7 @@ posts:
 
 重启后 `wl restore` 对这样的岗位用 `orca search --environment lima-agent` 按标记找回 VM 里的会话，再执行 `claude-lima --dangerously-skip-permissions --resume <会话ID>`。几点要求：
 
-- **包装脚本必须把参数原样传给 agent**，否则 `--resume <id>` 到不了 agent，例如 `exec limactl shell agent claude "$@"`。
+- **包装脚本必须把参数原样传给 agent**，例如 `exec limactl shell agent claude "$@"`。**不透传的后果是静默的**：`--resume <id>` 被丢掉，VM 里起的是一个全新的 claude，但它同样空闲，`wl restore` 照样报“已接回原会话”、退出码 0、岗位 `live`，上下文其实已经丢了，雁阵目前检测不到。接回之后可以在 VM 里 `ps -eo args | grep claude` 看进程参数里有没有 `--resume <id>`。
 - 找回的条件和本机一样严格：会话要整串包含该岗位的标记，且 `cwd` 就是岗位的 worktree。已验证的是 Lima 默认的同路径挂载（宿主的 home 以同样的路径出现在 VM 里）。如果 VM 里 `cwd` 不是宿主路径，或者搜索结果没有证据（旧版 Orca），`wl restore` 会报 `uncertain` 并提示 `--session`，**不会**悄悄新起一个丢上下文的会话。
 - 手工指定：`wl restore <团队> --session builder=<会话ID>`。会话 ID 可以在 VM 内 `claude --resume` 的列表里看，或者 `orca search --environment lima-agent "<关键词>"` 回执里的 `sessionId`。
 - 环境暂时连不上（例如 ssh 隧道断了）时同样报 `uncertain`，连上后重跑 `wl restore` 即可；环境名拼错会直接报错。
