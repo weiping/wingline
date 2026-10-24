@@ -94,3 +94,13 @@ test('DEFAULT_PATROL matches what the schema fills in', async () => {
   const { DEFAULT_PATROL } = await import('../../src/spec/load.js')
   expect(loadTeamSpec(mkTeam(DUO_YAML)).patrol).toEqual(DEFAULT_PATROL)
 })
+
+test('3D-2: a spec without environment keeps the pinned hash; writing one changes it, and different names differ', () => {
+  const withEnv = (name: string) => DUO_YAML.replace('    agent: claude\n    model: opus\n', `    agent: claude\n    model: opus\n    environment: ${name}\n`)
+  const plain = specHash(loadTeamSpec(mkTeam(DUO_YAML)))
+  expect(plain).toBe('d6cf0b333ae8418f9fe51eced88cc223e889ebcdf2f6278c633fc37fbb2dc00c')
+  const a = specHash(loadTeamSpec(mkTeam(withEnv('lima-agent'))))
+  expect(a).not.toBe(plain)
+  expect(specHash(loadTeamSpec(mkTeam(withEnv('other-vm'))))).not.toBe(a)
+  expect(specHash(loadTeamSpec(mkTeam(withEnv('lima-agent'), { dir: 'elsewhere' })))).toBe(a)
+})

@@ -760,3 +760,19 @@ WINGLINE_SPIKE_WORKTREE=<专用测试 worktree 选择器> pnpm tsx spikes/worktr
 - **没有做的**：用真实标记（`WLS-xxxxxxxx`）在 VM 的会话里搜一次完整的恢复流程（需要在 VM 里放一个带标记的会话）。
 
 **据此的改动**：spec 第 5.3 节自动搜索不再降级为“只支持 `--session`”，可以做；`FakeOrca.search` 带 `environment` 时默认 `snippet: null` 的假设要改成带 snippet（3D-2 的 Task F）。
+
+## 3D-2 远端环境真机验证（2026-10-24，macOS，Orca 1.4.237，Lima VM `agent` 里的 claude 2.1.301）
+
+团队 `duo`（临时 `WINGLINE_HOME`，wingline worktree）：`builder` 写了 `environment: lima-agent`、`launch: 'claude-lima --permission-mode acceptEdits'`（用户自己的包装脚本 `~/.local/bin/claude-lima`，用 `bash -lc 'exec claude "$@"'` 透传参数、`--workdir "$PWD"`），`checker` 用占位进程。`wl` 在去掉 `ORCA_TERMINAL_HANDLE` 等身份变量的环境里运行。
+
+**通过**
+- `wl up`：builder 在 VM 里的 claude 上线、收下启动包（标记 `WLS-ffcffe08`）。10 秒内 `orca search "<标记>" --agent claude --fresh --environment lima-agent` 找到 1 条命中：带 `[[…]]` 高亮的 `snippet`，`cwd` 是宿主路径 `/Users/liuweiping/workspace/dev/wingline`（Lima 同路径挂载）。
+- 关掉 builder 的终端模拟重启（注意：claude 会改终端标题，按标题 `builder@duo` 关不到，要按 handle 关）。`wl restore duo --dry-run` 报“已接回原会话 01962f92-…”，`wl restore duo` 同样接回，退出码 0；`wl ps` 为 `live`，`posts.session_id` 已缓存为该 ID。
+- VM 里确实在跑 `claude --permission-mode acceptEdits --resume 01962f92-e9c3-4949-b90c-39da95a269f0`；终端里出现“重启后已接回本会话”的接回提示。
+- 另一个观察：占位的 `checker`（本机，没写 `environment`）在 `restore` 里走本机搜索，找不到原会话，按预期 `fresh`；本机岗位的搜索不带 `--environment`。
+- 结束后 `wl down duo --close`，团队终端全部关闭，VM 里没有残留的 `--resume` 进程。
+
+**没做**
+- “包装脚本不透传参数”的反例（plan Task 4 第三项）：需要再起一个团队和一个真实 claude 会话，没做；README 的“包装脚本必须透传参数”仍只是依据 spec 和 3A 的行为写的，没有真机验证。
+- 没有同路径挂载的 VM（`cwd` 是 VM 内路径）和旧版 Orca（命中无 `snippet`）：只有单元测试，对应的 `uncertain` 分支没有真机。
+- 残留：这次在 VM 的 `~/.claude` 里留下了一个 claude 会话记录（`01962f92-…`，内容是雁阵的启动包与接回提示），没有删除。

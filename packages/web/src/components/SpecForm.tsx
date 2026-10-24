@@ -154,6 +154,7 @@ function PostFields({ i, post, c }: { i: number; post: any; c: Omit<FieldBase, '
       <TextField {...f('agent')} required />
       <TextField {...f('model')} />
       <TextField {...f('launch')} />
+      <TextField {...f('environment')} placeholder="本机（或 Orca 里的已配对环境名，如 lima-agent）" />
       <TextField {...f('worktree')} placeholder="current" />
       <ListField {...f('brief')} />
       <ListField {...f('tags')} />
@@ -218,7 +219,7 @@ export function SpecForm({ parsed, errors, disabled, onSet }: FormProps) {
 export function formHasField(path: SpecPath, postIds: string[]): boolean {
   const [a, b, c] = path
   if (a === 'lead') return true
-  if (a === 'posts') return typeof b === 'number' && ['id', 'agent', 'model', 'launch', 'worktree', 'brief', 'tags', 'self_claim', 'plan_first'].includes(String(c))
+  if (a === 'posts') return typeof b === 'number' && ['id', 'agent', 'model', 'launch', 'environment', 'worktree', 'brief', 'tags', 'self_claim', 'plan_first'].includes(String(c))
   if (a === 'links' || a === 'gates') return path.length >= 2 && postIds.includes(String(b))
   if (a === 'budgets') return b === 'task' && path.length >= 3
   if (a === 'patrol') return path.length >= 2 && b !== 'notify'

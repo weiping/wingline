@@ -10,9 +10,9 @@ import { restoreKey, restorePost } from '../../../src/commands/restore/posts.js'
 import type { Launch } from '../../../src/commands/launch.js'
 
 /** 建一个 duo 团队：builder（claude，牵头岗）失效中、带标记 WLS-aaaa1111；worktree 已固定为 path:。 */
-function seed(o: FakeOrca, builderOver: Partial<PostRow> = {}) {
+function seed(o: FakeOrca, builderOver: Partial<PostRow> = {}, yaml = DUO_YAML) {
   const { deps, registry } = mkDeps(o)
-  const specPath = mkTeam(DUO_YAML)
+  const specPath = mkTeam(yaml)
   const spec = loadTeamSpec(specPath)
   const hash = specHash(spec)
   registry.upsertTeam({ name: 'duo', specPath, specHash: hash, runId: 'run-1', coordinatorHandle: 'coord-1', status: 'up' })
@@ -208,4 +208,56 @@ test('the lead is processed first and handle/status are updated', async () => {
     expect(row.handle).toBeTruthy()
     expect(row.status).toBe('live')
   }
+})
+
+// —— 3D-2：写了 environment 的岗位 ——
+
+const ENV_YAML = DUO_YAML.replace('    agent: claude\n    model: opus\n', '    agent: claude\n    model: opus\n    environment: lima-agent\n')
+const vm = (over: Record<string, unknown> = {}) => ({ marker: 'WLS-aaaa1111', agent: 'claude', sessionId: 'vm-1', cwd: os.tmpdir(), environment: 'lima-agent', ...over })
+
+test('remote post: resumes the VM session found through --environment with launch + --resume', async () => {
+  const s = seed(new FakeOrca(), {}, ENV_YAML)
+  s.o.sessions.push(vm())
+  const r = await restorePost(s.l, s.post, { dryRun: false, briefing: s.briefing })
+  expect(r).toEqual({ address: 'builder@duo', outcome: 'resumed', sessionId: 'vm-1' })
+  expect(s.o.created.at(-1)!.command).toBe('claude --model opus --resume vm-1')
+  expect(s.o.searches).toEqual([{ query: '"WLS-aaaa1111"', agent: 'claude', environment: 'lima-agent' }])
+  expect(s.registry.getPost('builder@duo')!.sessionId).toBe('vm-1')
+})
+
+test('remote post: a local session with the same marker is not used, so it starts fresh with the context-lost note', async () => {
+  const s = seed(new FakeOrca(), {}, ENV_YAML)
+  s.o.sessions.push(hit('local-1'))
+  const r = await restorePost(s.l, s.post, { dryRun: false, briefing: s.briefing })
+  expect(r).toMatchObject({ outcome: 'fresh', reason: '未找到原会话，上下文已丢失' })
+})
+
+test('remote post: --session skips the search entirely', async () => {
+  const s = seed(new FakeOrca(), {}, ENV_YAML)
+  const r = await restorePost(s.l, s.post, { dryRun: false, override: 'vm-9', briefing: s.briefing })
+  expect(r).toMatchObject({ outcome: 'resumed', sessionId: 'vm-9' })
+  expect(s.o.searches).toEqual([])
+})
+
+test('remote post: a VM-path cwd is uncertain, with nothing created and the retry command named', async () => {
+  const s = seed(new FakeOrca(), {}, ENV_YAML)
+  s.o.sessions.push(vm({ cwd: '/home/user/wt' }))
+  const r = await restorePost(s.l, s.post, { dryRun: false, briefing: s.briefing })
+  expect(r).toMatchObject({ outcome: 'uncertain', retry: 'wl restore duo' })
+  expect(r.reason).toContain('--session')
+  expect(s.o.created).toEqual([])
+})
+
+test('remote post: dry-run reports resumed without creating a terminal', async () => {
+  const s = seed(new FakeOrca(), {}, ENV_YAML)
+  s.o.sessions.push(vm())
+  expect(await restorePost(s.l, s.post, { dryRun: true, briefing: s.briefing })).toEqual({ address: 'builder@duo', outcome: 'resumed', sessionId: 'vm-1' })
+  expect(s.o.created).toEqual([])
+})
+
+test('a post without environment still searches locally (no --environment)', async () => {
+  const s = seed(new FakeOrca())
+  s.o.sessions.push(hit('s1'))
+  await restorePost(s.l, s.post, { dryRun: false, briefing: s.briefing })
+  expect(s.o.searches).toEqual([{ query: '"WLS-aaaa1111"', agent: 'claude' }])
 })

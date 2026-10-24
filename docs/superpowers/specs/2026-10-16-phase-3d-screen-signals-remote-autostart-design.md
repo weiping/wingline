@@ -1,7 +1,7 @@
 # 雁阵 Wingline 阶段 3D：画面信号、远端环境恢复、未读标记与登录后自动恢复设计
 
 - 日期：2026-10-16（2026-10-23 按两轮复审重写第 3–8、10–13 节，见末尾“复审修订”）
-- 状态：**3D-1（块 a + b）已实现**，真机验证见 `spikes/REPORT.md` “3D-1 真机验证”（launchd 最小环境、`restore --all --actor autostart`、未读红点已通过；由登录触发的恢复与 Linux 真机尚未验证）；**3D-2（块 c + d）未开始**，等探针 2、4 —— 实现计划拆成两份，索引见 `docs/superpowers/plans/2026-10-16-phase-3d-screen-signals-remote-autostart.md`：3D-1（块 a + b）`docs/superpowers/plans/2026-10-23-phase-3d1-restore-all-autostart-unread.md`，3D-2：块 (d) 远端环境 `docs/superpowers/plans/2026-10-24-phase-3d2d-remote-environment.md`（可开工），块 (c) 画面信号（待探针 2）
+- 状态：**3D-1（块 a + b）已实现**，真机验证见 `spikes/REPORT.md` “3D-1 真机验证”（launchd 最小环境、`restore --all --actor autostart`、未读红点已通过；由登录触发的恢复与 Linux 真机尚未验证）；**3D-2（块 c + d）未开始**，等探针 2、4 —— 实现计划拆成两份，索引见 `docs/superpowers/plans/2026-10-16-phase-3d-screen-signals-remote-autostart.md`：3D-1（块 a + b）`docs/superpowers/plans/2026-10-23-phase-3d1-restore-all-autostart-unread.md`，3D-2：块 (d) 远端环境 `docs/superpowers/plans/2026-10-24-phase-3d2d-remote-environment.md`（已实现，真机已验证 Lima 同路径挂载），块 (c) 画面信号（待探针 2）
 - 范围：阶段 3 的收尾子项目 D，集中前面各份 spec 推迟到阶段 3 的事项：
   1. 读画面的巡查信号：“上下文快满”（`context_low`）与“用量上限”（`usage_limit`）；
   2. 远端 / 配对环境（如 Lima VM）里岗位的会话恢复：字段与 `--session` 手工恢复先做，自动搜索待探针；
@@ -140,7 +140,7 @@ posts:
     environment: lima-agent      # 可选；Orca 里的环境名
 ```
 
-- 值的格式：小写字母、数字、连字符、下划线、点，1–64 字符（`^[a-z0-9._-]{1,64}$`）；不符 → `environment_invalid`（`wl up` 的校验错误，退出码 1）。校验放在 `spec/load.ts`（与 `launch_required` 同样用 `at.fail`）：`schema.ts` 只声明 `z.string().min(1).optional()`，否则 zod 的格式错误会被统一映射成 `spec_invalid`。
+- 值的格式：以小写字母或数字开头，其后可含小写字母、数字、连字符、下划线、点，共 1–64 字符（`^[a-z0-9][a-z0-9._-]{0,63}$`；不能以 `-` 开头，否则会被当成 orca 的选项）；不符 → `environment_invalid`（`wl up` 的校验错误，退出码 1）。校验放在 `spec/load.ts`（与 `launch_required` 同样用 `at.fail`）：`schema.ts` 只声明 `z.string().min(1).optional()`，否则 zod 的格式错误会被统一映射成 `spec_invalid`。
 - 未写即本机，行为不变，不进规格哈希；写了才进（`posts` 映射条件展开）。
 - `PostRow`（`registry.ts` 的 `posts` 表）没有 `environment` 列，`findSession` 也读不到规格：由 `restorePost` 把 `PostSpec.environment` 作为参数传给 `findSession`，不加列、不加迁移（`restore` 本来就会 `loadTeamSpec`，规格是唯一来源）。
 

@@ -84,3 +84,21 @@ test('field diffs list lead, gates, budgets and patrol before/after', () => {
   )
   expect(planSpecChange(current, next(DUO_YAML), PLAN_OPTS).fields).toEqual([])
 })
+
+test('3D-2: adding, changing or removing a post environment is a launch change (and suggests wl down --close)', () => {
+  const { current, next } = setup()
+  const withEnv = (name?: string) => (name ? DUO_YAML.replace('    agent: claude\n    model: opus\n', `    agent: claude\n    model: opus\n    environment: ${name}\n`) : DUO_YAML)
+  const added = planSpecChange(current, next(withEnv('lima-agent')), PLAN_OPTS)
+  expect(added.posts.find((p) => p.id === 'builder')).toEqual({ id: 'builder', kind: 'launch_changed', fields: ['environment'] })
+  expect(added.closeSuggested).toBe(true)
+
+  const withLima = loadTeamSpec(setupWith(withEnv('lima-agent')))
+  expect(kindOf(planSpecChange(withLima, next(withEnv('other-vm')), PLAN_OPTS), 'builder')).toBe('launch_changed')
+  expect(kindOf(planSpecChange(withLima, next(withEnv()), PLAN_OPTS), 'builder')).toBe('launch_changed')
+  expect(kindOf(planSpecChange(withLima, next(withEnv('lima-agent')), PLAN_OPTS), 'builder')).toBe('kept')
+})
+
+function setupWith(yaml: string): string {
+  return mkTeam(yaml, { dir: 'with-env' })
+}
+

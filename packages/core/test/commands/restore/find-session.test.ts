@@ -139,3 +139,84 @@ test('search failure → uncertain, never none', async () => {
   const { deps } = mkDeps(o)
   expect(await findSession(deps, postRow(), '/wt')).toMatchObject({ kind: 'uncertain' })
 })
+
+// —— 3D-2：远端环境 ——
+
+const ENV = 'lima-agent'
+const M = 'WLS-aaaa1111'
+const remote = (over: Record<string, unknown> = {}) => ({ marker: M, agent: 'claude', sessionId: 'vm-1', cwd: '/wt', environment: ENV, ...over })
+
+test('environment post: searches with --environment and ignores a local session with the same marker', async () => {
+  const o = new FakeOrca(); const { deps } = mkDeps(o)
+  o.sessions.push({ marker: M, agent: 'claude', sessionId: 'local-1', cwd: '/wt' }, remote())
+  expect(await findSession(deps, postRow(), '/wt', undefined, [], ENV)).toEqual({ kind: 'found', sessionId: 'vm-1', via: 'search' })
+  expect(o.searches).toEqual([{ query: `"${M}"`, agent: 'claude', environment: ENV }])
+})
+
+test('local post (no environment) still searches without it and ignores remote sessions', async () => {
+  const o = new FakeOrca(); const { deps } = mkDeps(o)
+  o.sessions.push(remote(), { marker: M, agent: 'claude', sessionId: 'local-1', cwd: '/wt' })
+  expect(await findSession(deps, postRow(), '/wt')).toEqual({ kind: 'found', sessionId: 'local-1', via: 'search' })
+  expect(o.searches).toEqual([{ query: `"${M}"`, agent: 'claude' }])
+})
+
+test('environment post: override and cached session id win without any search', async () => {
+  const o = new FakeOrca(); const { deps } = mkDeps(o)
+  expect(await findSession(deps, postRow(), '/wt', 'over-1', [], ENV)).toEqual({ kind: 'found', sessionId: 'over-1', via: 'override' })
+  expect(await findSession(deps, postRow({ sessionId: 'c-1' }), '/wt', undefined, [], ENV)).toEqual({ kind: 'found', sessionId: 'c-1', via: 'cached' })
+  expect(o.searches).toEqual([])
+})
+
+test('environment post: a highlighted hit whose cwd is a VM path is uncertain, never none', async () => {
+  const o = new FakeOrca(); const { deps } = mkDeps(o)
+  o.sessions.push(remote({ cwd: '/home/user/wt' }))
+  const r = await findSession(deps, postRow(), '/wt', undefined, [], ENV)
+  expect(r).toMatchObject({ kind: 'uncertain', reason: expect.stringContaining('--session') })
+  expect((r as { reason: string }).reason).toContain('cwd')
+  expect((r as { reason: string }).reason).toContain('wl restore duo --session builder=')
+})
+
+test('environment post: hits without evidence are uncertain; a clean miss is none; a partial-token hit is not a marker hit', async () => {
+  const o = new FakeOrca(); const { deps } = mkDeps(o)
+  expect(await findSession(deps, postRow(), '/wt', undefined, [], ENV)).toEqual({ kind: 'none', reason: '未找到原会话' })
+  o.sessions.push(remote({ snippet: null }))
+  expect(await findSession(deps, postRow(), '/wt', undefined, [], ENV)).toMatchObject({ kind: 'uncertain', reason: expect.stringContaining('证据') })
+  o.sessions.length = 0
+  o.sessions.push(remote({ snippet: 'x [[wls]] y' }))
+  expect(await findSession(deps, postRow(), '/wt', undefined, [], ENV)).toEqual({ kind: 'none', reason: '未找到原会话' })
+})
+
+test('local post: a hit without evidence is still just not a match (3A behaviour unchanged)', async () => {
+  const o = new FakeOrca(); const { deps } = mkDeps(o)
+  o.sessions.push({ marker: M, agent: 'claude', sessionId: 'local-1', cwd: '/wt', snippet: null })
+  expect(await findSession(deps, postRow(), '/wt')).toEqual({ kind: 'none', reason: '未找到原会话' })
+})
+
+test('environment post: two matching sessions are ambiguous; a session reserved by an earlier post is skipped', async () => {
+  const o = new FakeOrca(); const { deps } = mkDeps(o)
+  o.sessions.push(remote(), remote({ sessionId: 'vm-2' }))
+  const both = await findSession(deps, postRow(), '/wt', undefined, [], ENV)
+  expect(both.kind).toBe('ambiguous')
+  expect(await findSession(deps, postRow(), '/wt', undefined, ['vm-2'], ENV)).toEqual({ kind: 'found', sessionId: 'vm-1', via: 'search' })
+})
+
+test('environment unreachable (orca error) is uncertain with a rerun hint', async () => {
+  const o = new FakeOrca(); const { deps } = mkDeps(o)
+  o.searchError = new WinglineError('orca', 'runtime_unavailable', 'tunnel down')
+  expect(await findSession(deps, postRow(), '/wt', undefined, [], ENV)).toMatchObject({ kind: 'uncertain', reason: expect.stringContaining('wl restore duo') })
+})
+
+test('an unknown environment name fails loudly: Orca answers invalid_argument (an orca-kind error), which becomes an input error naming the known ones', async () => {
+  const o = new FakeOrca(); const { deps } = mkDeps(o)
+  // 真机回执：orca search --environment no-such-env → error.code = invalid_argument，经 run.ts 成为 kind 'orca'
+  o.searchError = new WinglineError('orca', 'invalid_argument', 'Unknown Orca server in --environment lima-agnt: no paired Orca server is named or has id lima-agnt.')
+  await expect(findSession(deps, postRow(), '/wt', undefined, [], 'lima-agnt')).rejects.toMatchObject({
+    kind: 'input', code: 'environment_not_found', hint: expect.stringContaining('orca environment list'),
+  })
+  // 其它 invalid_argument（与 --environment 无关）仍是 orca 类的不确定，不被误判成环境名错误
+  o.searchError = new WinglineError('orca', 'invalid_argument', 'bad --limit')
+  expect(await findSession(deps, postRow(), '/wt', undefined, [], ENV)).toMatchObject({ kind: 'uncertain' })
+  // 本机岗位不带 environment：同样的错误不会被当成环境名错误
+  o.searchError = new WinglineError('orca', 'invalid_argument', 'Unknown Orca server in --environment x')
+  expect(await findSession(deps, postRow(), '/wt')).toMatchObject({ kind: 'uncertain' })
+})

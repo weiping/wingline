@@ -77,6 +77,8 @@ export class FakeOrca implements OrcaClient {
   /** 会话搜索模型（3A）：按去引号后的 query 精确匹配 marker，agent/environment 须一致；snippet 缺省为整串高亮的标记。 */
   sessions: Array<{ marker: string; agent: string; sessionId: string; cwd: string | null; updatedAt?: string; messageCount?: number; environment?: string; snippet?: string | null }> = []
   searchError?: Error
+  /** search 的每次调用参数（断言搜索是否带了 --environment）。 */
+  searches: Array<{ query: string; agent: string; environment?: string }> = []
   tabCreateCalls: Array<{ url: string; worktree: string }> = []
   tabCreateSupported = true
 
@@ -343,6 +345,7 @@ export class FakeOrca implements OrcaClient {
 
   async search(a: { query: string; agent: string; environment?: string }) {
     this.read('search', a)
+    this.searches.push({ ...a })
     if (this.searchError) throw this.searchError
     const marker = a.query.startsWith('"') && a.query.endsWith('"') ? a.query.slice(1, -1) : a.query
     return this.sessions

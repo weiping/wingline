@@ -7,6 +7,7 @@ posts:
   - id: builder
     agent: claude
     model: opus
+    # environment: lima-agent      # 可选：agent 跑在 Orca 已配对的远端环境（如 Lima VM）里时填环境名，见 README「远端环境」
     worktree: current               # current，或 Orca 的 worktree 选择器
     brief: [briefs/builder.md]
   - id: checker

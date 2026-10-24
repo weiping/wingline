@@ -125,7 +125,7 @@ export async function restorePost(
     const worktreePath = row.worktree.startsWith('path:')
       ? row.worktree.slice(5)
       : (await orca.worktreeShow({ worktree: row.worktree })).path
-    const lookup = await findSession(l.deps, row, worktreePath, o.override, o.reserved)
+    const lookup = await findSession(l.deps, row, worktreePath, o.override, o.reserved, post.environment)
     if (lookup.kind === 'ambiguous') {
       return { address, outcome: 'ambiguous', candidates: lookup.candidates, retry: `${retry} --session ${post.id}=<id>` }
     }
