@@ -7,7 +7,7 @@ import { loadTeamSpec } from '../../../src/spec/load.js'
 import { specHash } from '../../../src/spec/hash.js'
 import { DUO_YAML, mkTeam } from '../../spec/helpers.js'
 import { FakeOrca, mkDeps } from '../fake-client.js'
-import { noticeToken, restoreKey, restorePost, resumeNotice, verifyLanding } from '../../../src/commands/restore/posts.js'
+import { noticeToken, restoreKey, restorePost, resumeNotice, resumeToken, verifyLanding } from '../../../src/commands/restore/posts.js'
 import type { Launch } from '../../../src/commands/launch.js'
 
 /** 建一个 duo 团队：builder（claude，牵头岗）失效中、带标记 WLS-aaaa1111；worktree 已固定为 path:。 */
@@ -213,7 +213,7 @@ test('the lead is processed first and handle/status are updated', async () => {
 
 // —— 3D-2：写了 environment 的岗位 ——
 
-const T0 = noticeToken(restoreKey('duo', 'builder', 0, 'notice'))
+const T0 = resumeToken(restoreKey('duo', 'builder', 0, 'notice'), 'WLS-aaaa1111')
 const quick = { tries: 1, pauseMs: 0 }
 const ENV_YAML = DUO_YAML.replace('    agent: claude\n    model: opus\n', '    agent: claude\n    model: opus\n    environment: lima-agent\n')
 const vm = (over: Record<string, unknown> = {}) => ({ marker: 'WLS-aaaa1111', agent: 'claude', sessionId: 'vm-1', cwd: os.tmpdir(), environment: 'lima-agent', ...over })
@@ -379,4 +379,13 @@ test('remote post: when the notice is skipped (screen not clear) there is nothin
   const r = await restorePost(s.l, s.post, { dryRun: false, briefing: s.briefing, verify: quick })
   expect(r).toMatchObject({ outcome: 'resumed', noticeSkipped: expect.stringContaining('at_prompt') })
   expect(s.o.searches.map((x) => x.query)).toEqual(['"WLS-aaaa1111"'])
+})
+
+test('resumeToken also depends on the post\'s session marker, so two registries (or a rebuilt team) with the same team/post/generation never share a token', () => {
+  const k = restoreKey('duo', 'builder', 0, 'notice')
+  expect(resumeToken(k, 'WLS-aaaa1111')).toMatch(/^WLR-[0-9a-f]{8}$/)
+  expect(resumeToken(k, 'WLS-aaaa1111')).toBe(resumeToken(k, 'WLS-aaaa1111'))
+  expect(resumeToken(k, 'WLS-aaaa1111')).not.toBe(resumeToken(k, 'WLS-bbbb2222'))
+  expect(resumeToken(k, 'WLS-aaaa1111')).not.toBe(noticeToken(k))
+  expect(resumeToken(k, null)).toMatch(/^WLR-[0-9a-f]{8}$/)
 })

@@ -44,6 +44,12 @@ export function restoreGen(reg: Registry, team: string, post: string, _located: 
  */
 export const noticeToken = (requestKey: string): string => `WLR-${createHash('sha256').update(requestKey).digest('hex').slice(0, 8)}`
 
+/**
+ * 实际使用的标识：并入岗位的会话标记（每个岗位每次启动随机生成）。只用 (团队, 岗位, 代数) 的请求键时，
+ * 换一个注册表或重建团队后标识会重复，VM 里别的会话残留的同名标识会被搜到，核对就会误判。
+ */
+export const resumeToken = (requestKey: string, marker: string | null): string => noticeToken(`${requestKey}:${marker ?? ''}`)
+
 export const resumeNotice = (address: string, token?: string): string =>
   `[雁阵] 重启后已接回本会话，你的地址仍是 ${address}。${token ? `（接回标识 ${token}）` : ''}`
 
@@ -147,7 +153,7 @@ async function settleResume(
     registry.setPostStatus(address, 'live')
     return { address, outcome: 'resumed', sessionId, noticeSkipped: `未发送接回提示（${screen}）` }
   }
-  const token = remote ? noticeToken(rid('notice')) : undefined
+  const token = remote ? resumeToken(rid('notice'), registry.getPost(address)?.sessionMarker ?? null) : undefined
   if (!stepDone(registry, rid('notice'))) {
     await recorded(
       registry, rid('notice'),
