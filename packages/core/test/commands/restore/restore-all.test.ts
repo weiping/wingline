@@ -103,6 +103,17 @@ test('no team is up: an empty result and exit code 0', async () => {
   expect(restoreAllExitCode(r)).toBe(0)
 })
 
+test('no team is up: nothing is waited for, even with a wait budget and Orca unreachable', async () => {
+  const w = world()
+  w.team('old', 'stopped')
+  w.script([false], [A])
+  const restoreOne = vi.fn()
+  const r = await restoreAll(w.deps, { waitOrcaMs: 15 * 60_000 }, { restoreOne, sleep: w.sleep })
+  expect(r).toEqual({ teams: [] })
+  expect(w.sleeps).toEqual([])
+  expect(restoreOne).not.toHaveBeenCalled()
+})
+
 test('waitForOrca: polls status every 10s until reachable, then needs 4 identical terminal samples in a row', async () => {
   expect([ORCA_POLL_MS, SETTLE_SAMPLES]).toEqual([10_000, 4])
   const w = world()
