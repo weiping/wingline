@@ -63,3 +63,27 @@
 **Ready to merge? With fixes**（已合并，作为合并后跟进项处理：修复计划见 `docs/superpowers/plans/2026-10-20-phase-3b-review-fixes.md`）
 
 **Reasoning**：架构与安全主干质量高、测试大体可信；但 C-1"一个请求杀掉整个服务"实测可复现且违反 spec §9，加上 SSE 参数校验与 close() 两处同类硬伤，必须修复；其余项可随后跟进。
+
+## 处置情况（2026-10-23 回填）
+
+复审修复合并于 PR #7（`0284a16`），计划 `docs/superpowers/plans/2026-10-20-phase-3b-review-fixes.md` 全部打勾；2026-10-22 对该修复的复审又发现四处缺口，合并于 PR #9（`1743d13`），计划 `docs/superpowers/plans/2026-10-22-phase-3b-review-followup.md`。
+
+| 项 | 处置 | 去向 |
+| --- | --- | --- |
+| C-1 请求处理器无顶层兜底 | 已修复 | PR #7 Task 1 |
+| I-2 SSE 路由绕过参数校验 | 已修复 | PR #7 Task 1 |
+| I-3 `close()` 不关 SSE 连接 | 已修复；残余的“先删 `console.json` 后关服务”窗口另在 PR #9 Task 3 收口 | PR #7 Task 1、PR #9 Task 3 |
+| I-4 `selfCommand` 未共享 | 已修复 | PR #7 Task 3 |
+| I-5 `consoleWorktree` 偏差 | 已修复 | PR #7 Task 4 |
+| I-6 前端重试体与服务端白名单不匹配 | 已修复，写路由表驱动，11 条路由全覆盖 | PR #7 Task 5 |
+| I-7 计划点名测试缺失 | 已修复 | PR #7 Task 1 / 5 / 6 |
+| I-8 函数超过 50 行 | 已修复 | PR #7 Task 1 / 5 / 7 |
+| I-9 安全头只在静态路径 | 已修复 | PR #7 Task 2 |
+| M-12 `checkParam` 放行 `undefined`、`reassign` 未校验 | 已修复 | PR #7 Task 5 |
+| M-13 `files` 字段、M-14 硬编码版本号 | 已修复 | PR #7 Task 6 |
+| M-16 `consoleCommands(_deps)` 未用参数、M-18 重复作废缓存 | 已修复 | PR #7 Task 5 |
+| M-10 SSE 重连全表读取、M-11 413 后仍读完上传体、M-17 Auth 过期条目不清扫 | **未处理**，计划明确排除（M-11 改动响应时序风险大于收益，其余为增强） | — |
+| M-15 页面细项缺口（卡住原因角标、gate 输出路径、时间范围筛选） | **未实现**，3B spec 状态行与页面表已如实标注，功能另立任务 | PR #9 Task 4 |
+| 复审后新增：未预期异常不记日志（spec §9）、`retryRequest` 不校验类型 | 已修复 | PR #9 Task 1、Task 2 |
+
+“Declined to judge” 一节的各项维持原裁定，未改动。

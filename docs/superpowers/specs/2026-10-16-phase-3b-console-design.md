@@ -1,7 +1,7 @@
 # 雁阵 Wingline 阶段 3B：本地 HTTP API 与控制台设计
 
 - 日期：2026-10-16
-- 状态：**已实现（有三项页面缺口，见第 7 节页面表中“未实现，见复审 M-15”的标注）**（2026-10-20 合并 PR #6、PR #7 复审修复；改动见 `docs/superpowers/plans/2026-10-16-phase-3b-console.md` 与 `docs/superpowers/plans/2026-10-20-phase-3b-review-fixes.md`）
+- 状态：**已实现（有三项页面缺口，见第 7 节页面表中“未实现，见复审 M-15”的标注）**（2026-10-19 合并 PR #6，2026-10-20 合并 PR #7 复审修复，2026-10-22 合并 PR #9 复审跟进；改动见 `docs/superpowers/plans/2026-10-16-phase-3b-console.md`、`docs/superpowers/plans/2026-10-20-phase-3b-review-fixes.md` 与 `docs/superpowers/plans/2026-10-22-phase-3b-review-followup.md`；复审结论与处置见 `docs/superpowers/reviews/2026-10-20-phase-3b-code-review.md`）
 - 范围：阶段 3（控制台与恢复）子项目 B：`wl console` 本地服务（HTTP API + SSE）、登录与安全、控制台 6 个页面（总览、收件箱、任务看板、任务详情、岗位详情、时间线）、`wl console --open` 在 Orca 内打开。
 - 依赖：阶段 3A（`docs/superpowers/specs/2026-10-16-phase-3a-restore-timeline-design.md`，下称 3A：`auditedCommands`、`audit_events`、`TimelineEvent`、`wl log` 的合并与游标、会话标记）、阶段 2A（任务命令与 `--stale` 判定）、阶段 2B（`attention`、`dispatcherHealth`、`dispatcher status`、冻结 / 静音 / 回答提问、调度员的启动方式与循环异常处理）。
 - 不含：团队编辑器、设置页、向 Orca 原生界面同步状态（终端标题、工作区卡片状态行、`--workspace-status`、未读红点）、`wl tui`——均为 3C；页面上的 `up`/`down`/`restore` 与调度员启停。

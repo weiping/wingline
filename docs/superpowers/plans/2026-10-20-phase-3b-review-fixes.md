@@ -10,6 +10,8 @@
 
 **Spec:** 复审报告 `docs/superpowers/reviews/2026-10-20-phase-3b-code-review.md`（下称报告）+ 3B spec `docs/superpowers/specs/2026-10-16-phase-3b-console-design.md` 的 Global Constraints。
 
+> **状态（2026-10-23）：已实现。** 合并于 PR #7（`0284a16`，分支 `fix/phase-3b-review`），全部 Step 已勾。对本修复的再复审发现的四处缺口，由 `docs/superpowers/plans/2026-10-22-phase-3b-review-followup.md` 收口（PR #9）；报告各项的处置汇总见报告末尾。
+
 ## Global Constraints
 
 - 只绑定 `127.0.0.1`；响应格式 `{ ok: true, result }` / `{ ok: false, error: { kind, code, message, hint, retry?, retryRequest? } }`；错误类别 → 状态码映射不变（input 400、orca 502、uncertain 504、internal 500、401/403/404/409/421）。
