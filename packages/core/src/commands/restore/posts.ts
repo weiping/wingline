@@ -1,15 +1,16 @@
+import { createHash } from 'node:crypto'
 import { checkBriefingLimit } from '../../brief/render.js'
 import { WinglineError } from '../../errors.js'
 import type { Registry } from '../../registry/registry.js'
 import type { PostSpec } from '../../spec/load.js'
-import { postAddress, requestId } from '../deps.js'
+import { postAddress, requestId, type CommandDeps } from '../deps.js'
 import { briefText } from '../up.js'
 import {
   ensureMarker, lifetimeGen, recorded, startPost, stepDone, WAIT_SUBMIT_SEC, WAIT_TIMEOUT_MS, withMarker, type Launch,
 } from '../launch.js'
 import { locatePost } from '../locate.js'
 import { screenGuard } from '../task/notify.js'
-import { findSession } from './find-session.js'
+import { findSession, markerHighlighted } from './find-session.js'
 import { resumeCommand, SESSION_ID } from './resume-command.js'
 
 export type RestorePostOutcome = 'kept' | 'resumed' | 'fresh' | 'ambiguous' | 'uncertain' | 'failed'
@@ -35,7 +36,42 @@ export function restoreGen(reg: Registry, team: string, post: string, _located: 
   return g
 }
 
-const RESUME_NOTICE = (address: string) => `[雁阵] 重启后已接回本会话，你的地址仍是 ${address}。`
+/**
+ * 远端岗位的接回提示带一个每次接回唯一的标识（`WLR-` 加 8 位十六进制，由该次接回的请求键哈希得到，重试时不变）。
+ * 提示原文每次相同，原会话里可能早有旧的同样的提示；不带标识，丢了 `--resume` 的这一次会被旧提示误判为通过。
+ */
+export const noticeToken = (requestKey: string): string => `WLR-${createHash('sha256').update(requestKey).digest('hex').slice(0, 8)}`
+
+export const resumeNotice = (address: string, token?: string): string =>
+  `[雁阵] 重启后已接回本会话，你的地址仍是 ${address}。${token ? `（接回标识 ${token}）` : ''}`
+
+export type Landing = { kind: 'confirmed' } | { kind: 'mismatch'; landed: string[] } | { kind: 'unknown'; why: string }
+
+const pause = (ms: number): Promise<void> => (ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve())
+
+/**
+ * 接回提示发出后，到远端环境里按标识搜，看它落进了哪个会话：要接回的那个 → confirmed；只落进别的会话 → mismatch
+ * （包装脚本没把 --resume 透传给 agent，VM 里起的是全新会话）；搜不到或搜索失败 → unknown（索引可能还没跟上，不因此让接回失败）。
+ */
+export async function verifyLanding(
+  deps: CommandDeps, a: { agent: string; environment: string; token: string; expected: string }, o: { tries: number; pauseMs: number },
+): Promise<Landing> {
+  let why = '远端搜索没有命中接回标识'
+  for (let i = 0; i < o.tries; i++) {
+    if (i > 0) await pause(o.pauseMs)
+    try {
+      const hits = await deps.orca.search({ query: `"${a.token}"`, agent: a.agent, environment: a.environment })
+      const landed = [...new Set(hits.filter((h) => markerHighlighted(h.snippet, a.token)).map((h) => h.sessionId))]
+      if (landed.includes(a.expected)) return { kind: 'confirmed' }
+      if (landed.length > 0) return { kind: 'mismatch', landed }
+      why = '远端搜索没有命中接回标识（索引可能还没跟上）'
+    } catch (err) {
+      if (!(err instanceof WinglineError)) throw err
+      why = `远端搜索失败：${err.message}`
+    }
+  }
+  return { kind: 'unknown', why }
+}
 
 const FRESH_REFUSE = {
   at_prompt: '岗位停在确认提示上',
@@ -87,7 +123,7 @@ async function settleResume(
   if (!stepDone(registry, rid('notice'))) {
     await recorded(
       registry, rid('notice'),
-      () => orca.terminalSend({ handle, text: RESUME_NOTICE(address), enter: true, waitSubmitSec: WAIT_SUBMIT_SEC }),
+      () => orca.terminalSend({ handle, text: resumeNotice(address), enter: true, waitSubmitSec: WAIT_SUBMIT_SEC }),
       (v) => v.accepted,
     )
   }

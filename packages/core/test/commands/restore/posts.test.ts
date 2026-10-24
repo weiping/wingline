@@ -1,12 +1,13 @@
 import os from 'node:os'
 import { expect, test } from 'vitest'
+import { WinglineError } from '../../../src/errors.js'
 import { renderBriefing } from '../../../src/brief/render.js'
 import type { PostRow } from '../../../src/registry/registry.js'
 import { loadTeamSpec } from '../../../src/spec/load.js'
 import { specHash } from '../../../src/spec/hash.js'
 import { DUO_YAML, mkTeam } from '../../spec/helpers.js'
 import { FakeOrca, mkDeps } from '../fake-client.js'
-import { restoreKey, restorePost } from '../../../src/commands/restore/posts.js'
+import { noticeToken, restoreKey, restorePost, resumeNotice, verifyLanding } from '../../../src/commands/restore/posts.js'
 import type { Launch } from '../../../src/commands/launch.js'
 
 /** 建一个 duo 团队：builder（claude，牵头岗）失效中、带标记 WLS-aaaa1111；worktree 已固定为 path:。 */
@@ -260,4 +261,61 @@ test('a post without environment still searches locally (no --environment)', asy
   s.o.sessions.push(hit('s1'))
   await restorePost(s.l, s.post, { dryRun: false, briefing: s.briefing })
   expect(s.o.searches).toEqual([{ query: '"WLS-aaaa1111"', agent: 'claude' }])
+})
+
+// —— 核对远端岗位真的接回了原会话 ——
+
+const TOKEN = 'WLR-1a2b3c4d'
+const landed = (over: Record<string, unknown> = {}) => ({ marker: TOKEN, agent: 'claude', sessionId: 'vm-1', cwd: null, environment: 'lima-agent', ...over })
+const check = (deps: Parameters<typeof verifyLanding>[0]) => verifyLanding(deps, { agent: 'claude', environment: 'lima-agent', token: TOKEN, expected: 'vm-1' }, { tries: 3, pauseMs: 0 })
+
+test('noticeToken is WLR- plus 8 hex, stable for one key and different across restore generations', () => {
+  const k0 = restoreKey('duo', 'builder', 0, 'notice')
+  expect(noticeToken(k0)).toMatch(/^WLR-[0-9a-f]{8}$/)
+  expect(noticeToken(k0)).toBe(noticeToken(k0))
+  expect(noticeToken(k0)).not.toBe(noticeToken(restoreKey('duo', 'builder', 1, 'notice')))
+})
+
+test('resumeNotice without a token is exactly the old text; with one it ends with the token', () => {
+  expect(resumeNotice('builder@duo')).toBe('[雁阵] 重启后已接回本会话，你的地址仍是 builder@duo。')
+  expect(resumeNotice('builder@duo', TOKEN)).toBe(`[雁阵] 重启后已接回本会话，你的地址仍是 builder@duo。（接回标识 ${TOKEN}）`)
+})
+
+test('verifyLanding: confirmed when the token landed in the expected session, even next to a hit in another one', async () => {
+  const o = new FakeOrca(); const { deps } = mkDeps(o)
+  o.sessions.push(landed())
+  expect(await check(deps)).toEqual({ kind: 'confirmed' })
+  expect(o.searches).toEqual([{ query: `"${TOKEN}"`, agent: 'claude', environment: 'lima-agent' }])
+  o.sessions.unshift(landed({ sessionId: 'vm-new' }))
+  expect(await check(deps)).toEqual({ kind: 'confirmed' })
+})
+
+test('verifyLanding: mismatch when the token landed only in other sessions; an older notice with another token in the expected session does not help', async () => {
+  const o = new FakeOrca(); const { deps } = mkDeps(o)
+  o.sessions.push(landed({ marker: 'WLR-00000000' }), landed({ sessionId: 'vm-new' }))
+  expect(await check(deps)).toEqual({ kind: 'mismatch', landed: ['vm-new'] })
+})
+
+test('verifyLanding: no hit after all the tries is unknown, and so is a failing search (it never throws)', async () => {
+  const o = new FakeOrca(); const { deps } = mkDeps(o)
+  expect(await check(deps)).toMatchObject({ kind: 'unknown', why: expect.stringContaining('没有命中') })
+  expect(o.searches).toHaveLength(3)
+  o.searchError = new WinglineError('orca', 'runtime_unavailable', 'tunnel down')
+  expect(await check(deps)).toMatchObject({ kind: 'unknown', why: expect.stringContaining('tunnel down') })
+})
+
+test('verifyLanding retries until the index catches up', async () => {
+  const o = new FakeOrca(); const { deps } = mkDeps(o)
+  o.sessions.push(landed())
+  const real = o.search.bind(o)
+  let calls = 0
+  o.search = async (a) => (++calls === 1 ? [] : real(a))
+  expect(await check(deps)).toEqual({ kind: 'confirmed' })
+  expect(calls).toBe(2)
+})
+
+test('verifyLanding: a hit whose snippet does not highlight the whole token (partial-token recall) is not a hit', async () => {
+  const o = new FakeOrca(); const { deps } = mkDeps(o)
+  o.sessions.push(landed({ snippet: 'x [[wlr]] y' }))
+  expect(await check(deps)).toMatchObject({ kind: 'unknown' })
 })
