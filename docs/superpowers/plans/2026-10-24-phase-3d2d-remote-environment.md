@@ -8,6 +8,8 @@
 
 **Tech Stack:** TypeScript、vitest、FakeOrca。
 
+> **状态（2026-10-24）：已实现**（分支 `phase-3d2d-remote-environment`，Task 1–3 各一个提交；全量 114 个文件、1566 个用例通过）。Task 4 真机检查通过前两项（找到 VM 会话并接回、`--resume` 进程与接回提示），第三项（包装脚本不透传参数的反例）未做；结果见 `spikes/REPORT.md` “3D-2 远端环境真机验证”。
+
 **Spec:** `docs/superpowers/specs/2026-10-16-phase-3d-screen-signals-remote-autostart-design.md` 第 5 节（5.1 字段、5.2 会话的确定顺序、5.3 探针 4 的结论）与第 11 节“远端环境”条目。块 (c) 画面信号不在本 plan（等探针 2 的样本）。前置：探针 4 已完成（`spikes/REPORT.md` “3D-2 探针 4”）。
 
 ## Global Constraints

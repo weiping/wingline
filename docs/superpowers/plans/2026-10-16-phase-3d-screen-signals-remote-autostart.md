@@ -7,7 +7,7 @@
 | 份 | 内容 | 前置 | 状态 |
 | --- | --- | --- | --- |
 | **3D-1** | 块 (a) `wl restore --all` + `wl autostart`（macOS / Linux）；块 (b) 未读标记 | 探针 3、6（Task 1，真机） | **已实现**（2026-10-24，分支 `phase-3d1-restore-all-autostart-unread`）：`docs/superpowers/plans/2026-10-23-phase-3d1-restore-all-autostart-unread.md`；真机已验证 launchd 最小环境、`restore --all --actor autostart`、未读红点；重新登录触发与 Linux 真机待验证 |
-| **3D-2 (d)** | 块 (d) 远端环境恢复 | 探针 4 已完成 | **可开工**：`docs/superpowers/plans/2026-10-24-phase-3d2d-remote-environment.md`（4 个任务，含真机检查） |
+| **3D-2 (d)** | 块 (d) 远端环境恢复 | 探针 4 已完成 | **已实现**（2026-10-24，分支 `phase-3d2d-remote-environment`）：`docs/superpowers/plans/2026-10-24-phase-3d2d-remote-environment.md`；真机已验证 Lima 同路径挂载下的找回与接回 |
 | **3D-2 (c)** | 块 (c) 画面信号 `context_low` / `usage_limit` | 探针 1 已完成，探针 2 缺“上下文快满 / 用量上限”的真实画面 | **待探针 2**：下面只列任务骨架，样本出来后按 writing-plans 补全步骤 |
 
 Windows 自启动单列，等探针 5。
