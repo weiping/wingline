@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-16-phase-3b-console-design.md`（下称 spec）；依赖 3A 的 plan 已完成（`auditedCommands`、`readTimeline`/`readTimelineAfter`、`TimelineEvent`、`audit_events`）。
 
-> **状态（2026-10-20）：已实现。** 合并于 PR #6（`bccd3db`），随后经 `docs/superpowers/reviews/2026-10-20-phase-3b-code-review.md` 复审并修复，合并于 PR #7（`0284a16`）。
+> **状态（2026-10-20）：已实现。** 合并于 PR #6（`bccd3db`），随后经 `docs/superpowers/reviews/2026-10-20-phase-3b-code-review.md` 复审并修复，合并于 PR #7（`0284a16`）；2026-10-22 的复审跟进合并于 PR #9（`1743d13`，见 `docs/superpowers/plans/2026-10-22-phase-3b-review-followup.md`）。复审各项的处置见该报告末尾。
 >
 > **实际提交与本计划 Step 5 的提交信息对照**（实现时把部分前端任务合并成两个提交，且按项目惯例未加署名尾注）：
 > - Task 9+10+11+12（前端）→ 实际为 `41f5ecb feat(web): console app with api client, layout and six pages`（四个前端任务合并为一个提交）；
