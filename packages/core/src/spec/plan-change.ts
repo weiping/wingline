@@ -16,7 +16,7 @@ export interface SpecPlan {
 
 type Post = TeamSpec['posts'][number]
 
-const LAUNCH_FIELDS = ['agent', 'launch', 'model', 'worktree'] as const
+const LAUNCH_FIELDS = ['agent', 'launch', 'model', 'worktree', 'environment'] as const
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null)
 

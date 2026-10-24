@@ -211,12 +211,13 @@ function patrolOf(raw: RawTeam['patrol'], platform: NodeJS.Platform, at: Located
   }
 }
 
-const ENVIRONMENT = /^[a-z0-9._-]{1,64}$/
+// 必须以字母或数字开头：环境名会作为 `--environment <名字>` 的参数传给 orca，以 `-` 开头会被当成选项
+const ENVIRONMENT = /^[a-z0-9][a-z0-9._-]{0,63}$/
 
 function environmentOf(p: RawTeam['posts'][number], i: number, at: Located): { environment?: string } {
   if (p.environment === undefined) return {}
   if (!ENVIRONMENT.test(p.environment)) {
-    at.fail('environment_invalid', ['posts', i, 'environment'], `posts.${i}.environment：只能用小写字母、数字、连字符、下划线和点，1–64 个字符`, '环境名见 orca environment list')
+    at.fail('environment_invalid', ['posts', i, 'environment'], `posts.${i}.environment：以小写字母或数字开头，其后只能用小写字母、数字、连字符、下划线和点，共 1–64 个字符`, '环境名见 orca environment list')
   }
   return { environment: p.environment }
 }

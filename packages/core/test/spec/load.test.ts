@@ -186,7 +186,7 @@ test('posts[].environment is read when written and absent from PostSpec when not
   expect('environment' in loadTeamSpec(mkTeam(ENV_YAML)).posts[1]!).toBe(false)
 })
 
-test.each(['Lima Agent', 'LIMA', 'a/b', 'x'.repeat(65)])('environment %j → environment_invalid (input), not spec_invalid', (bad) => {
+test.each(['Lima Agent', 'LIMA', 'a/b', 'x'.repeat(65), '-h', '--json', '.hidden', '_x'])('environment %j → environment_invalid (input), not spec_invalid', (bad) => {
   expect(() => loadTeamSpec(mkTeam(ENV_YAML.replace('lima-agent', `'${bad}'`)))).toThrow(expect.objectContaining({ kind: 'input', code: 'environment_invalid' }))
 })
 

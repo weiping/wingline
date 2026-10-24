@@ -15,7 +15,7 @@
 ## Global Constraints
 
 - 不新增运行时依赖；函数 ≤ 50 行。
-- `posts[].environment` 格式 `^[a-z0-9._-]{1,64}$`；不符 → `environment_invalid`（input，退出码 1），校验放在 `spec/load.ts`（`at.fail`，与 `launch_required` 同样）；`schema.ts` 只声明 `z.string().min(1).optional()`（否则 zod 的格式错误会被统一映射成 `spec_invalid`）。
+- `posts[].environment` 格式 `^[a-z0-9][a-z0-9._-]{0,63}$`；不符 → `environment_invalid`（input，退出码 1），校验放在 `spec/load.ts`（`at.fail`，与 `launch_required` 同样）；`schema.ts` 只声明 `z.string().min(1).optional()`（否则 zod 的格式错误会被统一映射成 `spec_invalid`）。
 - 未写 `environment` 时不出现在 `PostSpec` 里、不进规格哈希（`spec/hash.ts` 的 `posts` 映射条件展开）；DUO_YAML 的已钉死哈希 `d6cf0b333ae8418f9fe51eced88cc223e889ebcdf2f6278c633fc37fbb2dc00c` 必须不变。
 - 不加 `PostRow` 列、不加迁移。
 - 远端岗位的搜索：`orca search "<标记>" --agent <agent> --fresh --environment <env>`；三道闸不变（`cwd` 与岗位 worktree 同路径、`snippet` 整串高亮标记、会话未被本团队其他岗位占用）。本机岗位的搜索不带 `environment`，行为与 3A 完全一致。
@@ -83,7 +83,7 @@ test('3D-2: a spec without environment keeps the pinned hash; writing one change
 web 端：仿照 `edit.test.tsx` 里 `launch` 字段的用例加一条——岗位表单渲染出 `environment` 输入框，输入后提交的规格里 `posts[0].environment` 为输入值；服务端返回路径 `posts.0.environment` 的错误时显示在该字段旁（`SpecForm.tsx:221` 的白名单放行它）。
 
 - [ ] **Step 2: 运行确认失败** — `pnpm vitest run packages/core/test/spec packages/web/test/edit.test.tsx` → FAIL（`environment` 是未知键 / 没有该字段）。
-- [ ] **Step 3: 实现** 上述签名；`environmentOf` 在值不匹配 `^[a-z0-9._-]{1,64}$` 时 `at.fail('environment_invalid', ['posts', i, 'environment'], …, '只能用小写字母、数字、连字符、下划线和点，1–64 个字符')`。
+- [ ] **Step 3: 实现** 上述签名；`environmentOf` 在值不匹配 `^[a-z0-9][a-z0-9._-]{0,63}$` 时 `at.fail('environment_invalid', ['posts', i, 'environment'], …, '只能用小写字母、数字、连字符、下划线和点，1–64 个字符')`。
 - [ ] **Step 4: 运行确认通过** — 连同 `pnpm typecheck`（`PostSpec` 的字面量写法有类型对照的测试一并修）。
 - [ ] **Step 5: 提交** — `git commit -m "feat(spec): posts[].environment"`
 

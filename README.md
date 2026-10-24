@@ -344,7 +344,7 @@ patrol:
 | --- | --- |
 | `name`、`repo`、`norms`、`lead` | 团队名、仓库、团队规范文件、牵头岗 |
 | `posts[].id` / `agent` / `model` / `launch` | 岗位 id、agent、模型；`launch` 可整条覆盖启动命令 |
-| `posts[].environment` | 可选。岗位的 agent 跑在 Orca 的已配对环境（如 Lima VM）里时填环境名，格式 `^[a-z0-9._-]{1,64}$`；重启后 `wl restore` 在该环境里找回会话，见「远端环境」。不写即本机 |
+| `posts[].environment` | 可选。岗位的 agent 跑在 Orca 的已配对环境（如 Lima VM）里时填环境名，格式 `^[a-z0-9][a-z0-9._-]{0,63}$`；重启后 `wl restore` 在该环境里找回会话，见「远端环境」。不写即本机 |
 | `posts[].worktree` | `current`（默认，`wl up` 时固定成绝对路径）或 Orca 的 worktree 选择器 |
 | `posts[].brief` | 岗位简报文件列表，随启动包发给岗位 |
 | `posts[].self_claim` / `tags` / `plan_first` | 允许自领、匹配标签、开始前必须先写计划 |

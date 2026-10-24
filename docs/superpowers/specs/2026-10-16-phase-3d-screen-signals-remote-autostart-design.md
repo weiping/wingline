@@ -140,7 +140,7 @@ posts:
     environment: lima-agent      # 可选；Orca 里的环境名
 ```
 
-- 值的格式：小写字母、数字、连字符、下划线、点，1–64 字符（`^[a-z0-9._-]{1,64}$`）；不符 → `environment_invalid`（`wl up` 的校验错误，退出码 1）。校验放在 `spec/load.ts`（与 `launch_required` 同样用 `at.fail`）：`schema.ts` 只声明 `z.string().min(1).optional()`，否则 zod 的格式错误会被统一映射成 `spec_invalid`。
+- 值的格式：以小写字母或数字开头，其后可含小写字母、数字、连字符、下划线、点，共 1–64 字符（`^[a-z0-9][a-z0-9._-]{0,63}$`；不能以 `-` 开头，否则会被当成 orca 的选项）；不符 → `environment_invalid`（`wl up` 的校验错误，退出码 1）。校验放在 `spec/load.ts`（与 `launch_required` 同样用 `at.fail`）：`schema.ts` 只声明 `z.string().min(1).optional()`，否则 zod 的格式错误会被统一映射成 `spec_invalid`。
 - 未写即本机，行为不变，不进规格哈希；写了才进（`posts` 映射条件展开）。
 - `PostRow`（`registry.ts` 的 `posts` 表）没有 `environment` 列，`findSession` 也读不到规格：由 `restorePost` 把 `PostSpec.environment` 作为参数传给 `findSession`，不加列、不加迁移（`restore` 本来就会 `loadTeamSpec`，规格是唯一来源）。
 
