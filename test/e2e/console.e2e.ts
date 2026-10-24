@@ -1,9 +1,29 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 import { startFixtureConsole, type FixtureConsole } from './server-fixture.js'
 
 let fx: FixtureConsole
 
 const at = (p: string) => `http://127.0.0.1:${fx.port}${p}`
+
+// —— 排查偶发失败用的诊断：失败时打印页面 URL、页面文字、各请求的状态码与控制台错误（日志里可见，不需要上传产物）——
+const seen = new WeakMap<Page, string[]>()
+const mask = (s: string) => s.replace(/token=[^&\s"]+/g, 'token=…')
+
+test.beforeEach(({ page }) => {
+  const log: string[] = []
+  seen.set(page, log)
+  const stamp = () => new Date().toISOString().slice(11, 23)
+  page.on('response', (r) => log.push(`${stamp()} ${r.status()} ${r.request().method()} ${mask(r.url().replace(`http://127.0.0.1:${fx.port}`, ''))}`))
+  page.on('requestfailed', (r) => log.push(`${stamp()} FAILED ${mask(r.url())} ${r.failure()?.errorText ?? ''}`))
+  page.on('console', (m) => log.push(`${stamp()} console.${m.type()}: ${m.text()}`))
+  page.on('pageerror', (e) => log.push(`${stamp()} pageerror: ${e.message}`))
+})
+
+test.afterEach(async ({ page }, info) => {
+  if (info.status === info.expectedStatus) return
+  const text = await page.locator('body').innerText({ timeout: 1000 }).catch(() => '<no body>')
+  console.log([`--- diagnostics for "${info.title}"`, `url: ${mask(page.url())}`, `body: ${text.replace(/\s+/g, ' ').slice(0, 400)}`, ...(seen.get(page) ?? [])].join('\n'))
+})
 
 test.beforeAll(async () => {
   fx = await startFixtureConsole()
