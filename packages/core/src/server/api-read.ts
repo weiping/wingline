@@ -3,6 +3,7 @@ import { checkParam } from './http.js'
 import { ps, type PsRow } from '../commands/ps.js'
 import { dispatcherHealth } from '../commands/dispatcher/lifecycle.js'
 import { attention, dispatcherStatus } from '../commands/dispatcher/attention.js'
+import { signalSummary } from '../commands/dispatcher/signal-summary.js'
 import { listTasks, showTask } from '../commands/task/query.js'
 import { listStale, type TaskRow } from '../commands/task/query.js'
 import { readTimeline } from '../commands/log.js'
@@ -17,7 +18,7 @@ export interface PostDetail {
   sessionId: string | null
   currentTask: TaskRow | null
   queued: TaskRow[]
-  signals: PatrolStateRow[]
+  signals: Array<PatrolStateRow & { summary: string | null }>
   frozen: FrozenRow | null
   hushedUntil: string | null
   events: TimelineEvent[]
@@ -135,7 +136,10 @@ async function buildPostDetail(
   const currentTask = allTasks.find((t) => t.claimedBy === address && t.status === 'dispatched') ?? null
   const queued = allTasks.filter((t) => t.claimedBy === address && t.status === 'ready')
 
-  const signals = ctx.deps.registry.listPatrolState(address)
+  // 只列这个岗位当前在处理的信号（已清除的、只是观察的 level 0 不算）；listPatrolState 的参数是团队名，不是岗位地址
+  const signals = ctx.deps.registry.listPatrolState(team)
+    .filter((s) => s.post === address && !s.clearedAt && s.level >= 1)
+    .map((s) => ({ ...s, summary: signalSummary(s) }))
   const frozen = ctx.deps.registry.getFrozen(address)
   const hushedUntil = ctx.deps.registry.hushedUntil(address)
   const logRes = await readTimeline(ctx.deps, { team, post: address, limit: 50 })

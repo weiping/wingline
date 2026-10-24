@@ -117,7 +117,7 @@ function inboxRows(data: TuiData): Row[] {
     })),
     ...a.signals.map((s): Row => ({
       section: '巡查信号',
-      text: `${oneLine(s.post)}  ${s.signal} L${s.level}`,
+      text: `${oneLine(s.post)}  ${s.signal} L${s.level}${s.summary ? `  ${oneLine(s.summary)}` : ''}`,
       actions: [hushItem(s.post), sendItem(s.post)],
     })),
   ]

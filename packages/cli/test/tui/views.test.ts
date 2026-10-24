@@ -48,7 +48,7 @@ test('overview marks frozen, hushed and signalled posts and shows the current ta
   const data = dataOf({
     attention: attentionOf({
       frozen: [{ post: 'checker@duo', reason: 'x', frozenAt: 'T', skippedChildren: 0 }],
-      signals: [{ team: 'duo', post: 'builder@duo', signal: 'no_progress', taskId: 't1', level: 2, since: 'A', levelAt: 'A', lastNudgedAt: null, notifyCount: 0, nextDueAt: null, clearedAt: null, command: null }],
+      signals: [{ team: 'duo', post: 'builder@duo', signal: 'no_progress', taskId: 't1', level: 2, since: 'A', levelAt: 'A', lastNudgedAt: null, notifyCount: 0, nextDueAt: null, clearedAt: null, command: null, summary: null }],
     }),
     hushed: ['builder@duo'],
     tasks: [{ id: 't1', status: 'dispatched', title: '实现登录', assigneeHandle: 'term-b' } as never],
@@ -173,4 +173,11 @@ test('screen snapshot of the overview view', () => {
       "j/k 选择  Enter 操作  Tab 切换  ? 帮助  q 退出",
     ]
   `)
+})
+
+test('3D: the inbox row of a screen signal shows its summary', () => {
+  const row = { team: 'duo', post: 'checker@duo', signal: 'usage_limit' as const, taskId: '', level: 1, since: 'A', levelAt: 'A', lastNudgedAt: null, notifyCount: 0, nextDueAt: null, clearedAt: null, detail: null, command: null, summary: '预计 15:00 重置' }
+  const text = renderView(on('inbox'), dataOf({ attention: attentionOf({ signals: [row] }) }), SIZE).join('\n')
+  expect(text).toContain('usage_limit L1')
+  expect(text).toContain('预计 15:00 重置')
 })

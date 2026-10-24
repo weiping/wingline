@@ -235,7 +235,7 @@ export function renderAttention(r: AttentionReport): string {
     sections.push(['冻结的岗位：', ...r.frozen.map((f) => `  ${f.post}  ${f.reason}（${f.frozenAt}，跳过 ${f.skippedChildren} 个子任务）  wl dispatcher unfreeze ${f.post}`)].join('\n'))
   }
   if (r.signals.length) {
-    sections.push(['处理中的信号：', ...r.signals.map((s) => `  L${s.level} ${s.signal}  ${s.post}${s.taskId ? `  ${s.taskId}` : ''}${s.command ? `  ${s.command}` : ''}`)].join('\n'))
+    sections.push(['处理中的信号：', ...r.signals.map((s) => `  L${s.level} ${s.signal}${s.summary ? `（${s.summary}）` : ''}  ${s.post}${s.taskId ? `  ${s.taskId}` : ''}${s.command ? `  ${s.command}` : ''}`)].join('\n'))
   }
   if (r.questions.length) {
     sections.push(['待回答的问题：', ...r.questions.map((q) => `  ${q.messageId}  ${q.asker}：${q.body}${q.options.length ? `（选项：${q.options.join(' / ')}）` : ''}  wl dispatcher reply ${r.team} ${q.messageId} --body <回答>`)].join('\n'))

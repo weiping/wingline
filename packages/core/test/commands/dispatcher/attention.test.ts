@@ -54,3 +54,19 @@ test('dispatcherStatus summarizes health, last check/scan and warnings from patr
   const s = await dispatcherStatus(deps, 'duo')
   expect(s).toMatchObject({ health: { state: 'stopped' }, lastScan: { outcome: 'failed:runtime_unavailable' }, warnings: [expect.stringContaining('links_cycle')] })
 })
+
+test('3D: screen signals carry a server-side summary, ordinary signals do not, and nothing leaks the session marker', async () => {
+  const o = new FakeOrca(); const { deps, registry } = seedRunningTeam(o)
+  const base = { team: 'duo', level: 1, since: 'A', levelAt: 'A', lastNudgedAt: null, notifyCount: 0, nextDueAt: null, clearedAt: null }
+  registry.putPatrolState({ ...base, post: 'checker@duo', signal: 'usage_limit', taskId: '', detail: { resetsAt: '2026-10-16T07:00:00.000Z', noticeHash: 'abc', autoResume: 'armed' } })
+  registry.putPatrolState({ ...base, post: 'builder@duo', signal: 'usage_limit', taskId: '', detail: { resetsAt: null, noticeHash: 'def' } })
+  registry.putPatrolState({ ...base, post: 'checker@duo', signal: 'context_low', taskId: 'sk-0123456789ab', detail: { percent: 5, noticeHash: 'x' } })
+  registry.putPatrolState({ ...base, post: 'checker@duo', signal: 'no_progress', taskId: 't1' })
+  const r = await attention(deps, 'duo')
+  const summaryOf = (post: string, signal: string) => r.signals.find((s) => s.post === post && s.signal === signal)!.summary
+  expect(summaryOf('checker@duo', 'usage_limit')).toMatch(/^预计 \d\d:\d\d 重置；重置后会自动继续$/)
+  expect(summaryOf('builder@duo', 'usage_limit')).toBe('重置时间未知')
+  expect(summaryOf('checker@duo', 'context_low')).toBe('剩余 5%')
+  expect(summaryOf('checker@duo', 'no_progress')).toBeNull()
+  expect(JSON.stringify(r)).not.toContain('WLS-')
+})

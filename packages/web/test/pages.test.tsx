@@ -238,3 +238,26 @@ test('overview shows the pending-draft notice when attention.warnings has one', 
   const { findByText } = render(withStream('duo', <Overview team="duo" />))
   expect(await findByText(/有未应用的规格草稿/)).toBeTruthy()
 })
+
+const signalRow = { team: 'duo', post: 'checker@duo', signal: 'usage_limit', taskId: '', level: 1, since: 'A', levelAt: 'A', lastNudgedAt: null, notifyCount: 0, nextDueAt: null, clearedAt: null, detail: null, command: null, summary: '预计 15:00 重置' }
+
+test('3D: the inbox and the post detail show the summary of a screen signal instead of parsing detail themselves', async () => {
+  stubEventSource()
+  mockApi({
+    'GET /api/session': () => ({ csrfToken: 'tok', version: '1', teams: ['duo'] }),
+    'GET /api/teams/duo/attention': () => attentionOf({ signals: [signalRow] }),
+  })
+  const inbox = render(withStream('duo', <Inbox team="duo" />))
+  expect(await inbox.findByText(/预计 15:00 重置/)).toBeTruthy()
+  inbox.unmount()
+
+  mockApi({
+    'GET /api/session': () => ({ csrfToken: 'tok', version: '1', teams: ['duo'] }),
+    'GET /api/teams/duo/posts/builder': () => ({
+      address: 'builder@duo', row: { address: 'builder@duo', agent: 'claude', status: 'live', handle: null, worktree: 'current', isLead: true },
+      sessionId: 'sess-1', currentTask: null, queued: [], signals: [{ ...signalRow, post: 'builder@duo' }], frozen: null, hushedUntil: null, events: [], preview: [],
+    }),
+  })
+  const detail = render(withStream('duo', <PostDetail team="duo" post="builder" />))
+  expect(await detail.findByText(/预计 15:00 重置/)).toBeTruthy()
+})

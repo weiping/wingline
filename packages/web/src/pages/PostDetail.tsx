@@ -111,7 +111,7 @@ export function PostDetail({ team, post }: { team: string; post: string }) {
           <ul>
             {d.signals.map((s) => (
               <li key={`${s.signal}:${s.taskId}`}>
-                {s.signal} <Pill tone="warn">L{s.level}</Pill>
+                {s.signal} <Pill tone="warn">L{s.level}</Pill>{s.summary ? <span class="muted small"> {s.summary}</span> : null}
               </li>
             ))}
           </ul>

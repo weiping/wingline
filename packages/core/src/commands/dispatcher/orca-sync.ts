@@ -8,6 +8,7 @@ import { plainText } from '../../view/plain-text.js'
 import type { CommandDeps } from '../deps.js'
 import { fetchTasks, type TaskRow } from '../task/query.js'
 import { dispatcherHealth } from './lifecycle.js'
+import { resetClock, topSignal } from './signal-summary.js'
 import type { ScanSnapshot } from './signals.js'
 
 type Ctx = { team: TeamRow; spec: TeamSpec }
@@ -75,9 +76,9 @@ function currentTask(p: { address: string; handle: string | null }, tasks: TaskR
 const flat = (s: string) => plainText(s).replace(/[\r\n\t]+/g, ' ')
 
 /** 一个岗位在注释里的一行；任务标题是外部文本，先剥控制字符、折成一行。 */
-export function postLine(id: string, task: TaskRow | null, flags: { signal: PatrolSignal | ScreenSignalKind | null; frozen: boolean }): string {
+export function postLine(id: string, task: TaskRow | null, flags: { signal: PatrolSignal | ScreenSignalKind | null; frozen: boolean; note?: string | null }): string {
   const head = task ? `${id}：${flat(task.title)}（${TASK_LABEL[task.status] ?? task.status}，第 ${task.epoch + 1} 轮）` : `${id}：空闲`
-  return `${head}${flags.signal ? ` ⚠ ${SIGNAL_LABEL[flags.signal]}` : ''}${flags.frozen ? ' ❄ 已冻结' : ''}`
+  return `${head}${flags.signal ? ` ⚠ ${SIGNAL_LABEL[flags.signal]}${flags.note ? `（${flags.note}）` : ''}` : ''}${flags.frozen ? ' ❄ 已冻结' : ''}`
 }
 
 /** 多个岗位共用一个 worktree：状态取优先级最高的，注释每岗位一行；超长截断并以 … 结尾（… 计入长度）。 */
@@ -181,10 +182,10 @@ function composeGroup(deps: CommandDeps, ctx: Ctx, tasks: TaskRow[], addresses: 
   const verdictOf: VerdictOf = (id, epoch) => deps.registry.getVerdict(id, epoch)
   const rows = addresses.map((address) => {
     const p = { address, handle: deps.registry.getPost(address)?.handle ?? null }
-    const top = signals.filter((s) => s.post === address).sort((a, b) => b.level - a.level)[0]
+    const top = topSignal(signals.filter((s) => s.post === address))
     return {
       status: postWorkspaceStatus(p, tasks, verdictOf),
-      line: postLine(address.split('@')[0]!, currentTask(p, tasks), { signal: top?.signal ?? null, frozen: deps.registry.getFrozen(address) !== null }),
+      line: postLine(address.split('@')[0]!, currentTask(p, tasks), { signal: top?.signal ?? null, note: top && resetClock(top) ? `${resetClock(top)} 重置` : null, frozen: deps.registry.getFrozen(address) !== null }),
     }
   })
   return summarize(rows, commentLimit())

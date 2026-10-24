@@ -4,6 +4,7 @@ import { detectScreen, type ScreenSignal } from '../../screen/patterns.js'
 import type { TeamSpec } from '../../spec/load.js'
 import type { CommandDeps } from '../deps.js'
 import { notifyHuman, typeTo, type OutletIo } from './outlets.js'
+import { resetClock } from './signal-summary.js'
 import type { ScanSnapshot } from './signals.js'
 
 /** context_low 清除后再次出现，距上次通知不足这么久只恢复行、不再通知（百分比在阈值附近抖动，或压缩后又逼近上限）。 */
@@ -29,7 +30,6 @@ type ContextSig = Extract<ScreenSignal, { kind: 'context_low' }>
 type UsageSig = Extract<ScreenSignal, { kind: 'usage_limit' }>
 
 const ms = (iso?: unknown): number => (typeof iso === 'string' ? Date.parse(iso) : 0)
-const hhmm = (d: Date): string => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 const detailOf = (r: PatrolStateRow | null | undefined): Record<string, unknown> => r?.detail ?? {}
 
 /** 用量上限的暂停期内：no_progress / owner_idle / overdue 只观察、不升级（advance.ts 的 step 调用）。首轮的观察行（level 0）不暂停。 */
@@ -96,7 +96,8 @@ const dueAt = (e: Env, resetsAt: unknown): string =>
   new Date(typeof resetsAt === 'string' ? ms(resetsAt) + GRACE_AFTER_RESET_MS : e.now.getTime() + UNKNOWN_RESET_MS).toISOString()
 
 async function tellUsage(e: Env, p: PostRow, resetsAt: unknown): Promise<void> {
-  const when = typeof resetsAt === 'string' ? `预计 ${hhmm(new Date(resetsAt))} 重置` : '重置时间未知，先按 1 小时后复查'
+  const clock = resetClock({ signal: 'usage_limit', detail: { resetsAt } })
+  const when = clock ? `预计 ${clock} 重置` : '重置时间未知，先按 1 小时后复查'
   await notifyHuman(e.deps, e.ctx, {
     post: p.address, signal: 'usage_limit', taskId: '', level: 1, message: `[雁阵] ${p.address} 用量已用完，${when}；期间不会提醒它`,
   }, e.io)
