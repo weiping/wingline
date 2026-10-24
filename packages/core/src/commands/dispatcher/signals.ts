@@ -1,8 +1,10 @@
+import { WinglineError } from '../../errors.js'
 import type { TerminalSummary, WorkerView } from '../../orca/types.js'
+import { SIGNAL_TAIL_LINES } from '../../screen/patterns.js'
 import type { DoneVerdictRow, PatrolSignal, PatrolStateRow, QuestionRow, TeamRow } from '../../registry/registry.js'
 import type { TeamSpec } from '../../spec/load.js'
 import type { CommandDeps } from '../deps.js'
-import { screenGuard, type ScreenState } from '../task/notify.js'
+import { classifyPreview, screenGuard, type ScreenState } from '../task/notify.js'
 import { fetchTasks, gatherStaleInput, staleReasons, type StaleItem, type TaskRow } from '../task/query.js'
 
 export const NUDGE_GRACE_MS = 300_000
@@ -20,6 +22,8 @@ export interface ScanSnapshot {
   stale: StaleItem[]
   /** 只对候选 handle 调用过 screenGuard。 */
   screens: ReadonlyMap<string, ScreenState | 'offline'>
+  /** 每个存活岗位终端的渲染画面（terminal read --screen，最后 SIGNAL_TAIL_LINES 行）；读失败或 screen_unavailable 的岗位没有条目。可选：老的测试字面量不用改。 */
+  previews?: ReadonlyMap<string, string>
   openQuestions: QuestionRow[]
   lastLogAt: ReadonlyMap<string, string>
   lastVerdictAt: ReadonlyMap<string, string>
@@ -63,11 +67,29 @@ export const LADDERS: Readonly<Record<PatrolSignal, Ladder>> = {
 
 const ms = (iso: string | null | undefined): number => (iso ? Date.parse(iso) : 0)
 
+/** 每个存活岗位（登记了 handle 且终端还在）读一次渲染画面；读失败（含 screen_unavailable）的岗位本轮没有画面，不影响其它。 */
+async function readScreens(
+  deps: CommandDeps, team: string, byHandle: ReadonlyMap<string, TerminalSummary>, onProgress: () => void,
+): Promise<Map<string, string>> {
+  const previews = new Map<string, string>()
+  for (const p of deps.registry.listPosts(team)) {
+    if (!p.handle || !byHandle.has(p.handle) || previews.has(p.handle)) continue
+    try {
+      previews.set(p.handle, (await deps.orca.terminalRead({ handle: p.handle, lines: SIGNAL_TAIL_LINES })).text)
+    } catch (err) {
+      if (!(err instanceof WinglineError)) throw err
+    }
+    onProgress()
+  }
+  return previews
+}
+
 async function quietScreens(
   deps: CommandDeps,
   spec: TeamSpec,
   tasks: TaskRow[],
   byHandle: Map<string, TerminalSummary>,
+  previews: ReadonlyMap<string, string>,
   now: Date,
   onProgress: () => void,
 ): Promise<Map<string, ScreenState | 'offline'>> {
@@ -77,7 +99,9 @@ async function quietScreens(
     if (!term || screens.has(term.handle)) continue
     const lastOut = term.lastOutputAt ?? ms(t.dispatchedAt)
     if ((now.getTime() - lastOut) / MINUTE_MS > spec.patrol.promptMinutes) {
-      screens.set(term.handle, await screenGuard(deps, term.handle))
+      // 已经读过这个岗位的画面就直接判，不再多调一次 terminal show；没读到（读失败）才回退
+      const preview = previews.get(term.handle)
+      screens.set(term.handle, preview !== undefined ? classifyPreview(preview) : await screenGuard(deps, term.handle))
       onProgress()
     }
   }
@@ -110,7 +134,7 @@ function localHistory(deps: CommandDeps, spec: TeamSpec, tasks: TaskRow[]) {
   return { lastLogAt, lastVerdictAt, streakAfterCursor }
 }
 
-/** 一次 taskList、一次 terminalList（必需，失败则抛出）；worker-list（可选）；候选 handle 的 terminal show；本地表。 */
+/** 一次 taskList、一次 terminalList（必需，失败则抛出）；worker-list（可选）；每个存活岗位一次 terminal read（画面）；读失败的候选 handle 回退 terminal show；本地表。 */
 export async function takeSnapshot(deps: CommandDeps, ctx: { team: TeamRow; spec: TeamSpec }, o: { wokeAt: Date | null; onProgress?: () => void }): Promise<ScanSnapshot> {
   const { team, spec } = ctx
   const now = deps.now()
@@ -123,12 +147,14 @@ export async function takeSnapshot(deps: CommandDeps, ctx: { team: TeamRow; spec
   const input = await gatherStaleInput(deps, team.name, { tasks, terminals })
   const workers = await workersOrNull(deps, team.runId!)
   progress()
+  const previews = await readScreens(deps, team.name, byHandle, progress)
   return {
     now, lead: `${spec.lead}@${team.name}`, tasks, byHandle,
     byTitle: new Map(terminals.filter((t) => t.title).map((t) => [t.title!, t])),
     workers,
     stale: staleReasons(input, now, { ownerIdleMinutes: spec.patrol.ownerIdleMinutes, uncertainMinutes: 1 }),
-    screens: await quietScreens(deps, spec, tasks, new Map(byHandle), now, progress),
+    previews,
+    screens: await quietScreens(deps, spec, tasks, new Map(byHandle), previews, now, progress),
     openQuestions: deps.registry.listOpenQuestions(team.name),
     unfinished: deps.registry.listUnfinishedVerdicts(team.name),
     wokeAt: o.wokeAt,

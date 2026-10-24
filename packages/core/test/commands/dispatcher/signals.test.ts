@@ -97,6 +97,49 @@ test('takeSnapshot calls terminal show only for quiet dispatched posts; worker-l
   expect([...s.screens.keys()]).toEqual(['term-c'])
   expect(s.workers).toBeNull()
 })
+// —— 3D-2（块 c）：每轮读画面 ——
+
+async function screensWorld() {
+  const c = clock(); const o = new FakeOrca(); const { deps, registry } = seedRunningTeam(o, { now: c.now })
+  const { id } = await o.taskCreate({ spec: 's', taskTitle: 't', run: 'run-1', from: 'coord-1' })
+  registry.insertTaskExt({ taskId: id, team: 'duo', tags: [], kind: 'work', claimedBy: 'checker@duo' })
+  await o.dispatch({ task: id, to: 'term-c', from: 'coord-1' })
+  o.terminals.find((t) => t.handle === 'term-c')!.lastOutputAt = c.now().getTime() - 10 * 60_000 // 静默超过 prompt_minutes：是 quietScreens 的候选
+  o.terminals.find((t) => t.handle === 'term-b')!.lastOutputAt = c.now().getTime()
+  o.screens.set('term-b', 'builder is idle\n❯ ')
+  o.screens.set('term-c', 'Do you want to proceed?\n❯ 1. Yes')
+  const team = registry.getTeam('duo')!
+  const take = () => takeSnapshot(deps, { team, spec: loadTeamSpec(team.specPath) }, { wokeAt: null })
+  return { o, registry, take, count: (m: string) => o.calls.filter((x) => x === m).length }
+}
+
+test('every live post\'s screen is read exactly once per scan, and the quiet-candidate check reuses it instead of calling terminalShow', async () => {
+  const w = await screensWorld()
+  const s = await w.take()
+  expect([...s.previews!.keys()].sort()).toEqual(['term-b', 'term-c'])
+  expect(s.previews!.get('term-c')).toContain('Do you want to proceed?')
+  expect(w.count('terminalRead')).toBe(2)
+  expect(w.count('terminalShow')).toBe(0)
+  expect(s.screens.get('term-c')).toBe('at_prompt')
+})
+
+test('a post whose terminal is gone, or that has no handle, is not read', async () => {
+  const w = await screensWorld()
+  w.o.terminals = w.o.terminals.filter((t) => t.handle !== 'term-b')
+  const s = await w.take()
+  expect([...s.previews!.keys()]).toEqual(['term-c'])
+  expect(w.count('terminalRead')).toBe(1)
+})
+
+test('a failing or screen_unavailable read gives that post no preview (the quiet check falls back to terminalShow), leaves the others, and never aborts the scan', async () => {
+  const w = await screensWorld()
+  w.o.faults.push({ method: 'terminalRead', when: 'before', match: (a) => a.handle === 'term-c', error: new WinglineError('orca', 'screen_unavailable', 'x') })
+  const s = await w.take()
+  expect([...s.previews!.keys()]).toEqual(['term-b'])
+  expect(w.count('terminalShow')).toBe(1) // 回退：只对读失败的那个候选
+  expect(s.screens.get('term-c')).toBe('at_prompt') // 回退用的是 terminalShow 的末尾 300 字符，这里足够判出确认框
+})
+
 test('syncCursors: a post without a cursor starts at now; a later pass moves it', () => {
   const c = clock(); const o = new FakeOrca(); const { deps, registry } = seedRunningTeam(o, { now: c.now })
   syncCursors(deps, 'duo', ['builder@duo'], snap({ now: c.now() }))
