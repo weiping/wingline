@@ -6,13 +6,16 @@
 
 | 份 | 内容 | 前置 | 状态 |
 | --- | --- | --- | --- |
-| **3D-1** | 块 (a) `wl restore --all` + `wl autostart`（macOS / Linux）；块 (b) 未读标记 | 探针 3、6（Task 1，真机） | **已实现**（2026-10-24，分支 `phase-3d1-restore-all-autostart-unread`）：`docs/superpowers/plans/2026-10-23-phase-3d1-restore-all-autostart-unread.md`；真机已验证 launchd 最小环境、`restore --all --actor autostart`、未读红点；重新登录触发与 Linux 真机待验证 |
-| **3D-2 (d)** | 块 (d) 远端环境恢复 | 探针 4 已完成 | **已实现**（2026-10-24，分支 `phase-3d2d-remote-environment`）：`docs/superpowers/plans/2026-10-24-phase-3d2d-remote-environment.md`；真机已验证 Lima 同路径挂载下的找回与接回 |
-| **3D-2 (c)** | 块 (c) 画面信号 `context_low` / `usage_limit` | 探针 1 已完成，探针 2 缺“上下文快满 / 用量上限”的真实画面 | **plan 已写**：`docs/superpowers/plans/2026-10-25-phase-3d2c-screen-signals.md`（8 个任务，模式表 provisional，真机核对在 Task 8）。原先的说明：可以开始写 plan，模式表标 provisional：2026-10-24 已从 claude 2.1.310 程序本体取出提示原文（`Context low (N% remaining)`、`You've hit your …`、自动继续的提示，见 `spikes/REPORT.md`），这改变了第 4.3 节“到点发继续”的前提；真实画面样本（探针 2）仍缺，下面是任务骨架 |
+| **3D-1** | 块 (a) `wl restore --all` + `wl autostart`（macOS / Linux）；块 (b) 未读标记 | 探针 3、6（Task 1，真机） | **已实现并合并**（2026-10-24，PR #12 `1f5c0e8`）：`docs/superpowers/plans/2026-10-23-phase-3d1-restore-all-autostart-unread.md`；真机已验证 launchd 最小环境、`restore --all --actor autostart`、未读红点；重新登录触发与 Linux 真机待验证 |
+| **3D-2 (d)** | 块 (d) 远端环境恢复 | 探针 4 已完成 | **已实现并合并**（2026-10-24，PR #13 `a51f9cf`）：`docs/superpowers/plans/2026-10-24-phase-3d2d-remote-environment.md`；真机已验证 Lima 同路径挂载下的找回与接回 |
+| **3D-2 (d2)** | 块 (d) 补充：接回后核对提示落进了原会话 | 真机反例（包装脚本不透传 `--resume` 会静默假成功） | **已实现并合并**（2026-10-24，PR #15 `7222b82`）：`docs/superpowers/plans/2026-10-24-phase-3d2d2-verify-remote-resume.md`；Lima 真机已验证 |
+| **3D-2 (c)** | 块 (c) 画面信号 `context_low` / `usage_limit` | 探针 1 已完成；探针 2 只有 claude 2.1.310 程序本体里的提示原文，没有真实画面 | **已实现并合并**（2026-10-25，PR #18 `6b1f348`）：`docs/superpowers/plans/2026-10-25-phase-3d2c-screen-signals.md`（Task 1–7 完成；**Task 8 的真机核对未做**，模式表与样本仍是 provisional，等画面上真的出现这两种提示时用 `spikes/phase-3d2.ts sample` 取样替换） |
 
 Windows 自启动单列，等探针 5。
 
-## 3D-2 (c) 任务骨架（探针 2 之后再写成可执行步骤；块 (d) 见上表中的独立 plan）
+## 3D-2 (c) 任务骨架（历史，已被可执行 plan 取代）
+
+> 2026-10-25：骨架已写成 `2026-10-25-phase-3d2c-screen-signals.md` 并实施完毕（任务 A–E 对应其中的 Task 1–7）。下面的原文保留作历史，与实际的差异见该 plan 顶部的状态块与“与 spec 的差异”一节；其中“`ScreenSignal` / `classifyPreview` 迁入 `screen/patterns.ts`”一条没有照做（`classifyPreview` 留在 `commands/task/notify.ts`）。
 
 写 3D-2 时必须遵守 spec 的这些结论，不得回到原稿：
 

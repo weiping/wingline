@@ -1,7 +1,7 @@
 # 雁阵 Wingline 阶段 3D：画面信号、远端环境恢复、未读标记与登录后自动恢复设计
 
 - 日期：2026-10-16（2026-10-23 按两轮复审重写第 3–8、10–13 节，见末尾“复审修订”）
-- 状态：**3D-1（块 a + b）已实现**，真机验证见 `spikes/REPORT.md` “3D-1 真机验证”（launchd 最小环境、`restore --all --actor autostart`、未读红点已通过；由登录触发的恢复与 Linux 真机尚未验证）；**3D-2（块 c + d）未开始**，等探针 2、4 —— 实现计划拆成两份，索引见 `docs/superpowers/plans/2026-10-16-phase-3d-screen-signals-remote-autostart.md`：3D-1（块 a + b）`docs/superpowers/plans/2026-10-23-phase-3d1-restore-all-autostart-unread.md`，3D-2：块 (d) 远端环境 `docs/superpowers/plans/2026-10-24-phase-3d2d-remote-environment.md`（已实现，真机已验证 Lima 同路径挂载），块 (c) 画面信号（待探针 2）
+- 状态（2026-10-25 回填）：**块 a、b、c、d 均已实现并合并**——3D-1（块 a + b，PR #12）、3D-2 块 (d) 远端环境（PR #13）及其接回核对（PR #15）、3D-2 块 (c) 画面信号（PR #18）；逐块的提交、验证与未验证项见末尾“实施记录”。**仍未验证**：由重新登录触发的 launchd 恢复、Linux systemd 真机、Windows 自启动（探针 5，`autostart_unsupported`）、没有同路径挂载的 VM 与旧版 Orca 下的远端分支，以及块 (c) 的**真实画面**（模式表与样本仍是 provisional，依据 claude 2.1.310 程序本体的字符串）。实现计划见 `docs/superpowers/plans/2026-10-16-phase-3d-screen-signals-remote-autostart.md`（索引）及其下四份：`2026-10-23-phase-3d1-…`、`2026-10-24-phase-3d2d-…`、`2026-10-24-phase-3d2d2-…`、`2026-10-25-phase-3d2c-…`
 - 范围：阶段 3 的收尾子项目 D，集中前面各份 spec 推迟到阶段 3 的事项：
   1. 读画面的巡查信号：“上下文快满”（`context_low`）与“用量上限”（`usage_limit`）；
   2. 远端 / 配对环境（如 Lima VM）里岗位的会话恢复：字段与 `--session` 手工恢复先做，自动搜索待探针；
@@ -53,11 +53,11 @@ plan 按此拆成两份：**3D-1**（块 a + b；探针只有 3 和 6，可立�
 
 | 编号 | 问题 | 现状 | 决定什么 | 不成立时的退路 |
 | --- | --- | --- | --- | --- |
-| 1 | `terminal show` 的 `preview` 真实窗口；`orca terminal read --terminal <h> --screen --limit N` 能否稳定拿到状态栏与限额行 | 实测 `preview` 只有末尾约 300 字符、首行被截断（`spikes/out/session-id/{darwin,linux}/terminal-show.json`、`spikes/out/explore/linux/show.json` 长度均为 300；REPORT.md:448、491）。`--screen` 已在 `test/live/duo.live.test.ts:79` 使用，`--limit` 未验证。默认流式输出会被 TUI 重绘搅乱，必须带 `--screen`。**2026-10-23 已在真机核实**（普通命令行输出，macOS）：`--screen --limit 8/40/80` 恰好返回最后 N 行，上限为渲染出的屏幕行数（实测 80），文本在回执的 `terminal.tail`（行数组），`source` 为 `screen`；`preview` 只有 53 字符 / 6 行。全屏 TUI 的状态栏是否出现在 `tail` 里待探针 2，见 `spikes/REPORT.md` “3D-2 探针 1” | 第 4.2 节读取方式；块 (c) 能否开工 | `terminal read` 也读不到所需行数 → 块 (c) 整体搁置，不拿 300 字符窗口硬凑 |
-| 2 | Claude Code / Codex“上下文将满”“用量上限”的真实措辞；限额重置后提示是否仍留在屏幕上；**用量上限是普通文字，还是带编号选项的阻塞菜单**（此时 `screenGuard` 会判成什么） | 仅有推测措辞，没有样本 | 模式表内容；第 4.3 节第 3 步的分支（限额以菜单呈现时“继续”发不出去，走该步的放弃分支） | 抓不到的 agent / 信号不写模式行；用文档原文做样本时在文件头注明“文档来源，未截屏”，对应测试名标 `(provisional)` |
+| 1 | `terminal show` 的 `preview` 真实窗口；`orca terminal read --terminal <h> --screen --limit N` 能否稳定拿到状态栏与限额行 | 实测 `preview` 只有末尾约 300 字符、首行被截断（`spikes/out/session-id/{darwin,linux}/terminal-show.json`、`spikes/out/explore/linux/show.json` 长度均为 300；REPORT.md:448、491）。`--screen` 已在 `test/live/duo.live.test.ts:79` 使用，`--limit` 未验证。默认流式输出会被 TUI 重绘搅乱，必须带 `--screen`。**2026-10-23 已在真机核实**（普通命令行输出，macOS）：`--screen --limit 8/40/80` 恰好返回最后 N 行，上限为渲染出的屏幕行数（实测 80），文本在回执的 `terminal.tail`（行数组），`source` 为 `screen`；`preview` 只有 53 字符 / 6 行。**2026-10-24 补充**：真实 Claude Code 全屏画面也能读到（见 `spikes/REPORT.md` “3D-2 探针 1（补充）”）；回执样本为 `test/fixtures/receipts/terminal-read.json` | 第 4.2 节读取方式；块 (c) 能否开工 | `terminal read` 也读不到所需行数 → 块 (c) 整体搁置，不拿 300 字符窗口硬凑 |
+| 2 | Claude Code / Codex“上下文将满”“用量上限”的真实措辞；限额重置后提示是否仍留在屏幕上；**用量上限是普通文字，还是带编号选项的阻塞菜单**（此时 `screenGuard` 会判成什么） | **部分完成（2026-10-24）**：从 claude 2.1.310 程序本体取出了提示模板原文（非截图，见 `spikes/REPORT.md` “3D-2（块 c）探针 2（部分）”）；**真实画面仍缺**——限额提示的实际版面与位置、`resets …` 的写法、是否弹 `/rate-limit-options` 菜单、重置后提示是否留屏，都没有核实。Codex 没有样本，不写模式行 | 模式表内容；第 4.3 节第 3 步的分支（限额以菜单呈现时“继续”发不出去，走该步的放弃分支） | 抓不到的 agent / 信号不写模式行；用文档原文做样本时在文件头注明“文档来源，未截屏”，对应测试名标 `(provisional)` |
 | 3 | `worktree set --unread` / `--read` 的行为；Orca 红点何时自动清除；写 `--comment` / `--workspace-status` 是否改变未读状态 | 引自复审对 `orca worktree set --help` 的转述（`--unread\|--read`，“Mark the workspace unread in the sidebar”）；仓库内无记录 | 第 6 节的写入顺序与“已标记过”的含义 | 不起作用 → `ORCA_WORKTREE_SUPPORT.unread = false`，`wl attention` 告警提示一次“Orca 不支持未读标记” |
 | 4 | `orca search --environment <env>` 的命中是否带 `snippet` / `cwd`，`cwd` 是 VM 内路径还是空 | `--environment` 命中扣留 evidence（`snippet` 为 null，REPORT.md:468）；`cwd` 形态未知。**2026-10-24 已在真机重新核实（Orca 1.4.237，已配对环境 `lima-agent`）：结论与 3A 相反**——15/15 条命中带 `snippet`（含 `[[…]]` 高亮）、无 `resumeCommand`，`cwd` 是宿主机路径（Lima 默认把 home 以同样路径挂进 VM）；没有同路径挂载的 VM 里 `cwd` 形态仍未验证。见 `spikes/REPORT.md` “3D-2 探针 4” | 第 5.3 节自动搜索是否可做 | 无 `snippet` → 不做自动搜索，只支持 `--session`（第 5.2 节即最终形态） |
-| 5 | Windows：`schtasks /TR` 的长度上限（Windows 文档称 261 字符，未验证）；`/SC ONLOGON` 是否需要管理员 | 未验证 | 第 7.2 节 Windows 一行 | Windows 返回 `autostart_unsupported`，README 给手工做法 |
+| 5 | Windows：`schtasks /TR` 的长度上限（Windows 文档称 261 字符，未验证）；`/SC ONLOGON` 是否需要管理员 | **未做**（没有 Windows 真机；实现里 Windows 返回 `autostart_unsupported`） | 第 7.2 节 Windows 一行 | Windows 返回 `autostart_unsupported`，README 给手工做法 |
 | 6（补充） | Orca 启动后终端列表需要多久才稳定（重启后 Orca 会重新纳管并重新拉起终端，REPORT.md:152） | **2026-10-23 已量**（macOS，Orca 1.4.237，一次运行，5 个终端）：重启后约 11 秒不可达，可达后 28 秒终端数才从 2 → 1 → 2 → 3 稳定（平台期最长约 15 秒），重启前 5 个、重启后只剩 3 个。见 `spikes/REPORT.md` “3D-1 探针 6” | 第 7.1 节 `--wait-orca` 的稳定判据常量 | 间隔 10 秒、连续 4 次相同（要求稳定 30 秒，约为实测平台期的两倍）；README 说明可手动重跑 |
 
 ## 4. 读画面的巡查信号（块 c，探针 1、2 之后）
@@ -66,7 +66,7 @@ plan 按此拆成两份：**3D-1**（块 a + b；探针只有 3 和 6，可立�
 
 新建 `packages/core/src/screen/patterns.ts`：
 
-- 把 2A `screenGuard` 现有的判定（`at_prompt`、`shell`）连同其模式迁入本模块，`classifyPreview` / `screenGuard` 改为调用它；行为不变，原有测试照跑。`ScreenState`（`'clear' | 'at_prompt' | 'shell' | 'unknown'`，`unknown` 表示空画面）定义在本模块，`notify.ts` 重新导出。
+- **实现时没有迁移**（2026-10-25 回填）：`classifyPreview` / `screenGuard` 与 `ScreenState`（`'clear' | 'at_prompt' | 'shell' | 'unknown'`，`unknown` 表示空画面）仍在 `commands/task/notify.ts`，`detectScreen` 直接调用 `classifyPreview` 得到 `guard`——迁移只有改动量，没有行为收益；原先写的“连同模式迁入本模块”作废。
 - 新增两种信号，按 agent 分行：
 
 | 信号 | 含义 | 提取 | 模式 |
@@ -78,13 +78,13 @@ plan 按此拆成两份：**3D-1**（块 a + b；探针只有 3 和 6，可立�
 - 同一 `kind` 在窗口内多处命中时**只取最靠近画面底部的一处**（最新的提示）；它的 `noticeHash` 若等于已处理行的 `noticeHash` 则视为同一条，不再触发（第 4.3 节第 5 步）。
 - 窗口是屏幕尾部而不是状态行，agent 复述或用户粘贴的限额文字也会落在其中，所以模式必须锚定到 agent 状态行 / 提示框的格式（行首标记、固定前缀），不能只匹配关键词；负例见第 11 节。
 - 重置时间解析支持：`3pm`、`3:30pm`、`15:00`、带括号时区（如 `(Asia/Shanghai)`）、`in 2h`/`in 45m`；只有时刻没有日期时取“今天或明天中最早的未来时刻”；无时区时按本机时区。解析不出 → `resetsAt = null`。**只在首次识别的瞬间解析一次并存下（`detail.resetsAt`），之后不再从画面重新提取**：“3pm”在下午 3 点之后会被解析成明天 3 点，把暂停无限推后。
-- 接口（spec 与 plan 统一口径）：`detectScreen(agent: string, text: string, now: Date): { guard: ScreenState; signals: ScreenSignal[] }`，`ScreenSignal = { kind: 'context_low'; percent: number | null; notice: string } | { kind: 'usage_limit'; resetsAt: Date | null; notice: string }`。按 `/\r?\n/` 切行；`guard` 仍只看最后 8 行；信号看最后 `SIGNAL_TAIL_LINES` 行（由探针 1 的读取窗口决定，默认 40）。未知 agent 只返回 `guard`。
+- 接口（spec 与 plan 统一口径）：`detectScreen(agent: string, text: string, now: Date): { guard: ScreenState; signals: ScreenSignal[] }`，`ScreenSignal = { kind: 'context_low'; percent: number | null; notice: string; noticeHash: string } | { kind: 'usage_limit'; resetsAt: Date | null; autoResume: 'armed' | 'cancelled' | null; notice: string; noticeHash: string }`（实现比原稿多了 `noticeHash`，以及 `usage_limit` 的 `autoResume`——画面上有 `continuing automatically` 为 `armed`，`Automatic continue cancelled` 为 `cancelled`，都没有为 `null`）。按 `/\r?\n/` 切行；`guard` 仍只看最后 8 行；信号看最后 `SIGNAL_TAIL_LINES = 40` 行。**只有 Claude 有模式行**，其它 agent 只返回 `guard`、不产生信号。
 - Codex 的行由探针 2 决定；没有样本的信号不写。
 
 ### 4.2 数据来源
 
 - **事实**：`terminal show` 的 `preview` 只有末尾约 300 字符，首行常被截断；用它读不到 40 行，也不能与 `screenGuard` 共用“40 行”的假设。
-- **读取方式（探针 1 已核实可用；回执取 `terminal.tail.join('\n')`，实现须检查 `terminal.source === 'screen'`，为 `screen-unavailable` 时按读失败处理；屏幕上限随面板大小变化，按 `returnedLineCount` 而不是假定恰好 N 行）**：`orca terminal read --terminal <h> --screen --limit N`（返回渲染后的屏幕），新增 client 方法 `terminalRead(a: { handle: string; lines: number }): Promise<{ text: string }>`。理由：不新增就拿不到所需行数；`--screen` 必须带，否则流式输出被 TUI 重绘搅乱。同步 `orca/types.ts`、`orca/client.ts`、`FakeOrca`（fake 的 `terminalShow` 把 `preview` 截成末尾 300 字符，避免单测假绿；另给 `terminalRead` 一个 `screens` 模型）。`READ_ONLY_CALLS` 补 `['terminal', 'read']`（只记摘要）。
+- **读取方式（探针 1 已核实可用；回执取 `terminal.tail.join('\n')`，实现须检查 `terminal.source === 'screen'`，为 `screen-unavailable` 时按读失败处理；屏幕上限随面板大小变化，按 `returnedLineCount` 而不是假定恰好 N 行）**：`orca terminal read --terminal <h> --screen --limit N`（返回渲染后的屏幕），新增 client 方法 `terminalRead(a: { handle: string; lines: number }): Promise<{ text: string; rows: number }>`（`rows` 是实际返回的行数）。理由：不新增就拿不到所需行数；`--screen` 必须带，否则流式输出被 TUI 重绘搅乱。同步 `orca/types.ts`、`orca/client.ts`、`FakeOrca`（fake 的 `terminalShow` 把 `preview` 截成末尾 300 字符，避免单测假绿；另给 `terminalRead` 一个 `screens` 模型）。`READ_ONLY_CALLS` 补 `['terminal', 'read']`（只记摘要）。
 - **每轮读取**：调度员每次巡查扫描时对每个存活岗位（`posts.handle` 非空且在 `terminalList` 里）读一次画面，放进 `ScanSnapshot.previews`（可选字段：`ReadonlyMap<string, string>`，避免改动现有测试的大量字面量）。`screens`（给 `waiting_approval` 用）由同一份文本推导：`quietScreens`（`signals.ts`）原先为候选岗位调用 `screenGuard`，改为优先取 `previews`，没有才回退到原调用。`screenGuard(deps, handle)` 在“往终端打字之前”的即时检查中保持原样（单次 `terminal show`，行为不变）。
 - **调用量评估**：原先只对“安静超过 `prompt_minutes` 的候选岗位”读画面；现在每轮读全部存活岗位，多出 O(岗位数) 次 `terminal read`（每 5 分钟一轮；调度员每轮本来就有 taskList / terminalList / workerList）。读失败或超时 → 该岗位本轮没有画面信号、`guard = unknown`，不影响其他信号。
 - 重启后第一轮只观察（2B）：只记录、不通知、不暂停。
@@ -99,7 +99,7 @@ plan 按此拆成两份：**3D-1**（块 a + b；探针只有 3 和 6，可立�
    - 岗位就是牵头岗时只走外部通知与 `wl attention`（2B “不通知自己”）。
    首轮（重启后）只建 level 0 的观察行；下一轮仍在则升到 level 1 并通知。已有的 level 1 行及其 `next_due_at` 从注册表读回，重启不丢失、不重复通知。
 2. **暂停升级**：在 `next_due_at` 之前，该岗位的 `no_progress`、`owner_idle`、`overdue` 三种信号只观察、不升级（level 保持不变，不发提示、不通知、不冻结）；判定放在 `advance.ts` 的 `step()` 里（`isUsagePaused`）。暂停结束后从当前 level 继续，不补发。
-3. **到达 `next_due_at`**（首轮观察期间不做，下一轮再做）。**2026-10-24 补充**：claude 2.1.310 自带“限额重置后自动继续”，画面上写着 `continuing automatically …`（取消后为 `Automatic continue cancelled · /rate-limit-options to re-arm`）。画面上有 `continuing automatically` 时 agent 会自己继续，**不发“继续”**（只保留通知与暂停升级，重置后它若没动再走“没进展”）；没有自动继续的提示，或已取消，才按下面的原设计发：
+3. **到达 `next_due_at`**（首轮观察期间不做，下一轮再做）。**2026-10-24 补充**：claude 2.1.310 自带“限额重置后自动继续”，画面上写着 `continuing automatically …`（取消后为 `Automatic continue cancelled · /rate-limit-options to re-arm`）。画面上有 `continuing automatically` 时 agent 会自己继续，**不发“继续”**（只保留通知与暂停升级，重置后它若没动再走“没进展”）；没有自动继续的提示，或已取消，才按下面的原设计发。**实现细节**：画面上仍是 `continuing automatically` 时，到点延期 10 分钟（`AUTO_RESUME_GRACE_MS`，`detail.extensions += 1`，最多 3 次）；延期用尽后照常尝试发送，画面不是 `clear`（例如还停在 “esc to cancel” 的提示上）时发不出去，按下面的重试 / 放弃规则处理：
    - **`resetsAt` 已知**：重置时间已过并加了宽限，就视为已重置，**不等待“提示消失”**（限额提示是对话输出，不会自行消失；等它会永远等不到）。经 `typeTo` 发一行“[雁阵] 用量已重置，请继续手上的任务 <id>”（没有在办任务时“…请继续”）。发出（`ok` / `unconfirmed`）→ 清除行并记 `detail.resumedAt = now`；画面不是 `clear` 等原因没发出 → 保留行，下一轮再试，最多 3 轮，仍失败 → 清除行并记事件 `resume_skipped`，不再重试，并按第 1 步的规则通知人一次：“[雁阵] <岗位> 用量应已重置，但画面停在选项 / 确认框上，没有自动继续，请手动处理”（岗位是牵头岗时只走外部通知与 `wl attention`）。限额若以带编号选项的菜单呈现（待探针 2），“继续”不会被发出，正是走这条路径：雁阵不替人选菜单项。“提示是否仍在屏幕上”只写进事件 detail 作参考，不参与决定。
    - **`resetsAt` 未知**（暂停截止是猜的）：若画面上同 `noticeHash` 的提示仍在，延期 1 小时（`detail.extensions += 1`，最多 3 次，对应 2B 的最大退避 4 小时）；提示已消失或延期用尽 → 与上一条相同地发“继续”提示。
 4. **与 `no_progress` 的顺序**：暂停刚结束时，“距上次输出超过 `no_progress_minutes`”往往同一轮就成立，会与“继续”提示一起 nudge。因此每轮先 `advanceScreenSignals`，再 `detectSignals` / `advancePatrol`；`noProgress`（`signals.ts`）的计时起点取 `max(原起点, usage_limit 行的 detail.resumedAt)`，把基线重置到继续提示的时刻。
@@ -264,10 +264,11 @@ wl autostart status [--json]
 ## 9. 代码结构
 
 ```text
-packages/core/src/screen/patterns.ts        # 模式表与 detectScreen（含迁入的 at_prompt / shell）
+packages/core/src/screen/patterns.ts        # 模式表与 detectScreen（`at_prompt` / `shell` 的判定仍在 commands/task/notify.ts 的 classifyPreview）
 packages/core/src/screen/reset-time.ts      # 重置时间解析
 packages/core/src/orca/{types,client}.ts    # terminalRead（探针 1 后）；worktreeSet 增加 unread
 packages/core/src/commands/dispatcher/screen-signals.ts   # context_low / usage_limit 的状态推进、isUsagePaused
+packages/core/src/commands/dispatcher/signal-summary.ts   # signalSummary、resetClock、topSignal（attention、orca-sync、api-read 共用；实现时新增）
 packages/core/src/commands/dispatcher/unread.ts           # 未读标记（attentionKeys、markUnread）
 packages/core/src/commands/dispatcher/{signals,advance,loop,orca-sync,attention}.ts  # previews、清除循环豁免、暂停判定、调用顺序、标签、summary
 packages/core/src/commands/restore/        # index.ts 增加 restoreAll / waitForOrca / as；find-session.ts 增加 environment 参数；posts.ts 传参
@@ -353,7 +354,7 @@ test/fixtures/screens/ + .gitattributes     # 画面样本（eol=lf）
 
 ## 复审修订（2026-10-23，第二轮）
 
-状态：**已落实** = 正文已改；**待探针 N** = 正文写了前置条件，依赖它的 plan 任务标“探针后执行”。
+状态：**已落实** = 正文已改；**待探针 N** = 正文写了前置条件，依赖它的 plan 任务标“探针后执行”。（2026-10-25：探针 1、3、4、6 已完成，探针 2 仅完成程序本体部分，探针 5 未做——见末尾“实施记录”。）
 
 | 条目 | 结论 | 状态 |
 | --- | --- | --- |
@@ -399,3 +400,18 @@ test/fixtures/screens/ + .gitattributes     # 画面样本（eol=lf）
 | plan 拆分 | 3D-1 = 块 a + b（可立即开工），3D-2 = 块 c + d（探针后） | 第 0 节 |
 
 未做：把第一、二轮修订表压缩成状态一览（正文已含全部结论，压缩收益小，留待 3D 收尾时合并）。
+
+## 实施记录（2026-10-25 回填）
+
+| 块 | 内容 | 合并 | 主要提交 | 验证 | 未验证 / 与 spec 的差异 |
+| --- | --- | --- | --- | --- | --- |
+| (a) | `wl restore --all`、`wl autostart`（macOS / Linux） | PR #12（`1f5c0e8`） | `7efa1e2`（`restoreAll`、`waitForOrca`）、`8219057`（CLI）；修复 `f9c98e6`、`9914d2a`、`c7fa4ab` | macOS 真机：launchd 最小环境能启动 node 与 orca、`restore --all --actor autostart`（手动运行，时间线一行、执行者 `autostart`） | 由**重新登录**触发的恢复没验证；Linux systemd 只有单元测试；Windows 返回 `autostart_unsupported` |
+| (b) | 未读标记 | PR #12 | `407e3a0`（`patrol.unread_mark`、`worktreeSet({ unread })`）、`5ce21c2`（`unread_marks`）、`8bf7157`；修复 `5a8e80c`；`86836a3`（画面信号不产生未读键） | macOS 真机：占位团队，`isUnread` 读回 `true`，同一批不重复标记 | 真机只验证了单个团队；多个团队共用一个 worktree 时的未读行为没有真机 |
+| (d) | 远端环境 `posts[].environment` | PR #13（`a51f9cf`） | `e8c9e07`、`9d260d2`、`671b087`；修复 `c5db6c1`（`environment_not_found`）、`719b6e9` | Lima 同路径挂载真机：找回并接回 | 没有同路径挂载的 VM、旧版 Orca（命中无 `snippet`）只有单元测试 |
+| (d2) | 接回后核对提示落进原会话（第 5.4 节） | PR #15（`7222b82`） | `996fe8d`、`b4891c3`、`849fdb6`（标识并入会话标记） | Lima 真机：透传 → `resumed`；不透传 → `uncertain` | “搜得到但很慢”的真机没做；3 次 × 2 秒的依据只有几次样本 |
+| (c) | 画面信号 `context_low` / `usage_limit` | PR #18（`6b1f348`） | `a861543`、`1ac1a91`、`43ed1f7`、`cc57a3f`、`1dc1f13`、`26e11c8`、`778ffc7`、`86836a3`、`738675b` | FakeOrca 下的自动测试；CI 三个系统 + e2e 全绿 | **没有真实画面**：模式表与样本是 provisional（来自 claude 2.1.310 程序本体，非截图）；`usage_limit` 无法主动触发；与 spec 的差异见第 4.1、4.2、4.3、9 节中标“实现”的几处 |
+
+- **全量验证**：2026-10-25 在 main（`6b1f348`）上 `tsc -p tsconfig.typecheck.json` 通过，`vitest run` 120 个文件 / 1654 个用例通过（8 条按设计跳过）。
+- **块 (c) 的测试顺序**：`screen-signals.ts`（`26e11c8`）是先实现、后补的测试；补了变异检查——把 10 个关键行为（首轮观察、暂停、自动继续、`resumedAt` 基线、清除循环豁免、清除后去重、再通知窗口、会话键、重置时间已知、发送结果判断）逐个改坏，每项都被测试抓到。
+- **探针状态**：1、3、4、6 已完成；2 只完成程序本体部分（真实画面仍缺）；5（Windows）未做。
+- **下一步**（不属于本阶段的交付，真遇到时再做）：块 (c) 的真机核对——在这两种提示真的出现时用 `spikes/phase-3d2.ts sample <handle> <名字>` 取样，替换 provisional 样本并去掉标记；重新登录触发的自启动验证；Linux systemd 真机。
