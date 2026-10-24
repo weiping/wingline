@@ -7,6 +7,7 @@ import { recoverTask } from '../task/escalate.js'
 import { sanitizeQuote } from './inbox.js'
 import { notifyHuman, typeTo, type OutletIo } from './outlets.js'
 import { syncWorktreeForPost, type SyncRound } from './orca-sync.js'
+import { isUsagePaused } from './screen-signals.js'
 import { LADDERS, type SignalHit } from './signals.js'
 
 export const PATROL_INTERVAL_MS = 300_000
@@ -31,6 +32,8 @@ interface Env {
 }
 
 const ms = (iso: string | null) => (iso ? Date.parse(iso) : 0)
+/** 用量上限的暂停期内只观察、不升级的信号（spec 第 4.3 节）。 */
+const USAGE_PAUSED = new Set<PatrolSignal>(['no_progress', 'owner_idle', 'overdue'])
 const keyOf = (post: string, signal: string, taskId: string) => `${post}\u0000${signal}\u0000${taskId}`
 const baseId = (taskId: string) => taskId.replace(/#\d+$/, '')
 
@@ -177,6 +180,7 @@ async function step(e: Env, h: SignalHit, row: PatrolStateRow | null, observeOnl
     return
   }
   if (e.deps.registry.getFrozen(h.post)) return
+  if (USAGE_PAUSED.has(h.signal) && isUsagePaused(e.deps.registry, e.ctx.team.name, h.post, e.now)) return
   if (observeOnly || now - ms(row.levelAt) < PATROL_INTERVAL_MS || (row.nextDueAt && now < ms(row.nextDueAt))) return
   await advance(e, h, row)
 }

@@ -203,7 +203,9 @@ function noProgress(snap: ScanSnapshot, spec: TeamSpec, t: TaskRow, post: string
   const rawOut = term.lastOutputAt ?? 0
   const hit: SignalHit = { post, signal: 'no_progress', taskId: t.id }
   if (row) return hasProgress(snap, t, row, rawOut) ? null : { ...hit, minutes: minutesOf(snap, Math.max(rawOut, ms(t.dispatchedAt))) }
-  const lastOut = Math.max(rawOut, ms(t.dispatchedAt), snap.wokeAt?.getTime() ?? 0)
+  // 用量上限之后发出“继续”的时刻也是计时起点：否则暂停一结束，“距上次输出超过 no_progress_minutes”马上成立，会和“继续”一起 nudge
+  const resumedAt = ms(p.state.find((r) => r.post === post && r.signal === 'usage_limit' && r.taskId === '')?.detail?.resumedAt as string | undefined)
+  const lastOut = Math.max(rawOut, ms(t.dispatchedAt), snap.wokeAt?.getTime() ?? 0, resumedAt)
   return (snap.now.getTime() - lastOut) / MINUTE_MS > spec.patrol.noProgressMinutes ? { ...hit, minutes: minutesOf(snap, lastOut) } : null
 }
 

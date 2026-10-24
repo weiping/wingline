@@ -13,6 +13,7 @@ import { processBatch } from './inbox.js'
 import { HEARTBEAT_TAKEOVER_MS } from './lifecycle.js'
 import type { OutletIo } from './outlets.js'
 import { syncOrca } from './orca-sync.js'
+import { advanceScreenSignals } from './screen-signals.js'
 import { markUnread } from './unread.js'
 import { detectSignals, syncCursors, takeSnapshot } from './signals.js'
 
@@ -255,6 +256,8 @@ async function scan(deps: CommandDeps, st: LoopState, spec: TeamSpec, opts: Loop
     const snap = await takeSnapshot(deps, ctx, { wokeAt: st.wokeAt === null ? null : new Date(st.wokeAt), onProgress: () => beat(deps, team, st.locked) })
     syncCursors(deps, team, [...snap.streakAfterCursor.keys()], snap)
     beat(deps, team, st.locked)
+    // 先推进画面信号（用量暂停、“继续”提示），再判普通信号：暂停与 no_progress 基线都依赖这一步的结果
+    await advanceScreenSignals(deps, ctx, snap, { observeOnly: st.observeOnlyNextScan, io: opts.io })
     const hits = detectSignals(snap, spec, deps.registry.listPatrolState(team))
     const round = { failed: new Set<string>() }
     await advancePatrol(deps, ctx, hits, { observeOnly: st.observeOnlyNextScan, ops: opts.ops, io: opts.io, round })
