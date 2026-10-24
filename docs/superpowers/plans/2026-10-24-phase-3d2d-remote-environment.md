@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript、vitest、FakeOrca。
 
-> **状态（2026-10-24）：已实现**（分支 `phase-3d2d-remote-environment`，Task 1–3 各一个提交；全量 114 个文件、1566 个用例通过）。Task 4 真机检查通过前两项（找到 VM 会话并接回、`--resume` 进程与接回提示），第三项（包装脚本不透传参数的反例）已做：**会静默假成功**，见 Task 4；结果见 `spikes/REPORT.md` “3D-2 远端环境真机验证”。
+> **状态（2026-10-24）：已实现**（分支 `phase-3d2d-remote-environment`，Task 1–3 各一个提交；全量 114 个文件、1566 个用例通过）。Task 4 真机检查通过前两项（找到 VM 会话并接回、`--resume` 进程与接回提示），第三项（包装脚本不透传参数的反例）已做：**会静默假成功**，见 Task 4；结果见 `spikes/REPORT.md` “3D-2 远端环境真机验证”。 2026-10-25 回填：合并于 PR #13（`a51f9cf`）；真机检查之后另有两处修复——`c5db6c1`（拼错的环境名抛输入错误 `environment_not_found`，不再让人一直重跑）、`719b6e9`（`environment` 算启动字段，环境名不能以 `-` 或 `.` 开头）；包装脚本不透传参数的反例催生了 3D-2 (d2)。没有真机验证：没有同路径挂载的 VM（`cwd` 是 VM 内路径）、旧版 Orca（命中无 `snippet`）。
 
 **Spec:** `docs/superpowers/specs/2026-10-16-phase-3d-screen-signals-remote-autostart-design.md` 第 5 节（5.1 字段、5.2 会话的确定顺序、5.3 探针 4 的结论）与第 11 节“远端环境”条目。块 (c) 画面信号不在本 plan（等探针 2 的样本）。前置：探针 4 已完成（`spikes/REPORT.md` “3D-2 探针 4”）。
 
@@ -56,7 +56,7 @@
 **Interfaces:**
 - Produces: `PostSpec.environment?: string`（未写则没有这个键）；`loadTeamSpec` 对不合格的值抛 `WinglineError('input', 'environment_invalid', …)`，路径为 `['posts', i, 'environment']`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```ts
 const ENV_YAML = DUO_YAML.replace('    agent: claude\n    model: opus\n', '    agent: claude\n    model: opus\n    environment: lima-agent\n')
@@ -82,10 +82,10 @@ test('3D-2: a spec without environment keeps the pinned hash; writing one change
 
 web 端：仿照 `edit.test.tsx` 里 `launch` 字段的用例加一条——岗位表单渲染出 `environment` 输入框，输入后提交的规格里 `posts[0].environment` 为输入值；服务端返回路径 `posts.0.environment` 的错误时显示在该字段旁（`SpecForm.tsx:221` 的白名单放行它）。
 
-- [ ] **Step 2: 运行确认失败** — `pnpm vitest run packages/core/test/spec packages/web/test/edit.test.tsx` → FAIL（`environment` 是未知键 / 没有该字段）。
-- [ ] **Step 3: 实现** 上述签名；`environmentOf` 在值不匹配 `^[a-z0-9][a-z0-9._-]{0,63}$` 时 `at.fail('environment_invalid', ['posts', i, 'environment'], …, '只能用小写字母、数字、连字符、下划线和点，1–64 个字符')`。
-- [ ] **Step 4: 运行确认通过** — 连同 `pnpm typecheck`（`PostSpec` 的字面量写法有类型对照的测试一并修）。
-- [ ] **Step 5: 提交** — `git commit -m "feat(spec): posts[].environment"`
+- [x] **Step 2: 运行确认失败** — `pnpm vitest run packages/core/test/spec packages/web/test/edit.test.tsx` → FAIL（`environment` 是未知键 / 没有该字段）。
+- [x] **Step 3: 实现** 上述签名；`environmentOf` 在值不匹配 `^[a-z0-9][a-z0-9._-]{0,63}$` 时 `at.fail('environment_invalid', ['posts', i, 'environment'], …, '只能用小写字母、数字、连字符、下划线和点，1–64 个字符')`。
+- [x] **Step 4: 运行确认通过** — 连同 `pnpm typecheck`（`PostSpec` 的字面量写法有类型对照的测试一并修）。
+- [x] **Step 5: 提交** — `git commit -m "feat(spec): posts[].environment"`（已提交：`e8c9e07`）
 
 ---
 
@@ -107,7 +107,7 @@ web 端：仿照 `edit.test.tsx` 里 `launch` 字段的用例加一条——岗�
 | 0 条，且原始命中里有 `snippet` 为 null 的 | `uncertain`，原因含 `--session` 与“证据” |
 | 0 条，也没有上面两类 | `none`（“未找到原会话”） |
 
-- [ ] **Step 1: 写失败测试**（`o.sessions` 里的项带 `environment`；`postRow()` 沿用文件里已有的）
+- [x] **Step 1: 写失败测试**（`o.sessions` 里的项带 `environment`；`postRow()` 沿用文件里已有的）
 
 ```ts
 const ENV = 'lima-agent'
@@ -163,10 +163,10 @@ test('environment unreachable (orca error) is uncertain with a rerun hint; an un
 })
 ```
 
-- [ ] **Step 2: 运行确认失败** — `pnpm vitest run packages/core/test/commands/restore/find-session.test.ts` → FAIL（`searches` 不存在 / 第 6 个参数被忽略）。
-- [ ] **Step 3: 实现** `findSession` 的 `environment` 参数：搜索时 `...(environment !== undefined ? { environment } : {})`；把“过滤并判定”拆成一个纯函数 `pick(hits, { marker, worktreePath, taken, remote })`，返回上表的结果，避免 `findSession` 超过 50 行。`remote` 为假时走原来的判定（`cwd !== null` 且同路径且高亮），不引入 `uncertain` 分支。
-- [ ] **Step 4: 运行确认通过** — 连同 `packages/core/test/commands/restore` 全部 PASS（3A 的本机用例一条都不能改）。
-- [ ] **Step 5: 提交** — `git commit -m "feat(restore): findSession searches remote environments"`
+- [x] **Step 2: 运行确认失败** — `pnpm vitest run packages/core/test/commands/restore/find-session.test.ts` → FAIL（`searches` 不存在 / 第 6 个参数被忽略）。
+- [x] **Step 3: 实现** `findSession` 的 `environment` 参数：搜索时 `...(environment !== undefined ? { environment } : {})`；把“过滤并判定”拆成一个纯函数 `pick(hits, { marker, worktreePath, taken, remote })`，返回上表的结果，避免 `findSession` 超过 50 行。`remote` 为假时走原来的判定（`cwd !== null` 且同路径且高亮），不引入 `uncertain` 分支。
+- [x] **Step 4: 运行确认通过** — 连同 `packages/core/test/commands/restore` 全部 PASS（3A 的本机用例一条都不能改）。
+- [x] **Step 5: 提交** — `git commit -m "feat(restore): findSession searches remote environments"`（已提交：`9d260d2`）
 
 ---
 
@@ -179,7 +179,7 @@ test('environment unreachable (orca error) is uncertain with a rerun hint; an un
 **Interfaces:**
 - Consumes: Task 1 的 `PostSpec.environment`、Task 2 的 `findSession(…, environment)`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```ts
 const ENV_YAML = DUO_YAML.replace('    agent: claude\n    model: opus\n', '    agent: claude\n    model: opus\n    environment: lima-agent\n')
@@ -222,10 +222,10 @@ test('remote post: dry-run reports resumed without creating a terminal', async (
 })
 ```
 
-- [ ] **Step 2: 运行确认失败** — `pnpm vitest run packages/core/test/commands/restore/posts.test.ts` → FAIL（`restorePost` 还没传 `environment`，搜索不带环境，找不到 `vm-1`）。
-- [ ] **Step 3: 实现** 接线一行。README 写明：(1) `environment` 是 Orca 里已配对环境的名字（`orca environment list`），`launch` 要写成能在那个环境里启动 agent 的命令（如 `claude-lima --dangerously-skip-permissions`）；(2) **包装脚本必须把参数原样传给 agent**，例如 `exec limactl shell agent claude "$@"`，否则 `--resume <id>` 到不了 agent；(3) 重启后 `wl restore` 自动在该环境里按标记找会话；找不到可用的会话时会报 `uncertain` 并提示 `--session`；会话 ID 可从 VM 内 `claude --resume` 的列表，或 `orca search --environment <env> "<关键词>"` 回执里的 `sessionId` 取得；(4) 已验证的环境是 Lima 默认的同路径挂载（宿主 home 以同样路径出现在 VM 里）；`cwd` 在 VM 里不是宿主路径时自动搜索会报 `uncertain`，需要手工 `--session`。
-- [ ] **Step 4: 运行确认通过** — `pnpm typecheck && pnpm test` → 全部 PASS（贴出输出再声明完成）。
-- [ ] **Step 5: 提交** — `git commit -m "feat(restore): remote-environment posts resume through --environment"`
+- [x] **Step 2: 运行确认失败** — `pnpm vitest run packages/core/test/commands/restore/posts.test.ts` → FAIL（`restorePost` 还没传 `environment`，搜索不带环境，找不到 `vm-1`）。
+- [x] **Step 3: 实现** 接线一行。README 写明：(1) `environment` 是 Orca 里已配对环境的名字（`orca environment list`），`launch` 要写成能在那个环境里启动 agent 的命令（如 `claude-lima --dangerously-skip-permissions`）；(2) **包装脚本必须把参数原样传给 agent**，例如 `exec limactl shell agent claude "$@"`，否则 `--resume <id>` 到不了 agent；(3) 重启后 `wl restore` 自动在该环境里按标记找会话；找不到可用的会话时会报 `uncertain` 并提示 `--session`；会话 ID 可从 VM 内 `claude --resume` 的列表，或 `orca search --environment <env> "<关键词>"` 回执里的 `sessionId` 取得；(4) 已验证的环境是 Lima 默认的同路径挂载（宿主 home 以同样路径出现在 VM 里）；`cwd` 在 VM 里不是宿主路径时自动搜索会报 `uncertain`，需要手工 `--session`。
+- [x] **Step 4: 运行确认通过** — `pnpm typecheck && pnpm test` → 全部 PASS（贴出输出再声明完成）。
+- [x] **Step 5: 提交** — `git commit -m "feat(restore): remote-environment posts resume through --environment"`（已提交：`671b087`）
 
 ---
 
@@ -233,7 +233,7 @@ test('remote post: dry-run reports resumed without creating a terminal', async (
 
 对已配对的 `lima-agent`（本机已有，见探针 4）：
 
-- [ ] 在 VM 里启动一个带标记的 claude 会话（用 `wl up` 起一个 `environment: lima-agent` 的岗位，`launch` 指向透传参数的包装脚本），确认岗位上线、启动包送达。
-- [ ] 模拟重启（关掉岗位终端），`wl restore <team> --dry-run`：显示 `resumed` 与会话 ID；再 `wl restore <team>`：新终端里执行 `<launch> --resume <id>`，岗位收到接回提示，`wl ps` 为 `live`。
+- [x] 在 VM 里启动一个带标记的 claude 会话（用 `wl up` 起一个 `environment: lima-agent` 的岗位，`launch` 指向透传参数的包装脚本），确认岗位上线、启动包送达。
+- [x] 模拟重启（关掉岗位终端），`wl restore <team> --dry-run`：显示 `resumed` 与会话 ID；再 `wl restore <team>`：新终端里执行 `<launch> --resume <id>`，岗位收到接回提示，`wl ps` 为 `live`。
 - [x] 把 `launch` 换成不透传参数的包装脚本再试一次（2026-10-24 已做）。**原先写的预期“应停在 `uncertain`”是错的**：参数被丢掉后，VM 里起的是一个全新但同样空闲的 claude，`wl restore` 报“已接回原会话”、退出码 0、岗位 `live`、会话 ID 已缓存，接回提示落进了新会话。静默的上下文丢失；后来已加核对（见 `2026-10-24-phase-3d2d2-verify-remote-resume.md`）。结果见 `spikes/REPORT.md`。
-- [ ] 结果记入 `spikes/REPORT.md`（“3D-2 远端环境真机验证”），并在本 plan 顶部写明状态。
+- [x] 结果记入 `spikes/REPORT.md`（“3D-2 远端环境真机验证”），并在本 plan 顶部写明状态。（已提交：`050732d`）
