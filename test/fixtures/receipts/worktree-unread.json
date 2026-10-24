@@ -1,0 +1,52 @@
+{
+  "worktree": {
+    "id": "repo-fixture::/path/to/repo",
+    "identity": {
+      "key": "wt2:local:fixture",
+      "executionHostId": "local",
+      "instanceId": "fixture"
+    },
+    "instanceId": "fixture",
+    "repoId": "repo-fixture",
+    "projectId": "github:example/repo",
+    "hostId": "local",
+    "projectHostSetupId": "repo-fixture",
+    "path": "/path/to/repo",
+    "head": "0000000000000000000000000000000000000000",
+    "branch": "refs/heads/main",
+    "isBare": false,
+    "isMainWorktree": true,
+    "displayName": "main",
+    "displayNameMode": "automatic",
+    "comment": " ",
+    "linkedIssue": null,
+    "linkedPR": null,
+    "linkedLinearIssue": null,
+    "linkedLinearIssueWorkspaceId": null,
+    "linkedLinearIssueOrganizationUrlKey": null,
+    "linkedGitLabMR": null,
+    "linkedGitLabIssue": null,
+    "linkedBitbucketPR": null,
+    "linkedAzureDevOpsPR": null,
+    "linkedGiteaPR": null,
+    "linkedWorkItem": null,
+    "linkedTaskSourceContext": null,
+    "isArchived": false,
+    "isUnread": true,
+    "isPinned": false,
+    "sortOrder": 0,
+    "lastActivityAt": 0,
+    "workspaceStatus": "in-progress",
+    "parentWorktreeId": null,
+    "childWorktreeIds": [],
+    "lineage": null,
+    "git": {
+      "path": "/path/to/repo",
+      "head": "0000000000000000000000000000000000000000",
+      "branch": "refs/heads/main",
+      "isBare": false,
+      "isMainWorktree": true
+    },
+    "linkedItems": []
+  }
+}

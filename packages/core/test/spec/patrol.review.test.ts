@@ -10,7 +10,7 @@ const load = (patrol: string, platform?: NodeJS.Platform) =>
 test('an empty patrol block gives every default from spec 5.3', () => {
   expect(loadTeamSpec(mkTeam(DUO_YAML + 'patrol: {}\n')).patrol).toEqual({
     noProgressMinutes: 20, promptMinutes: 5, ownerIdleMinutes: 30, postFailureStreak: 3,
-    freezeLead: false, autoRecover: false, worktreeComment: false, workspaceStatus: true, notify: null,
+    freezeLead: false, autoRecover: false, worktreeComment: false, workspaceStatus: true, unreadMark: true, notify: null,
   })
 })
 

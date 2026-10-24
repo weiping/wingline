@@ -647,3 +647,116 @@ WINGLINE_SPIKE_WORKTREE=<专用测试 worktree 选择器> pnpm tsx spikes/worktr
 - 期间调度员的 `patrol_events` 只有 `inbox` / `check_ok`，没有一次 `scan`：两次写入都来自命令行进程。此前“任务完成 → 状态翻转”要等下一轮巡查，实测约 3 分钟。
 
 局限：真机只验证了不带 `links` 的 `done`（落到 `completed`）；送审（`in-review`）、`escalated` 只有单元测试，没有真机。信号清除、冻结等仍按巡查周期同步。
+
+## 3D-1 探针 3：`worktree set --unread` / `--read`（2026-10-23，macOS，Orca 1.4.237）
+
+探针 `spikes/phase-3d1.ts unread`（`WINGLINE_SPIKE_WORKTREE=path:/Users/liuweiping/workspace/dev/wingline`）。对象是 wingline 自己的 worktree，运行前 `isUnread = true`、注释为单个空格、状态 `in-progress`。原始输出在 `spikes/out/phase-3d1/darwin/`。
+
+**实测结论：成立**
+- 参数：`orca worktree set --worktree <选择器> --unread` / `--read`（`--help` 也写明：`--unread` “Mark the workspace unread in the sidebar”，`--read` “clearing the unread dot”）。这条原先只来自复审转述，现已核实。
+- 读回：`worktree show --json` 的 `worktree.isUnread`（布尔）；`worktree set --unread --json` 的回执就是 `{ worktree: {…, isUnread: true, …} }`，已脱敏存为 `test/fixtures/receipts/worktree-unread.json`。
+- 顺序实验（每步后读回）：`--read` → `false`；`--unread` → `true`；**在未读状态下写 `--comment`、写 `--workspace-status` 都不会改变 `isUnread`**（仍为 `true`）；`--read` → `false`。所以 spec 第 6 节第 3 条“写 comment / status 是否改变未读状态”的答案是**不改变**，同一轮内不必先 `syncOrca` 再标记，两次调用顺序无关。
+- 重复 `--unread` 无副作用（置位已为 `true` 的标志）。
+- 自动清除：`--unread` 之后每 2 秒读回、共 30 秒，一直是 `true`——**仅靠时间流逝不会清除**。但还原后几分钟内，该 worktree 的 `isUnread` 从 `true` 变成了 `false`，期间没有任何命令改过它；该 worktree 正是当时终端所在、用户在看的那个，最可能是 Orca 在用户查看时自行清除。**没有单独验证“切换到该 workspace 才清除”**，以此为推测。结论：红点由 Orca 在用户查看时清除，雁阵不需要清除（与 spec 第 6 节一致）。
+
+**据此的改动**：`ORCA_WORKTREE_SUPPORT.unread` 默认 `true`；spec 第 6 节第 3 条去掉“待探针”。
+
+**遗留**：探针结束时脚本把 `isUnread` 还原成了 `true`（读回确认），之后被 Orca 清成 `false`，所以该 worktree 现在比运行前少了一个红点；对结果没有影响，也不需要再处理。
+
+## 3D-1 探针 6：Orca 重启后终端列表多久稳定（2026-10-23，macOS，Orca 1.4.237）
+
+探针 `spikes/phase-3d1.ts settle`：先启动采样（每 5 秒一次，记录 `terminalList` 的 handle + connected 集合），再由人手动重启 Orca。明细在 `spikes/out/phase-3d1/darwin/settle-samples.json`。**只跑了一次，重启前只有 5 个终端**；团队更大时重新纳管可能更慢。
+
+| 时间 | 状态 |
+| --- | --- |
+| 0–21 秒 | 重启前：5 个终端，全部 connected |
+| 26–31 秒 | Orca 不可达（`terminalList` 抛错） |
+| 37 秒 | 可达，但只有 2 个终端，connected 为 0 |
+| 44 秒 | 1 个终端 |
+| 50–60 秒 | 2 个终端（平台期约 15 秒） |
+| 65 秒起 | 3 个终端，此后到 93 秒结束采样一直不变 |
+
+**结论**
+- 状态可达（约 37 秒）比终端列表稳定（65 秒）早约 28 秒：`orca status` 可达不等于已纳管完终端，spec 第 7.1 节的担心成立，必须再等列表稳定。
+- 脚本输出的 `RESULT … 成立` 只表示出现过不可达采样，不说明别的。
+- 中间出现过约 15 秒的 2 终端平台期，“连续 3 次、每次 10 秒”（需稳定 20 秒）只比平台期长 5 秒，余量太薄；改为**连续 4 次相同（稳定 30 秒）**。`--wait-orca` 默认 15 分钟远大于实测的约 65–100 秒，不用动。
+- 重启前 5 个终端、重启后只剩 3 个：稳定只保证列表不再变化，不保证岗位终端都回来。缺失的岗位由 `restore` 判 offline 后接回，这是 `restore` 的既有职责。
+
+**据此的改动**：`ORCA_POLL_MS = 10_000`、`SETTLE_SAMPLES = 4`；spec 第 3、7.1、11 节与 3D-1 plan 的 Global Constraints、Task 5 同步。
+
+**局限**：单次运行、终端数少；若真机出现过早放行（列表稳定后又变化）再调大次数。
+
+## 3D-2 探针 1：`terminal read --screen --limit N`（2026-10-23，macOS，Orca 1.4.237）
+
+探针 `spikes/phase-3d2.ts read`：开一个临时终端，打印 `LINE-001` … `LINE-120` 后挂起，分别用 `terminal show` 和 `terminal read --screen --limit N` 读回。原始回执在 `spikes/out/phase-3d2/darwin/`。
+
+**实测结论：成立（针对普通命令行输出；TUI 重绘未测）**
+
+| 读法 | 拿到 |
+| --- | --- |
+| `terminal show` 的 `preview` | 53 个字符、6 行（`LINE-115` … `LINE-120`）——只有屏幕尾部，与此前“约 300 字符”一致，读不到 40 行 |
+| `terminal read --screen --limit 8` / `40` / `80` | 恰好 8 / 40 / 80 行，每次都是最后 N 行（`LINE-113…120`、`LINE-081…120`、`LINE-041…120`），`source: "screen"` |
+| `--limit 200` 或不带 `--limit` | 80 行（`limited: false`）：上限是渲染出的屏幕行数，不是 `--limit` |
+
+- 回执形态：`{ terminal: { handle, status, tail: string[], truncated, limited, oldestCursor, nextCursor, latestCursor, returnedLineCount, tailRows: object[], source } }`；屏幕文本在 `terminal.tail`（行数组），不是单个字符串。`--json` 下 `source` 为 `screen`；文档说明拿不到渲染屏幕时会退回 `screen-unavailable`（累计流输出），实现要检查 `source`。
+- 因此 spec 第 4.2 节的方案可行：新增 `terminalRead({ handle, lines })`，取 `terminal.tail.join('\n')`；`SIGNAL_TAIL_LINES = 40` 在这个窗口内（屏幕上限 80 行）。
+- **局限**：(1) 被测对象是普通 Node 输出，不是 Claude / Codex 的全屏 TUI；TUI 的状态栏是否出现在 `tail` 里、重绘是否把画面搅乱，要等探针 2 用真实 agent 的样本确认。(2) 80 行上限随终端面板大小变化，面板很矮时 `--limit 40` 可能少于 40 行——实现不能假定恰好 40 行，按 `returnedLineCount` 处理。(3) 只在 macOS 上测过。
+
+**据此的改动**：块 (c) 不搁置；探针 2 继续（样本用 `spikes/phase-3d2.ts sample <handle> <样本名>` 存入 `test/fixtures/screens/`）。
+
+## 3D-1 真机验证：`wl autostart`（2026-10-24，macOS，Orca 1.4.237，node v24.18.0）
+
+用构建后的 CLI（`node packages/cli/dist/main.js`，`tsc -b packages/core packages/cli`）在本机执行。这台机器的 `~/.wingline` 里没有 `state.db`，没有登记任何团队。
+
+**已验证**
+- `wl autostart install --wait-orca 5m`：写出 `~/Library/LaunchAgents/wingline.restore.plist`，`plutil -lint` 通过；`launchctl print gui/501/wingline.restore` 显示已加载、`runs = 1`（`RunAtLoad` 立即执行了一次），程序是 nvm 下 node 的绝对路径。
+- **launchd 的最小环境能启动 node 与 orca**：launchd 的默认 PATH 是 `/usr/bin:/bin:/usr/sbin:/sbin`，plist 里显式写的 `PATH`（node 目录、orca 目录、系统目录）生效；该次运行等到 Orca 可达、终端列表连续 4 次相同后正常退出，`last exit code = 0`，`autostart.log` 只有一行“没有处于运行状态的团队，无需恢复”，没有 “command not found”。
+- `wl autostart status` 安装前后的输出正确（未安装 / 已安装、解析出的命令、日志最后一行）。
+- `wl autostart uninstall`：plist 删除、服务注销，`launchctl print` 报 “Could not find service”；日志保留；再次卸载仍成功。验证结束后已卸载，机器恢复原状。
+- `wl restore --all --dry-run`：没有运行中的团队时输出一行说明、退出码 0。
+
+**未验证**
+- 真正重新登录后由 launchd 触发的恢复（下面的团队验证是手动运行同一条命令，没有重新登录）。
+- Linux systemd 路径只有单元测试，没有真机。
+
+### 续：有团队时的验证（2026-10-24，同一台机器）
+
+团队 `duo`：占位进程（`node -e "process.stdin.resume()"`，不启动真 agent），临时 `WINGLINE_HOME`，岗位在 wingline worktree 上；调度员持续运行，`patrol` 全默认（`unread_mark: true`）。**必须去掉 `ORCA_TERMINAL_HANDLE` / `ORCA_AGENT_LAUNCH_TOKEN` / `ORCA_AGENT_LAUNCH` 再运行 `wl`**，否则在 Orca 里的终端执行 `wl up` 会报 `This terminal is attested as … and cannot act as …`（与 3C 续二已记录的现象一致）。
+
+**未读标记：通过**
+- 07:03:31 起调度员；07:08:32 第一轮巡查（只观察，无 `unread_mark`）；07:15:18 冻结 `checker@duo` 制造一条新待办。
+- 07:18:36 第二轮巡查：事件 `unread_mark ok {"keys":1}`；`orca worktree show` 读回 wingline worktree 的 `isUnread` 由 `false`（基线）变成 `true`。
+- 07:23:38 第三轮巡查：同一批待办**没有**再次标记（全程只有 1 条 `unread_mark` 事件）；`unread_marks` 表里记着 `frozen:checker@duo`。
+- 调度员默认同步的工作区状态把该 worktree 从 `in-progress` 改成了 `completed`，清理时手动还原；`isUnread` 在清理前已被 Orca 自行清成 `false`（用户一直在这个 worktree 里），与探针 3 的推测一致。
+
+**`wl restore --all --actor autostart`：通过**
+- 关掉 `builder@duo`、`checker@duo`、`dispatcher@duo` 三个终端模拟 Orca 重启；`wl ps` 显示两个岗位 `offline`、调度员“失联”。
+- `wl restore --all --wait-orca 2m --actor autostart`：约 51 秒（含 30 秒的终端列表稳定等待）。两个岗位 `新起`（占位进程没有会话可接，上下文已丢失，符合预期）、Run 重新认领、调度员已重启，退出码 0。
+- `wl log duo --source command`：多出一行 `restore`，**执行者为 `autostart`**，且只有一行；手动执行（不带 `--actor`）仍按原规则解析执行者。
+- 验证结束后 `wl dispatcher down --close`、`wl down --close`，终端全部关闭。
+
+## 3D-2 探针 1（补充）与探针 4（2026-10-24，macOS，Orca 1.4.237，claude 2.1.x）
+
+### 探针 1 补充：真实 Claude Code 全屏画面的 `terminal read --screen --limit 40`
+
+对象是当前正在用的 Claude Code 会话终端（只读，原始画面只留在本地临时目录，**不入库**，里面有对话内容）。
+
+- `source: "screen"`，`returnedLineCount = 29`（面板高度），`limited: false`：全屏 TUI 也能读到渲染后的画面，不是被重绘搅乱的碎片。
+- 画面结构（自上而下）：对话正文若干行（`⏺`、`⎿` 开头的工具调用与输出）→ 一行 `● high · /effort` → 分隔线 `────…` → 输入框 `❯` → 分隔线 → **两行底部状态**：自定义 statusline（本机是 `context-mode  ●  … this chat  ·  …`）与模式行 `⏵⏵ accept edits on (shift+tab to cycle)`。**底部状态栏确实出现在 `tail` 的最后几行**，所以“信号只看最后 N 行”的方案成立；窗口（40 行）里还混着大量对话正文，模式必须锚定状态栏格式（spec 第 4.1 节）。
+- **面板宽度会截断长行**：这次面板只有 44 列，长的状态行被截成 `…`（例如 `context-mode  ●  192 KB this chat  ·  5…`）。窄面板下 “Context left until auto-compact: N%” 这类较长的文字有可能被截断，模式不能依赖行尾内容；这是探针 2 要用真实样本确认的风险。
+- 用户可以自定义 statusline，所以底部第一行不是固定格式，不能把它当作 Claude Code 的标准输出来匹配。
+- **仍未取得**：真正出现“上下文快满”或“用量上限”时的画面（无法主动触发）。探针 2 保持待办：在画面出现时用 `spikes/phase-3d2.ts sample <handle> <样本名>` 存样本。
+
+### 探针 4：`orca search --environment` 的命中
+
+本机有一个已配对的环境 `lima-agent`（`ssh-tunnel`，`ws://127.0.0.1:16768`，即 Lima VM 里的 Orca server）。`spikes/phase-3d2.ts remote lima-agent the claude`，再与本机同一查询对比。
+
+**实测结论：成立（与 3A 的结论相反）**
+- 远端命中 15 条，与本机命中的会话 ID **零重叠**，确实是 VM 里的会话。
+- 15/15 条**带 `evidence.snippet`**（68–132 字符），且都含 `[[…]]` 高亮，形态与本机一致——3A 记录的“`--environment` 命中扣留 snippet（`snippet` 为 null）”在 1.4.237 上不再成立（可能是版本差异，3A 当时的环境未核实）。
+- 命中字段：`agent, branch, cwd, evidence{role,snippet,timestamp}, messageCount, score, sessionId, source, title, updatedAt`；**没有 `resumeCommand`**（0/15；本机 19/20 有）。雁阵从不使用它，只用 `sessionId`，不受影响。
+- `cwd` 全是 `/Users/liuweiping/workspace/dev/wingline`——**宿主机的路径**，因为 Lima 默认把宿主的 home 以同样的路径挂进 VM。所以在这种配置下，现有的“`cwd` 与岗位 worktree 路径相同”规则对远端也成立。**没有挂载同路径的 VM 里 `cwd` 会是 VM 内路径**，本机无法验证，3D-2 要保守处理（不放松整串高亮这一道）。
+- 引号包起来的 `"WLS-"`（部分 token）在远端返回 0 条，没有因为部分 token 召回而误命中。
+- **没有做的**：用真实标记（`WLS-xxxxxxxx`）在 VM 的会话里搜一次完整的恢复流程（需要在 VM 里放一个带标记的会话）。
+
+**据此的改动**：spec 第 5.3 节自动搜索不再降级为“只支持 `--session`”，可以做；`FakeOrca.search` 带 `environment` 时默认 `snippet: null` 的假设要改成带 snippet（3D-2 的 Task F）。

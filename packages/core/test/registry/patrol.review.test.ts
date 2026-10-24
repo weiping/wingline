@@ -146,8 +146,9 @@ test('listDeliveries: only finished done:*:delivered:<target> rows of that exact
 test('migrating a 2A database keeps existing lock rows (heartbeat_at NULL) and adds the 2B tables', () => {
   const file = tmpDb()
   const raw = new DatabaseSync(file)
-  for (const sql of MIGRATIONS.slice(0, MIGRATIONS.length - 1)) raw.exec(sql)
-  raw.exec(`PRAGMA user_version = ${MIGRATIONS.length - 1}`)
+  // 2A 的注册表是前两条迁移（第 3 条起才有 patrol_state 等 2B 的表）
+  for (const sql of MIGRATIONS.slice(0, 2)) raw.exec(sql)
+  raw.exec('PRAGMA user_version = 2')
   raw.prepare('INSERT INTO locks(team, pid, at) VALUES (?, ?, ?)').run('duo', 1, 'T')
   raw.close()
   const r = Registry.open(file)

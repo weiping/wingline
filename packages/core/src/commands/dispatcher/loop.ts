@@ -13,6 +13,7 @@ import { processBatch } from './inbox.js'
 import { HEARTBEAT_TAKEOVER_MS } from './lifecycle.js'
 import type { OutletIo } from './outlets.js'
 import { syncOrca } from './orca-sync.js'
+import { markUnread } from './unread.js'
 import { detectSignals, syncCursors, takeSnapshot } from './signals.js'
 
 export const CHECK_WAIT_MS = 60_000
@@ -42,6 +43,8 @@ export interface LoopState {
   lastMono: number
   wokeAt: number | null
   observeOnlyNextScan: boolean
+  /** 未读标记的连续失败计数（本次运行内存里的；放弃时另记 unread_gave_up 事件供 wl attention 读取）。 */
+  unreadFailures: { count: number }
   pendingAck: string | null
   checkFailures: number
   backoffMs: number
@@ -152,7 +155,7 @@ export function initialState(deps: CommandDeps, team: TeamRow, spec: TeamSpec | 
   }
   return {
     team, spec: usable, specFailureLogged: failureLogged, specHash: team.specHash, locked: false, lastScanAt: now.getTime(), lastWall: now.getTime(), lastMono: deps.monotonic(),
-    wokeAt: null, observeOnlyNextScan: true, pendingAck: null, checkFailures: 0, backoffMs: BACKOFF_START_MS, logDay: dayOf(now), lastCheckOk: null, lastCheckEventAt: 0,
+    wokeAt: null, observeOnlyNextScan: true, unreadFailures: { count: 0 }, pendingAck: null, checkFailures: 0, backoffMs: BACKOFF_START_MS, logDay: dayOf(now), lastCheckOk: null, lastCheckEventAt: 0,
   }
 }
 
@@ -256,6 +259,7 @@ async function scan(deps: CommandDeps, st: LoopState, spec: TeamSpec, opts: Loop
     const round = { failed: new Set<string>() }
     await advancePatrol(deps, ctx, hits, { observeOnly: st.observeOnlyNextScan, ops: opts.ops, io: opts.io, round })
     await syncOrca(deps, ctx, snap, { observeOnly: st.observeOnlyNextScan, round })
+    await markUnread(deps, ctx, snap, { observeOnly: st.observeOnlyNextScan, failures: st.unreadFailures })
     deps.registry.appendPatrolEvent({ team, action: 'scan', outcome: 'ok', detail: { hits: hits.length } })
   } catch (err) {
     if (err instanceof WinglineError && err.code === 'dispatcher_superseded') throw err

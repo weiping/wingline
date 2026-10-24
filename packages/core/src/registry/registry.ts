@@ -789,6 +789,14 @@ export class Registry {
     return this.pageRows('patrol_events', team, o).map(eventRow)
   }
 
+  /** 给定动作里最新的一条巡查事件（按 id 倒序取一条，不受后面写了多少别的事件影响）。 */
+  lastPatrolEventOf(team: string, actions: string[]): (PatrolEvent & { id: number; at: string }) | null {
+    if (actions.length === 0) return null
+    const marks = actions.map(() => '?').join(', ')
+    const r = this.db.prepare(`SELECT * FROM patrol_events WHERE team = ? AND action IN (${marks}) ORDER BY id DESC LIMIT 1`).get(team, ...actions) as Row | undefined
+    return r ? eventRow(r) : null
+  }
+
   // —— 阶段 3A：审计事件、团队任务日志、时间线游标 ——
   // 三者共用 pageRows 的分页语义：id 升序；不带 afterId 取最新 limit 条；带 afterId 取游标之后最早的 limit 条。
 
@@ -829,6 +837,25 @@ export class Registry {
   /** 调度员启动时调用：此前停手的 worktree 重新尝试。 */
   resetOrcaSyncFailures(team: string): void {
     this.db.prepare('UPDATE orca_sync SET fail_count = 0 WHERE team = ?').run(team)
+  }
+
+  // —— 阶段 3D：未读标记 ——
+
+  /** 已经给 Orca 打过未读标记（或首轮只记录）的待办键，如 `stale:t1`。 */
+  listUnreadMarks(team: string): string[] {
+    return (this.db.prepare('SELECT item_key FROM unread_marks WHERE team = ? ORDER BY item_key').all(team) as Array<{ item_key: string }>).map((r) => r.item_key)
+  }
+
+  /** 已存在的键忽略（保留最早的 marked_at）。 */
+  addUnreadMarks(team: string, keys: string[], at: string): void {
+    const stmt = this.db.prepare('INSERT INTO unread_marks(team, item_key, marked_at) VALUES (?, ?, ?) ON CONFLICT(team, item_key) DO NOTHING')
+    for (const k of keys) stmt.run(team, k, at)
+  }
+
+  /** 待办已从 `wl attention` 消失的键：之后再出现视为新条目。 */
+  removeUnreadMarks(team: string, keys: string[]): void {
+    const stmt = this.db.prepare('DELETE FROM unread_marks WHERE team = ? AND item_key = ?')
+    for (const k of keys) stmt.run(team, k)
   }
 
   listAudit(team: string, o: { afterId?: number; since?: string; limit?: number } = {}): AuditRow[] {

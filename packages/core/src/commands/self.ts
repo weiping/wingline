@@ -52,6 +52,24 @@ export function selfCommand(
   }
 }
 
+/**
+ * 自启动（登录时由 launchd / systemd 执行）用的命令：登录时没有交互式 shell 的 PATH，所以 node、入口脚本、home、orca 全是绝对路径，
+ * 且按目标平台的 path 规则判断（不用宿主的 path）。入口脚本先 resolve；其余不是绝对路径 → autostart_path_invalid。
+ */
+export function absoluteSelfCommand(a: SelfSpec): { file: string; args: string[] } {
+  const P = a.platform === 'win32' ? path.win32 : path.posix
+  const script = P.resolve(a.script)
+  for (const [what, p] of [['node', a.node], ['home', a.home], ['orca', a.orca]] as const) {
+    if (!P.isAbsolute(p)) {
+      throw new WinglineError('input', 'autostart_path_invalid', `自启动命令里的 ${what} 必须是绝对路径：${p}`, { hint: '用绝对路径重新执行（--home / --orca），或检查 Node 的安装位置' })
+    }
+  }
+  if (a.platform === 'win32' && [a.node, script, a.home, a.orca, ...a.args].some((p) => WINDOWS_UNSAFE.test(p))) {
+    throw new WinglineError('input', 'autostart_path_invalid', '自启动命令里的路径含有 " % $ ` 之一')
+  }
+  return { file: a.node, args: [script, ...a.args, '--home', a.home, '--orca', a.orca] }
+}
+
 const posixQuote = (s: string) => `'${s.replace(/'/g, "'\\''")}'`
 const winQuote = (s: string) => `"${s}"`
 

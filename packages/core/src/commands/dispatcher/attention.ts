@@ -8,6 +8,7 @@ import type { CommandDeps } from '../deps.js'
 import { taskPreflight } from '../task/preflight.js'
 import { gatherStaleInput, staleReasons, type StaleItem } from '../task/query.js'
 import { dispatcherHealth, type DispatcherHealth } from './lifecycle.js'
+import { unreadGaveUp } from './unread.js'
 
 export interface AttentionReport {
   team: string
@@ -33,6 +34,8 @@ export function warningsOf(deps: CommandDeps, team: string, spec: TeamSpec | nul
   const out = fs.existsSync(draft) ? [`有未应用的规格草稿：${draft}（执行 wl down ${team} 后 wl up ${specPath} --draft）`] : []
   if (spec?.patrol.workspaceStatus && !ORCA_WORKTREE_SUPPORT.workspaceStatus) out.push('Orca 不支持工作区状态：patrol.workspace_status 不起作用')
   if (spec?.patrol.worktreeComment && !ORCA_WORKTREE_SUPPORT.comment) out.push('Orca 不支持卡片注释：patrol.worktree_comment 不起作用')
+  if (spec?.patrol.unreadMark && !ORCA_WORKTREE_SUPPORT.unread) out.push('Orca 不支持未读标记：patrol.unread_mark 不起作用')
+  if (spec?.patrol.unreadMark && unreadGaveUp(deps, team)) out.push('Orca 未读标记连续 3 次失败：本次调度员运行期间已停止尝试（重启调度员后重试）')
   for (const s of deps.registry.listOrcaSync(team)) {
     if (s.failCount >= 3) out.push(`Orca 同步已停止：${s.worktree}（连续 3 次失败，重启调度员后重试）`)
   }

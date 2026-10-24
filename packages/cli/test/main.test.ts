@@ -585,6 +585,197 @@ test('wl restore passes dry-run/no-tasks/session through, prints the result and 
   expect(JSON.parse(r.out).result).toEqual(res)
 })
 
+// —— wl restore --all（3D-1）——
+
+type TeamStub = { name: string; status: string }
+/** `--all` 要读注册表里的团队列表和 Orca 状态；其余测试用的假 deps 没有这些。 */
+const allDeps = (teams: TeamStub[], seen: { overrides?: unknown } = {}, orca: Record<string, unknown> = {}) =>
+  ((_env: NodeJS.ProcessEnv, _warn: unknown, overrides?: unknown) => {
+    seen.overrides = overrides
+    let t = 0
+    return { registry: { close: () => { closed++ }, listTeams: () => teams }, orca, monotonic: () => (t += 3_600_000) } as unknown as CommandDeps
+  }) as unknown as Parameters<typeof run>[3]
+const execAll = (argv: string[], c: Commands, teams: TeamStub[] = [{ name: 'duo', status: 'up' }], seen?: { overrides?: unknown }, orca?: Record<string, unknown>) => {
+  const h = io()
+  return run(argv, h.io, c, allDeps(teams, seen, orca)).then((code) => ({ code, out: h.out(), err: h.err() }))
+}
+
+test('wl restore --all restores every up team through the audited restore, passing the options and --actor along', async () => {
+  const seen: unknown[] = []
+  const r = await execAll(['restore', '--all', '--no-tasks', '--actor', 'autostart'], cmds({ restore: async (_d, a) => { seen.push(a); return restoreResult({ team: a.team }) } }),
+    [{ name: 'duo', status: 'up' }, { name: 'old', status: 'stopped' }, { name: 'trio', status: 'up' }])
+  expect(seen).toEqual([
+    { team: 'duo', dryRun: false, noTasks: true, as: 'autostart' },
+    { team: 'trio', dryRun: false, noTasks: true, as: 'autostart' },
+  ])
+  expect(r.code).toBe(0)
+  expect(r.out).toContain('团队 duo')
+  expect(r.out).toContain('团队 trio')
+  expect(r.out).not.toContain('团队 old')
+})
+
+test('wl restore --all has the same JSON envelope shape and the worst exit code across teams', async () => {
+  const r = await execAll(['restore', '--all', '--json'], cmds({
+    restore: async (_d, a) => restoreResult({ team: a.team, posts: a.team === 'duo' ? [{ address: 'builder@duo', outcome: 'ambiguous', candidates: [] }] : [] }),
+  }), [{ name: 'duo', status: 'up' }, { name: 'trio', status: 'up' }])
+  expect(r.code).toBe(3)
+  expect(JSON.parse(r.out).result.teams.map((t: { team: string }) => t.team)).toEqual(['duo', 'trio'])
+})
+
+test('wl restore --all: a team that is busy is reported and exits 1 while the others are still restored', async () => {
+  const r = await execAll(['restore', '--all'], cmds({
+    restore: async (_d, a) => {
+      if (a.team === 'duo') throw new WinglineError('input', 'team_busy', '团队 duo 正在被另一个 wl 命令（pid 7）操作', { hint: '等待其完成后重试' })
+      return restoreResult({ team: a.team })
+    },
+  }), [{ name: 'duo', status: 'up' }, { name: 'trio', status: 'up' }])
+  expect(r.code).toBe(1)
+  expect(r.out).toContain('team_busy')
+  expect(r.out).toContain('等待其完成后重试')
+  expect(r.out).toContain('团队 trio')
+})
+
+test('wl restore --all with no up team says so and exits 0 (JSON: empty teams)', async () => {
+  const human = await execAll(['restore', '--all'], cmds(), [{ name: 'old', status: 'stopped' }])
+  expect(human.code).toBe(0)
+  expect(human.out).toContain('没有处于运行状态的团队')
+  const json = await execAll(['restore', '--all', '--json'], cmds(), [])
+  expect(JSON.parse(json.out)).toEqual({ ok: true, result: { teams: [] } })
+})
+
+test('wl restore: --all excludes <team> and --session; a team is needed without --all; --actor takes only autostart; --wait-orca needs --all', async () => {
+  const code = async (argv: string[]) => {
+    const r = await execAll([...argv, '--json'], cmds())
+    return [r.code, JSON.parse(r.out).error.code]
+  }
+  expect(await code(['restore', 'duo', '--all'])).toEqual([1, 'restore_args_invalid'])
+  expect(await code(['restore', '--all', '--session', 'builder=s1'])).toEqual([1, 'restore_args_invalid'])
+  expect(await code(['restore'])).toEqual([1, 'restore_args_invalid'])
+  expect(await code(['restore', 'duo', '--wait-orca', '15m'])).toEqual([1, 'restore_args_invalid'])
+  expect(await code(['restore', 'duo', '--actor', 'root'])).toEqual([1, 'actor_invalid'])
+  expect(await code(['restore', '--all', '--wait-orca', 'soon'])).toEqual([1, 'duration_invalid'])
+})
+
+test('wl restore --all --wait-orca waits for Orca first: unreachable within the budget exits 2 and restores nothing', async () => {
+  const seen: unknown[] = []
+  const r = await execAll(['restore', '--all', '--wait-orca', '0s', '--json'],
+    cmds({ restore: async (_d, a) => { seen.push(a); return restoreResult({ team: a.team }) } }),
+    [{ name: 'duo', status: 'up' }], undefined, { status: async () => ({ reachable: false }) })
+  expect(r.code).toBe(2)
+  expect(JSON.parse(r.out).error.code).toBe('runtime_unavailable')
+  expect(seen).toEqual([])
+})
+
+test('wl restore accepts --home / --orca (the autostart command line carries them) and hands them to makeDeps', async () => {
+  const seen: { overrides?: unknown } = {}
+  await execAll(['restore', '--all', '--home', '/h', '--orca', '/o'], cmds(), [], seen)
+  expect(seen.overrides).toMatchObject({ home: '/h', orca: '/o' })
+  const one: { overrides?: unknown } = {}
+  await execAll(['restore', 'duo', '--home', '/h2', '--orca', '/o2'], cmds({ restore: async () => restoreResult() }), [], one)
+  expect(one.overrides).toMatchObject({ home: '/h2', orca: '/o2' })
+})
+
+test('a single-team wl restore without --actor passes no `as` (the executor is resolved as before)', async () => {
+  let seen: unknown
+  await execAll(['restore', 'duo'], cmds({ restore: async (_d, a) => { seen = a; return restoreResult() } }))
+  expect(seen).toEqual({ team: 'duo', dryRun: false, noTasks: false, sessions: {} })
+})
+
+// —— wl autostart（3D-1）——
+
+type SysCall = [string, ...string[]]
+function autostartWorld(over: Record<string, unknown> = {}, replies: Record<string, { code: number; stdout: string; stderr: string }> = {}) {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wl-cli-autostart-'))
+  const node = path.join(tmp, 'node'); const script = path.join(tmp, 'main.js')
+  fs.writeFileSync(node, ''); fs.writeFileSync(script, '')
+  const calls: SysCall[] = []
+  const sys = {
+    platform: 'linux' as NodeJS.Platform, homeDir: tmp, uid: 501, user: 'me', node, script, fs,
+    exec: async (file: string, args: string[]) => { calls.push([file, ...args]); return replies[file] ?? { code: 0, stdout: '', stderr: '' } },
+    ...over,
+  }
+  const home = path.join(tmp, '.wingline')
+  const deps = (() => ({ registry: { close: () => { closed++ } }, home, orcaPath: '/opt/orca/bin/orca' }) as unknown as CommandDeps) as unknown as Parameters<typeof run>[3]
+  const go = (argv: string[]) => { const h = io(); return run(argv, h.io, cmds(), deps, sys as never).then((code) => ({ code, out: h.out(), err: h.err() })) }
+  return { tmp, node, script, calls, go, unit: path.join(tmp, '.config', 'systemd', 'user', 'wingline-restore.service') }
+}
+const posixOnly = process.platform === 'win32' ? test.skip : test
+
+posixOnly('wl autostart install (Linux) writes the unit with the given wait budget and registers it; --json carries the details', async () => {
+  const w = autostartWorld()
+  const r = await w.go(['autostart', 'install', '--wait-orca', '20m', '--json'])
+  expect(r.code).toBe(0)
+  const result = JSON.parse(r.out).result
+  expect(result).toMatchObject({ platform: 'linux', file: w.unit, waitOrca: '20m' })
+  expect(result.command.slice(0, 4)).toEqual([w.node, w.script, 'restore', '--all'])
+  expect(fs.readFileSync(w.unit, 'utf8')).toContain('--wait-orca 20m --actor autostart')
+  expect(w.calls.map((c) => c.slice(1).join(' '))).toEqual(['--user show-environment', '--user daemon-reload', '--user enable wingline-restore.service'])
+})
+
+posixOnly('wl autostart install defaults to 15m and says where the log goes', async () => {
+  const w = autostartWorld()
+  const r = await w.go(['autostart', 'install'])
+  expect(r.code).toBe(0)
+  expect(fs.readFileSync(w.unit, 'utf8')).toContain('--wait-orca 15m')
+  expect(r.out).toContain(w.unit)
+  expect(r.out).toContain('autostart.log')
+  expect(r.out).not.toContain('安装即执行一次')
+})
+
+posixOnly('wl autostart install on macOS says the agent runs once right away', async () => {
+  const w = autostartWorld({ platform: 'darwin' })
+  const r = await w.go(['autostart', 'install'])
+  expect(r.code).toBe(0)
+  expect(r.out).toContain('安装即执行一次')
+  expect(w.calls.map((c) => c.slice(0, 2).join(' '))).toEqual(['/bin/launchctl bootout', '/bin/launchctl bootstrap'])
+  expect(fs.existsSync(path.join(w.tmp, 'Library', 'LaunchAgents', 'wingline.restore.plist'))).toBe(true)
+})
+
+test('wl autostart install: Windows is unsupported (exit 1), and a bad --wait-orca is rejected', async () => {
+  const w = autostartWorld({ platform: 'win32' })
+  const win = await w.go(['autostart', 'install', '--json'])
+  expect([win.code, JSON.parse(win.out).error.code]).toEqual([1, 'autostart_unsupported'])
+  const bad = await autostartWorld().go(['autostart', 'install', '--wait-orca', 'soon', '--json'])
+  expect([bad.code, JSON.parse(bad.out).error.code]).toEqual([1, 'duration_invalid'])
+})
+
+posixOnly('wl autostart install without a systemd user session exits 1 and writes nothing', async () => {
+  const w = autostartWorld({}, { '/usr/bin/systemctl': { code: 1, stdout: '', stderr: 'Failed to connect to bus' } })
+  const r = await w.go(['autostart', 'install', '--json'])
+  expect([r.code, JSON.parse(r.out).error.code]).toEqual([1, 'autostart_unsupported'])
+  expect(fs.existsSync(w.unit)).toBe(false)
+})
+
+posixOnly('wl autostart uninstall removes our file; uninstalling again still succeeds', async () => {
+  const w = autostartWorld()
+  await w.go(['autostart', 'install'])
+  const first = await w.go(['autostart', 'uninstall'])
+  expect(first.code).toBe(0)
+  expect(first.out).toContain('已卸载')
+  expect(fs.existsSync(w.unit)).toBe(false)
+  const again = await w.go(['autostart', 'uninstall', '--json'])
+  expect([again.code, JSON.parse(again.out).result]).toEqual([0, expect.objectContaining({ removed: false })])
+})
+
+posixOnly('wl autostart status: not installed, then installed with a missing node and linger off', async () => {
+  const w = autostartWorld({}, { '/usr/bin/loginctl': { code: 0, stdout: 'Linger=no\n', stderr: '' } })
+  const none = await w.go(['autostart', 'status'])
+  expect(none.code).toBe(0)
+  expect(none.out).toContain('未安装')
+
+  await w.go(['autostart', 'install'])
+  const ok = await w.go(['autostart', 'status', '--json'])
+  expect(JSON.parse(ok.out).result).toMatchObject({ installed: true, location: w.unit, commandMissing: [], linger: false })
+
+  fs.rmSync(w.node)
+  const gone = await w.go(['autostart', 'status'])
+  expect(gone.code).toBe(0)
+  expect(gone.out).toContain('已安装')
+  expect(gone.out).toContain(w.node)
+  expect(gone.out).toContain('wl autostart install')
+  expect(gone.out).toContain('loginctl enable-linger me')
+})
+
 test('wl restore rejects --session without = and lists ambiguous candidates with the retry command', async () => {
   expect((await exec(['restore', 'duo', '--session', 'builder'], cmds())).code).toBe(1)
   const r = await exec(['restore', 'duo'], cmds({

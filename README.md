@@ -172,7 +172,27 @@ wl restore duo --session builder=<会话ID>   # 搜索到多个候选时，指�
 
 结果按「岗位 → Run → 调度员 → 任务」分节输出。`resumed` 表示接回了原会话；`fresh` 表示找不到可接回的会话，已新起终端——**上下文已丢失**，需要靠任务状态与 `wl log` 补上下文。`ambiguous` 时会列出候选会话与重试命令，退出码为 3。没有写入过标记的旧岗位只能走 `fresh`。
 
-开机自动恢复（无人值守）留到后续阶段；目前请在 Orca 起来后手动执行 `wl restore <团队>`。
+### 登录后自动恢复：`wl restore --all` 与 `wl autostart`
+
+`wl restore --all` 对注册表里所有运行中的团队依次执行 `wl restore`；某个团队出错（例如正好被另一个 `wl` 命令占着锁，报 `team_busy`）只记在该团队名下，不影响其余团队，退出码取最严重的一个（4 > 3 > 2 > 1 > 0）。加 `--wait-orca 15m` 会先等 Orca 可达，再等终端列表稳定（每 10 秒采样一次，连续 4 次相同），避免 Orca 还没接管完终端就把岗位判成 offline、重复拉起 agent；等不到就什么都不恢复。
+
+```bash
+wl restore --all --wait-orca 15m    # 手动恢复所有运行中的团队
+wl autostart install                # 登录后自动执行上面这条（默认最多等 15 分钟）
+wl autostart install --wait-orca 30m
+wl autostart status                 # 是否已安装、将执行的命令、日志最后 20 行
+wl autostart uninstall              # 只删雁阵自己的那一个文件，日志保留
+```
+
+| 平台 | 安装位置 | 方式 |
+| --- | --- | --- |
+| macOS | `~/Library/LaunchAgents/wingline.restore.plist` | launchd 用户代理，`RunAtLoad`。**安装即执行一次**，结果见日志 |
+| Linux | `~/.config/systemd/user/wingline-restore.service` | systemd 用户服务（`oneshot`，`WantedBy=default.target`）。无界面或 SSH 场景需要 `loginctl enable-linger <用户>`；Orca 以系统服务运行时，用户服务无法声明在它之后启动，靠 `--wait-orca` 等待 |
+| Windows | — | 暂不支持（`autostart_unsupported`），请登录后手动执行 `wl restore --all` |
+
+- 日志在 `<WINGLINE_HOME>/logs/autostart.log`；安装时超过 1 MB 会先改名为 `autostart.log.1`。
+- 命令里的 node、入口脚本、`--home`、`--orca` 全部写绝对路径，并显式带上 `PATH`（node 与 orca 所在目录）——登录时没有交互式 shell 的环境。node 或入口脚本如果来自带版本号的目录（nvm 的 `~/.nvm/versions/node/v24.18.0/bin/node`、pnpm 的 `…/.pnpm/@wingline+cli@x.y.z/…`），升级或清理后路径会失效，登录时会因找不到文件而失败；`wl autostart status` 会列出已不存在的路径，重新 `wl autostart install` 即可。
+- 自启动执行时在时间线上的执行者是 `autostart`。卸载雁阵之前请先 `wl autostart uninstall`，否则登录时仍会尝试执行。
 
 ### 时间线：`wl log`
 
@@ -274,6 +294,7 @@ wl attention duo                              # 只读汇总：需要人处理�
 | `auto_recover` | `false` | 为 `true` 时对"派发失主"的任务自动执行 `wl task recover` |
 | `worktree_comment` | `false` | 为 `true` 时把每个岗位的当前任务与告警标记同步成 worktree 的卡片注释（见「Orca 界面上的状态」） |
 | `workspace_status` | `true` | 为 `true` 时同步岗位所在 worktree 的工作区状态（见「Orca 界面上的状态」） |
+| `unread_mark` | `true` | 为 `true` 时，牵头岗有新的待办（`wl attention` 里新出现的条目）就给它所在的 worktree 打 Orca 未读标记；红点由 Orca 在你查看时清除，雁阵不清除。重启调度员后的第一轮只记录不标记 |
 | `notify.webhook` / `notify.command` | 无 | 外部通知，二选一：webhook 会收到一条 JSON `POST`；command 是参数数组（不经 shell），消息作为最后一个参数追加 |
 
 ```yaml

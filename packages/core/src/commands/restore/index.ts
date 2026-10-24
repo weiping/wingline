@@ -1,6 +1,6 @@
 import fs from 'node:fs'
 import { renderBriefing } from '../../brief/render.js'
-import { WinglineError } from '../../errors.js'
+import { EXIT_CODES, WinglineError, type ErrorKind } from '../../errors.js'
 import { specHash } from '../../spec/hash.js'
 import { loadTeamSpec } from '../../spec/load.js'
 import { preflight, type CommandDeps } from '../deps.js'
@@ -20,6 +20,8 @@ export interface RestoreArgs {
   noTasks?: boolean
   /** --session <post>=<sessionId>：跳过搜索，直接用给定的会话接回。 */
   sessions?: Record<string, string>
+  /** 审计里的执行者（`wl restore --all --actor autostart`）；审计层读它，restore 本体忽略。 */
+  as?: string
 }
 
 /** spec 第 5.4 节。 */
@@ -159,4 +161,100 @@ export function restoreExitCode(r: RestoreResult): 0 | 2 | 3 {
     || r.run?.outcome === 'failed' || r.run?.outcome === 'lost'
     || r.tasks.some((t) => t.outcome === 'failed')
   return failed ? 2 : 0
+}
+
+/** `--wait-orca` 的轮询间隔，以及终端列表要连续相同多少次才算稳定（3D 探针 6 校准）。 */
+export const ORCA_POLL_MS = 10_000
+export const SETTLE_SAMPLES = 4
+
+const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+
+async function orcaReachable(deps: CommandDeps): Promise<boolean> {
+  try {
+    return (await deps.orca.status()).reachable
+  } catch (err) {
+    if (err instanceof WinglineError) return false
+    throw err
+  }
+}
+
+/** 终端集合的签名（handle + connected，与标题无关）；读不到时为 null，算一次不稳定的采样。 */
+async function terminalSignature(deps: CommandDeps): Promise<string | null> {
+  try {
+    return (await deps.orca.terminalList()).map((t) => `${t.handle}:${t.connected ? 1 : 0}`).sort().join(',')
+  } catch (err) {
+    if (err instanceof WinglineError) return null
+    throw err
+  }
+}
+
+/**
+ * 等 Orca 可达，再等终端列表稳定（`orca status` 可达不等于 Orca 已重新接管完终端，此前 restore 会把它们判成 offline 并重复拉起 agent）。
+ * 整个等待共用一个期限；不替用户启动 Orca。
+ */
+export async function waitForOrca(deps: CommandDeps, timeoutMs: number, sleep: (ms: number) => Promise<void>): Promise<void> {
+  const start = deps.monotonic()
+  const spent = () => deps.monotonic() - start >= timeoutMs
+  while (!(await orcaReachable(deps))) {
+    if (spent()) throw new WinglineError('orca', 'runtime_unavailable', 'Orca 未运行或不可达', { hint: '运行 orca open 启动 Orca，再重跑 wl restore --all' })
+    await sleep(ORCA_POLL_MS)
+  }
+  let last: string | null | undefined
+  let same = 0
+  for (;;) {
+    const sig = await terminalSignature(deps)
+    same = sig === null ? 0 : sig === last ? same + 1 : 1
+    last = sig
+    if (same >= SETTLE_SAMPLES) return
+    if (spent()) throw new WinglineError('uncertain', 'orca_not_settled', 'Orca 的终端列表一直没有稳定，未做任何恢复', { hint: '等 Orca 完全启动后手动执行 wl restore --all' })
+    await sleep(ORCA_POLL_MS)
+  }
+}
+
+export interface RestoreAllTeamError {
+  kind: ErrorKind
+  code: string
+  message: string
+  hint?: string
+}
+export interface RestoreAllResult {
+  teams: Array<{ team: string; result?: RestoreResult; error?: RestoreAllTeamError }>
+}
+
+function teamErrorOf(err: unknown): RestoreAllTeamError {
+  if (err instanceof WinglineError) return { kind: err.kind, code: err.code, message: err.message, ...(err.hint ? { hint: err.hint } : {}) }
+  return { kind: 'internal', code: 'internal', message: err instanceof Error ? err.message : String(err) }
+}
+
+/**
+ * 对注册表里 status = up 的每个团队依次（串行）执行 `restoreOne`（CLI 层传入已审计的 `commands.restore`）。
+ * 单个团队出错（含 `team_busy`）只记在该团队的 error 里，不中断其余团队。
+ */
+export async function restoreAll(
+  deps: CommandDeps,
+  a: { waitOrcaMs?: number; dryRun?: boolean; noTasks?: boolean; as?: string },
+  o: { restoreOne: (a: RestoreArgs) => Promise<RestoreResult>; sleep?: (ms: number) => Promise<void> },
+): Promise<RestoreAllResult> {
+  const up = deps.registry.listTeams().filter((x) => x.status === 'up')
+  // 没有运行中的团队就没什么可恢复的：不用为它等 Orca（登录时 Orca 可能一直没起来，白等整个期限再报错只是噪音）
+  if (up.length === 0) return { teams: [] }
+  if (a.waitOrcaMs !== undefined) await waitForOrca(deps, a.waitOrcaMs, o.sleep ?? defaultSleep)
+  const teams: RestoreAllResult['teams'] = []
+  for (const t of up) {
+    const args: RestoreArgs = {
+      team: t.name, ...(a.dryRun !== undefined ? { dryRun: a.dryRun } : {}), ...(a.noTasks !== undefined ? { noTasks: a.noTasks } : {}), ...(a.as !== undefined ? { as: a.as } : {}),
+    }
+    try {
+      teams.push({ team: t.name, result: await o.restoreOne(args) })
+    } catch (err) {
+      teams.push({ team: t.name, error: teamErrorOf(err) })
+    }
+  }
+  return { teams }
+}
+
+/** 逐团队换算（result 取 restoreExitCode，error 取 EXIT_CODES[kind]），整体取最严重者：4 > 3 > 2 > 1 > 0。 */
+export function restoreAllExitCode(r: RestoreAllResult): 0 | 1 | 2 | 3 | 4 {
+  const codes = r.teams.map((t) => (t.error ? EXIT_CODES[t.error.kind] : restoreExitCode(t.result!)))
+  return Math.max(0, ...codes) as 0 | 1 | 2 | 3 | 4
 }

@@ -36,6 +36,8 @@ export interface PatrolSpec {
   worktreeComment: boolean
   /** 同步岗位所在 worktree 的工作区状态（默认开）；取默认值不进规格哈希。 */
   workspaceStatus: boolean
+  /** 有新待办时给牵头岗所在 worktree 打未读标记（默认开）；取默认值不进规格哈希。 */
+  unreadMark: boolean
   notify: { webhook: string } | { command: string[] } | null
 }
 
@@ -48,6 +50,7 @@ export const DEFAULT_PATROL: PatrolSpec = {
   autoRecover: false,
   worktreeComment: false,
   workspaceStatus: true,
+  unreadMark: true,
   notify: null,
 }
 
@@ -201,6 +204,7 @@ function patrolOf(raw: RawTeam['patrol'], platform: NodeJS.Platform, at: Located
     autoRecover: raw.auto_recover,
     worktreeComment: raw.worktree_comment,
     workspaceStatus: raw.workspace_status,
+    unreadMark: raw.unread_mark,
     notify: !n ? null : n.webhook ? { webhook: n.webhook } : { command: n.command! },
   }
 }

@@ -1,11 +1,13 @@
+import { spawn } from 'node:child_process'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import type { Writable } from 'node:stream'
-import { Command, CommanderError } from 'commander'
+import { Command, CommanderError, Option } from 'commander'
 import {
   READ_ONLY_CALLS, Registry, type CallLogOptions, WinglineError, attention, auditedCommands, claimTask, createCallLog, createOrcaClient, createOrcaRunner, createTask, doneTask, down, escalateTask, exitCodeOf,
-  followTimeline, listStale, listTasks, parseDuration, planTask, ps, readTimeline, reassignTask, recoverTask, releaseTask, resolveGate, resolveOrcaExecutable, restore, restoreExitCode, send, showTask, startTask,
-  up, winglineHome, dispatcherUp, dispatcherDown, dispatcherStatus, dispatcherReply, freezePostCmd, unfreezePostCmd, hushCmd, unhushCmd, runDispatcherLoop, type CommandDeps,
+  followTimeline, listStale, listTasks, parseDuration, planTask, ps, readTimeline, reassignTask, recoverTask, releaseTask, resolveGate, resolveOrcaExecutable, restore, restoreAll, restoreAllExitCode, restoreExitCode, send, showTask, startTask,
+  autostartInstall, autostartStatusOf, autostartUninstall, type AutostartSys, up, winglineHome, dispatcherUp, dispatcherDown, dispatcherStatus, dispatcherReply, freezePostCmd, unfreezePostCmd, hushCmd, unhushCmd, runDispatcherLoop, type CommandDeps,
   type TimelineEvent, type TimelineSource,
 } from '@wingline/core'
 import { consoleCmd, renderConsole, renderReady } from './console.js'
@@ -15,7 +17,7 @@ import { AUDIT } from './audit-table.js'
 import verified from './verified.json' with { type: 'json' }
 import {
   errorDoc, renderAttention, renderDispatcherDown, renderDispatcherStatus, renderDispatcherUp, renderUnfreeze, renderCreate, renderDone, renderDown, renderError, renderEscalate, renderList, renderLog, renderPs,
-  renderReassign, renderRecover, renderResolve, renderRestore, logPrinter,
+  renderReassign, renderRecover, renderResolve, renderRestore, renderRestoreAll, renderAutostartInstall, renderAutostartStatus, renderAutostartUninstall, logPrinter,
   renderSend, renderShow, renderStale, renderStart, renderUp,
 } from './output.js'
 
@@ -73,6 +75,20 @@ const realCommands: Commands = auditedCommands(rawCommands, AUDIT)
 const splitList = (s: string | undefined) => s?.split(',').filter(Boolean)
 
 /** `--session builder=s1` 可重复；写成只有岗位名就是用法错。 */
+type RestoreOpts = {
+  all?: boolean; waitOrca?: string; dryRun?: boolean; tasks?: boolean; session: string[]; actor?: string; home?: string; orca?: string; json?: boolean
+}
+
+/** 参数组合不合法时返回输入错误（交给 execute 统一渲染）；合法返回 null。 */
+function restoreOptsError(team: string | undefined, o: RestoreOpts): WinglineError | null {
+  const bad = (message: string) => new WinglineError('input', 'restore_args_invalid', message)
+  if (o.actor !== undefined && o.actor !== 'autostart') return new WinglineError('input', 'actor_invalid', `--actor 只接受 autostart，不接受 ${o.actor}`)
+  if (o.all && (team || o.session.length > 0)) return bad('--all 不能与 <team> 或 --session 同用')
+  if (!o.all && !team) return bad('需要给出团队名，或用 --all 恢复所有运行中的团队')
+  if (!o.all && o.waitOrca !== undefined) return bad('--wait-orca 只能与 --all 同用')
+  return null
+}
+
 const parseSessions = (list: string[]): Record<string, string> => {
   const out: Record<string, string> = {}
   for (const s of list) {
@@ -255,14 +271,25 @@ function registerBaseCommands(program: Command, commands: Commands, execute: Exe
   program.command('down <team>').description('停止团队；加 --close 关闭终端').option('--close', '关闭岗位终端').option('--json', '输出 JSON')
     .action((team: string, o: { close?: boolean; json?: boolean }) => execute(!!o.json, (d) => commands.down(d, { team, close: !!o.close }), renderDown))
 
-  program.command('restore <team>').description('重启之后把团队接回来：恢复岗位会话、Run、调度员与任务')
+  program.command('restore [team]').description('重启之后把团队接回来：恢复岗位会话、Run、调度员与任务；--all 恢复所有运行中的团队')
+    .option('--all', '恢复注册表里所有运行中的团队（登录后自动恢复用）')
+    .option('--wait-orca <时长>', '与 --all 同用：先等 Orca 可达且终端列表稳定，如 15m')
     .option('--dry-run', '只看会做什么，不改动任何东西').option('--no-tasks', '不恢复任务，只接回岗位')
     .option('--session <post=id>', '跳过搜索，直接用给定的会话接回该岗位（可重复）', collect, [])
+    .addOption(new Option('--actor <name>', '审计里的执行者（只接受 autostart）').hideHelp())
+    .option('--home <path>', '数据目录（等价 WINGLINE_HOME）').option('--orca <path>', 'Orca 可执行文件（等价 WINGLINE_ORCA）')
     .option('--json', '输出 JSON')
-    .action((team: string, o: { dryRun?: boolean; tasks?: boolean; session: string[]; json?: boolean }) =>
-      execute(!!o.json, (d) => commands.restore(d, {
-        team, dryRun: !!o.dryRun, noTasks: o.tasks === false, sessions: parseSessions(o.session),
-      }), renderRestore, restoreExitCode))
+    .action((team: string | undefined, o: RestoreOpts) => {
+      const overrides = { home: o.home, orca: o.orca }
+      const bad = restoreOptsError(team, o)
+      if (bad) return execute(!!o.json, async () => { throw bad }, () => '')
+      const base = { dryRun: !!o.dryRun, noTasks: o.tasks === false, ...(o.actor ? { as: o.actor } : {}) }
+      if (o.all) {
+        return execute(!!o.json, (d) => restoreAll(d, { ...base, waitOrcaMs: o.waitOrca === undefined ? undefined : parseDuration(o.waitOrca) }, { restoreOne: (a) => commands.restore(d, a) }),
+          renderRestoreAll, restoreAllExitCode, overrides)
+      }
+      return execute(!!o.json, (d) => commands.restore(d, { team: team!, ...base, sessions: parseSessions(o.session) }), renderRestore, restoreExitCode, overrides)
+    })
 
   program.command('log <team>').description('团队时间线：任务、巡查与命令事件按时间合并')
     .option('--task <id>', '只看某个任务').option('--post <post>', '只看某个岗位')
@@ -294,11 +321,40 @@ function registerBaseCommands(program: Command, commands: Commands, execute: Exe
     })
 }
 
+/** 真实宿主：系统命令以参数数组启动（不经 shell），入口脚本取符号链接解析后的真实路径。 */
+export function realAutostartSys(): AutostartSys {
+  const exec: AutostartSys['exec'] = (file, args) => new Promise((resolve, reject) => {
+    const child = spawn(file, args, { shell: false })
+    let stdout = ''
+    let stderr = ''
+    child.stdout.on('data', (d) => { stdout += String(d) })
+    child.stderr.on('data', (d) => { stderr += String(d) })
+    child.on('error', reject)
+    child.on('close', (code) => resolve({ code: code ?? 1, stdout, stderr }))
+  })
+  const entry = process.argv[1] ?? ''
+  let script = path.resolve(entry)
+  try { script = fs.realpathSync(entry) } catch { /* 保持 resolve 的结果 */ }
+  return { platform: process.platform, homeDir: os.homedir(), uid: process.getuid?.(), user: os.userInfo().username, node: process.execPath, script, exec, fs }
+}
+
+function registerAutostartCommands(program: Command, execute: Execute, sys: () => AutostartSys): void {
+  const auto = program.command('autostart').description('登录后自动执行 wl restore --all（macOS launchd、Linux systemd 用户服务）')
+  const sub = (spec: string, desc: string) => auto.command(spec).description(desc).option('--json', '输出 JSON')
+  sub('install', '安装（重复执行会覆盖自己的那一个文件）').option('--wait-orca <时长>', '登录时等 Orca 就绪的最长时间，默认 15m')
+    .action((o: { waitOrca?: string; json?: boolean }) => execute(!!o.json, (d) => autostartInstall(d, sys(), { waitOrca: o.waitOrca }), renderAutostartInstall))
+  sub('uninstall', '卸载（只删雁阵自己的文件，日志保留）')
+    .action((o: { json?: boolean }) => execute(!!o.json, (d) => autostartUninstall(d, sys()), renderAutostartUninstall))
+  sub('status', '是否已安装、将执行的命令与最近的日志')
+    .action((o: { json?: boolean }) => execute(!!o.json, (d) => autostartStatusOf(d, sys()), renderAutostartStatus))
+}
+
 export async function run(
   argv: string[],
   io: RunIO,
   commands: Commands = realCommands,
   makeDeps: (env: NodeJS.ProcessEnv, warn: (m: string) => void, overrides?: DepsOverrides) => CommandDeps = defaultMakeDeps,
+  autostartSys?: AutostartSys,
 ): Promise<number> {
   let code = 0
   const json = argv.includes('--json')
@@ -330,6 +386,7 @@ export async function run(
   registerBaseCommands(program, commands, execute, io)
   registerTaskCommands(program, commands, execute)
   registerDispatcherCommands(program, commands, execute, io)
+  registerAutostartCommands(program, execute, () => autostartSys ?? realAutostartSys())
 
   program
     .command('console')

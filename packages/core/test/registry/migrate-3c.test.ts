@@ -19,7 +19,7 @@ test('migration from a 3B database adds orca_sync and keeps existing rows', () =
   const r = Registry.open(file)
   expect(r.getTeam('duo')).toMatchObject({ name: 'duo', specHash: 'h' })
   expect(r.schemaVersion()).toBe(MIGRATIONS.length)
-  expect(MIGRATIONS.length).toBe(5)
+  expect(MIGRATIONS.length).toBeGreaterThanOrEqual(5)
 
   expect(r.getOrcaSync('/w/a', 'duo')).toBeNull()
   r.putOrcaSync({ worktree: '/w/a', team: 'duo', status: 'todo', comment: 'c', writtenAt: 'T1', failCount: 2 })
