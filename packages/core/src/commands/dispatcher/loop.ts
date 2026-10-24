@@ -26,7 +26,7 @@ const EVENT_KEEP_MS = 30 * 24 * 3_600_000
 /** 只读轮询只记摘要（spec 第 8 节）。 */
 export const READ_ONLY_CALLS: ReadonlyArray<readonly [string, string]> = [
   ['orchestration', 'check'], ['orchestration', 'task-list'], ['orchestration', 'worker-list'], ['orchestration', 'run-show'],
-  ['orchestration', 'request-show'], ['terminal', 'list'], ['terminal', 'show'],
+  ['orchestration', 'request-show'], ['terminal', 'list'], ['terminal', 'show'], ['terminal', 'read'],
 ]
 
 export interface LoopState {

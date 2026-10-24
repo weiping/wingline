@@ -132,7 +132,7 @@ function taskMethods(runner: OrcaRunner): Pick<OrcaClient, 'taskCreate' | 'taskL
   }
 }
 
-function gateAndViewMethods(runner: OrcaRunner): Pick<OrcaClient, 'gateCreate' | 'gateResolve' | 'terminalShow' | 'worktreeShow'> {
+function gateAndViewMethods(runner: OrcaRunner): Pick<OrcaClient, 'gateCreate' | 'gateResolve' | 'terminalShow' | 'terminalRead' | 'worktreeShow'> {
   return {
     async gateCreate(a) {
       const r = await runner.json<{ gate: { id: string } } & Mutation>([
@@ -149,6 +149,17 @@ function gateAndViewMethods(runner: OrcaRunner): Pick<OrcaClient, 'gateCreate' |
     async terminalShow(a) {
       const r = await runner.json<{ terminal: { title: string | null; connected: boolean; preview?: string } }>(['terminal', 'show', '--terminal', a.handle])
       return { handle: a.handle, title: r.terminal.title, connected: r.terminal.connected, preview: r.terminal.preview ?? '' }
+    },
+    async terminalRead(a) {
+      const r = await runner.json<{ terminal: { tail?: string[]; source?: string; returnedLineCount?: number } }>([
+        'terminal', 'read', '--terminal', a.handle, '--screen', '--limit', String(a.lines),
+      ])
+      // 拿不到渲染屏幕时 Orca 会退回累计的流输出（source: screen-unavailable），那是被 TUI 重绘搅乱的碎片，不能当画面用
+      if (r.terminal.source !== 'screen') {
+        throw new WinglineError('orca', 'screen_unavailable', `终端 ${a.handle} 的渲染画面不可用（source=${r.terminal.source ?? '无'}）`)
+      }
+      const tail = r.terminal.tail ?? []
+      return { text: tail.join('\n'), rows: r.terminal.returnedLineCount ?? tail.length }
     },
     async worktreeShow(a) {
       const r = await runner.json<{ worktree: { path: string } }>(['worktree', 'show', '--worktree', a.worktree])

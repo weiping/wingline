@@ -1,3 +1,4 @@
+import { WinglineError } from '../../src/errors.js'
 import { expect, test } from 'vitest'
 import { FakeOrca, bypassReport, mkDeps, seedRunningTeam } from './fake-client.js'
 
@@ -210,3 +211,30 @@ test('9. (real Orca) a duplicate worker_done on an already-completed dispatch is
   await expect(o.workerDone({ ...wd, outcome: 'failed' })).resolves.toEqual({ replayed: false })
   expect(await status(o, t)).toMatchObject({ status: 'completed', result: before })
 })
+
+test('screens model: terminalRead returns the last N lines; terminalShow keeps only the last 300 chars (like the real Orca); other terminals still use previews', async () => {
+  const o = new FakeOrca()
+  o.terminals.push({ handle: 'h1', title: 'builder@duo', connected: true, worktreeId: 'w' }, { handle: 'h2', title: 'checker@duo', connected: true, worktreeId: 'w' })
+  const screen = Array.from({ length: 60 }, (_, i) => `row ${String(i + 1).padStart(2, '0')} ${'x'.repeat(10)}`).join('\n')
+  o.screens.set('h1', screen)
+  const read = await o.terminalRead({ handle: 'h1', lines: 40 })
+  expect(read.rows).toBe(40)
+  expect(read.text.split('\n')[0]).toContain('row 21')
+  expect(read.text.split('\n').at(-1)).toContain('row 60')
+  const shown = await o.terminalShow({ handle: 'h1' })
+  expect(shown.preview.length).toBeLessThanOrEqual(300)
+  expect(shown.preview).toContain('row 60')
+  expect(shown.preview).not.toContain('row 21')
+  o.previews.set('h2', 'only a preview')
+  expect(await o.terminalRead({ handle: 'h2', lines: 40 })).toEqual({ text: 'only a preview', rows: 1 })
+  expect((await o.terminalShow({ handle: 'h2' })).preview).toBe('only a preview')
+})
+
+test('terminalRead of a missing handle is terminal_handle_stale and honours injected faults', async () => {
+  const o = new FakeOrca()
+  await expect(o.terminalRead({ handle: 'ghost', lines: 40 })).rejects.toMatchObject({ code: 'terminal_handle_stale' })
+  o.terminals.push({ handle: 'h1', title: 't', connected: true, worktreeId: 'w' })
+  o.faults.push({ method: 'terminalRead', when: 'before', error: new WinglineError('orca', 'screen_unavailable', 'x') })
+  await expect(o.terminalRead({ handle: 'h1', lines: 40 })).rejects.toMatchObject({ code: 'screen_unavailable' })
+})
+
