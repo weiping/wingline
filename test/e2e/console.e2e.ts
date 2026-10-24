@@ -35,6 +35,12 @@ test.afterAll(async () => {
 
 test('login link → inbox → answer the question → the timeline shows the console audit event', async ({ page }) => {
   await page.goto(fx.loginUrl())
+  // /auth 有意不用 302（cookie 是 SameSite=Strict），而是回一个带 <meta http-equiv="refresh" content="0;url=/"> 的 200 页面，
+  // 由浏览器在 load 之后再跳到 /。goto 在 load 时就返回了，这时跳转可能还没发生；如果立刻去访问别的页面，
+  // 跳转有时会在新导航发出之后才发起，把收件箱换回首页（CI 上抓到过：失败时 URL 是 /，请求顺序 /auth → /t/duo/inbox → /）。
+  // 所以先等登录跳转落到 / 并确认会话生效，再去收件箱。
+  await page.waitForURL(at('/'))
+  await expect(page.getByRole('heading', { name: '团队' })).toBeVisible()
   await page.goto(at('/t/duo/inbox'))
   await expect(page.getByText('选哪个方案？', { exact: false })).toBeVisible()
 
