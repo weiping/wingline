@@ -25,7 +25,7 @@ const REASON_NOTE: Record<StaleItem['reason'], string> = {
   blocked_waiting: '等待决策',
 }
 
-function TaskCard({ t, team }: { t: TaskRow; team: string }) {
+function TaskCard({ t, team, stuck }: { t: TaskRow; team: string; stuck?: StaleItem['reason'] }) {
   return (
     <article class="card task">
       <Link href={taskPath(team, t.id)} class="task-title">
@@ -41,6 +41,7 @@ function TaskCard({ t, team }: { t: TaskRow; team: string }) {
           </span>
         ))}
         {t.gateFailures > 0 && <Pill tone="bad">闸门失败 {t.gateFailures} 次</Pill>}
+        {stuck && <Pill tone="warn">卡住：{REASON_NOTE[stuck]}</Pill>}
       </div>
     </article>
   )
@@ -53,7 +54,8 @@ export function TaskBoard({ team }: { team: string }) {
   const [owner, setOwner] = useState('')
   const [stuck, setStuck] = useState(false)
   const board = useApi<{ tasks: TaskRow[] }>(stuck ? null : `/api/teams/${enc}/tasks`)
-  const stale = useApi<{ tasks: StaleItem[] }>(stuck ? `/api/teams/${enc}/tasks?stale=true` : null)
+  // 分列卡片上的角标也要它，所以始终取；取不到时看板照常显示，只是没有角标
+  const stale = useApi<{ tasks: StaleItem[] }>(`/api/teams/${enc}/tasks?stale=true`)
   useStreamListener({
     snapshot: () => {
       board.reload()
@@ -124,6 +126,8 @@ export function TaskBoard({ team }: { team: string }) {
 
   if (board.error) return <ErrorBox error={board.error} />
   if (!board.data) return <Loading />
+  const reasonOf = new Map<string, StaleItem['reason']>()
+  for (const s of stale.data?.tasks ?? []) if (s.taskId && s.reason in REASON_NOTE) reasonOf.set(s.taskId, s.reason)
   const visible = board.data.tasks.filter(
     (t) => (!tag || t.tags.includes(tag)) && (!owner || (t.claimedBy ?? '').startsWith(`${owner}@`)),
   )
@@ -142,7 +146,7 @@ export function TaskBoard({ team }: { team: string }) {
                 {label} <span class="count">{items.length}</span>
               </h2>
               {items.map((t) => (
-                <TaskCard key={t.id} t={t} team={team} />
+                <TaskCard key={t.id} t={t} team={team} stuck={reasonOf.get(t.id)} />
               ))}
             </section>
           )

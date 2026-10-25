@@ -8,16 +8,27 @@ import { ErrorBox, Loading, SOURCE_LABEL } from '../components/common.js'
 
 type Source = '' | keyof typeof SOURCE_LABEL
 
+/** 时间范围：`since` 取最近多久（服务端只认 s / m / h）。 */
+const RANGES: Array<[string, string]> = [
+  ['', '不限'],
+  ['15m', '最近 15 分钟'],
+  ['1h', '最近 1 小时'],
+  ['24h', '最近 24 小时'],
+  ['168h', '最近 7 天'],
+]
+
 /** 时间线：按来源 / 岗位地址 / 任务筛选；SSE 推来的新事件直接接在后面（去重）。新的在上。 */
 export function Timeline({ team }: { team: string }) {
   const enc = encodeURIComponent(team)
   const [source, setSource] = useState<Source>('')
   const [post, setPost] = useState('')
   const [task, setTask] = useState('')
+  const [range, setRange] = useState('')
   const q = new URLSearchParams({ limit: '200' })
   if (source) q.set('source', source)
   if (post) q.set('post', post)
   if (task) q.set('task', task)
+  if (range) q.set('since', range)
   const path = `/api/teams/${enc}/log?${q.toString()}`
   const log = useApi<{ events: TimelineEvent[] }>(path)
   const [live, setLive] = useState<TimelineEvent[]>([])
@@ -65,6 +76,16 @@ export function Timeline({ team }: { team: string }) {
         <label class="field inline">
           <span>岗位（地址，如 builder@{team}）</span>
           <input value={post} onInput={(e) => setPost((e.target as HTMLInputElement).value.trim())} />
+        </label>
+        <label class="field inline">
+          <span>时间范围</span>
+          <select value={range} onChange={(e) => setRange((e.target as HTMLSelectElement).value)}>
+            {RANGES.map(([v, label]) => (
+              <option key={v} value={v}>
+                {label}
+              </option>
+            ))}
+          </select>
         </label>
         <label class="field inline">
           <span>任务 ID</span>

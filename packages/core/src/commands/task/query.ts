@@ -1,3 +1,5 @@
+import fs from 'node:fs'
+import path from 'node:path'
 import { WinglineError } from '../../errors.js'
 import type { OrchestrationTaskStatus, TerminalSummary } from '../../orca/types.js'
 import type { DoneVerdictRow, RequestState, TaskKind, TaskLogRow, TeamRow } from '../../registry/registry.js'
@@ -105,6 +107,8 @@ export interface ShownTask extends TaskRow {
   reportedBy: string | null
   closure: DoneClosure | null
   gateId?: string | null
+  /** 最近一次 gate 失败的完整输出文件（`<home>/logs/<团队>/gate-<任务>-<轮>-<次>.txt`）；没有或已被 7 天清理 → null。 */
+  gateOutput?: string | null
   history?: TaskLogRow[]
 }
 
@@ -115,6 +119,24 @@ function parseJson(text: string | null): Record<string, unknown> {
   } catch {
     return {}
   }
+}
+
+/** 任务最新的 gate 输出文件：按（轮次，第几次）数值最大者；目录不存在或没有匹配 → null。 */
+export function latestGateOutput(home: string, team: string, taskId: string): string | null {
+  const dir = path.join(home, 'logs', team)
+  const re = new RegExp(`^gate-${taskId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-(\\d+)-(\\d+)\\.txt$`)
+  let names: string[]
+  try {
+    names = fs.readdirSync(dir)
+  } catch {
+    return null
+  }
+  const found = names.flatMap((name) => {
+    const m = re.exec(name)
+    return m ? [{ name, epoch: Number(m[1]), n: Number(m[2]) }] : []
+  })
+  found.sort((a, b) => b.epoch - a.epoch || b.n - a.n)
+  return found[0] ? path.join(dir, found[0].name) : null
 }
 
 export async function showTask(deps: CommandDeps, a: { id: string; team?: string; history?: boolean }): Promise<ShownTask> {
@@ -131,6 +153,7 @@ export async function showTask(deps: CommandDeps, a: { id: string; team?: string
     reportedBy: (report.reportedBy as string | undefined) ?? null,
     closure,
     ...(gateId ? { gateId } : {}),
+    gateOutput: team ? latestGateOutput(deps.home, team, a.id) : null,
     ...(a.history ? { history: deps.registry.listTaskLog(a.id) } : {}),
   }
 }

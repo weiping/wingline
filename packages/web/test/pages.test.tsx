@@ -261,3 +261,56 @@ test('3D: the inbox and the post detail show the summary of a screen signal inst
   const detail = render(withStream('duo', <PostDetail team="duo" post="builder" />))
   expect(await detail.findByText(/预计 15:00 重置/)).toBeTruthy()
 })
+
+test('M-15: a board card carries the stuck-reason badge from the stale list; unknown or failing stale data leaves the board alone', async () => {
+  stubEventSource()
+  mockApi({
+    'GET /api/session': () => ({ csrfToken: 'tok', version: '1', teams: ['duo'] }),
+    'GET /api/teams/duo/tasks': () => ({
+      tasks: [
+        { id: 't1', status: 'dispatched', title: 'Alpha', tags: [], claimedBy: 'builder@duo', epoch: 1, gateFailures: 0 },
+        { id: 't2', status: 'ready', title: 'Beta', tags: [], claimedBy: null, epoch: 0, gateFailures: 0 },
+      ],
+    }),
+    'GET /api/teams/duo/tasks?stale=true': () => ({ tasks: [{ taskId: 't1', title: 'Alpha', reason: 'owner_idle', owner: 'builder@duo', since: null, command: 'x' }] }),
+  })
+  const { container, findByText } = render(withStream('duo', <TaskBoard team="duo" />))
+  await findByText('Alpha')
+  await waitFor(() => expect(container.querySelector('article.task .pill, article.task [data-stuck]')?.textContent).toContain('主人迟迟未开始'))
+  const cards = [...container.querySelectorAll('article.task')]
+  expect(cards.find((c) => c.textContent!.includes('Alpha'))!.textContent).toContain('主人迟迟未开始')
+  expect(cards.find((c) => c.textContent!.includes('Beta'))!.textContent).not.toContain('卡住')
+})
+
+test('M-15: task detail shows the gate output file path when there is one', async () => {
+  stubEventSource()
+  const base = { id: 't1', status: 'blocked', title: 'Blocked Task', parentId: null, tags: [], kind: 'work', plan: null, claimedBy: 'builder@duo', assigneeHandle: null, dispatchId: null, epoch: 1, gateFailures: 1, readySince: null, dispatchedAt: null, result: null, outcome: null, reportedBy: null, closure: null, history: [] }
+  mockApi({
+    'GET /api/session': () => ({ csrfToken: 'tok', version: '1', teams: ['duo'] }),
+    'GET /api/teams/duo/tasks/t1': () => ({ ...base, gateOutput: '/home/u/.wingline/logs/duo/gate-t1-1-1.txt' }),
+  })
+  const a = render(withStream('duo', <TaskDetail team="duo" id="t1" />))
+  expect(await a.findByText('/home/u/.wingline/logs/duo/gate-t1-1-1.txt')).toBeTruthy()
+  a.unmount()
+  mockApi({
+    'GET /api/session': () => ({ csrfToken: 'tok', version: '1', teams: ['duo'] }),
+    'GET /api/teams/duo/tasks/t1': () => ({ ...base, gateOutput: null }),
+  })
+  const b = render(withStream('duo', <TaskDetail team="duo" id="t1" />))
+  await b.findByText('Blocked Task')
+  expect(b.queryByText('闸门输出')).toBeNull()
+})
+
+test('M-15: the timeline range select refetches with since=<duration>', async () => {
+  stubEventSource()
+  const calls = mockApi({
+    'GET /api/session': () => ({ csrfToken: 'tok', version: '1', teams: ['duo'] }),
+    'GET /api/teams/duo/log': () => ({ events: [] }),
+  })
+  const { container, findByText } = render(withStream('duo', <Timeline team="duo" />))
+  await findByText('暂无事件。')
+  const selects = container.querySelectorAll('select')
+  expect(selects).toHaveLength(2)
+  fireEvent.change(selects[1]!, { target: { value: '1h' } })
+  await waitFor(() => expect(calls.some((c) => c.path === '/api/teams/duo/log?limit=200&since=1h')).toBe(true))
+})

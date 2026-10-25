@@ -1,4 +1,5 @@
 import fs from 'node:fs'
+import path from 'node:path'
 import { WinglineError } from '../../../src/errors.js'
 import { expect, test } from 'vitest'
 import { isPostFrozen } from '../../../src/commands/task/frozen.js'
@@ -267,4 +268,14 @@ test('listStale without a team keeps going when one team\'s scan fails: the othe
   const items = await listStale(deps)
   expect(items.map((x) => [x.taskId, x.reason])).toEqual([[id, 'dead_assignee']])
   expect(warnings.some((w) => w.includes('aaa'))).toBe(true)
+})
+
+test('M-15: showTask points at the newest gate output file that still exists (by epoch, then attempt), ignoring other tasks whose id shares the prefix; null when there is none', async () => {
+  const o = new FakeOrca(); const { deps, home } = seedRunningTeam(o)
+  o.tasks.push(task({ id: 't1', status: 'blocked' }))
+  deps.registry.insertTaskExt({ taskId: 't1', team: 'duo', tags: [], kind: 'work' })
+  expect((await showTask(deps, { id: 't1' })).gateOutput).toBeNull()
+  const dir = path.join(home, 'logs', 'duo'); fs.mkdirSync(dir, { recursive: true })
+  for (const f of ['gate-t1-0-1.txt', 'gate-t1-1-1.txt', 'gate-t1-1-2.txt', 'gate-t1-1-10.txt', 'gate-t10-9-9.txt', 'gate-t1-x-1.txt']) fs.writeFileSync(path.join(dir, f), 'out')
+  expect((await showTask(deps, { id: 't1' })).gateOutput).toBe(path.join(dir, 'gate-t1-1-10.txt'))
 })
