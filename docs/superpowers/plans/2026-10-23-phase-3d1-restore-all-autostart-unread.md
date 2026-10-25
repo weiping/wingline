@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript、vitest、FakeOrca；launchd 用户代理、systemd 用户服务（经 `launchctl`、`systemctl --user`）。
 
-> **状态（2026-10-25 回填）：已实现并合并**（PR #12，`1f5c0e8`，分支 `phase-3d1-restore-all-autostart-unread`）。Task 1–7 的提交见各任务末尾；随后有四处复审后的修复：`f9c98e6`（没有运行中的团队时 `restoreAll` 不再等 Orca）、`5a8e80c`（`unread_skipped` 去重，“放弃”告警按动作取最新一条）、`9914d2a`（`uninstall` / `status` 不再依赖安装用的命令）、`c7fa4ab`（macOS 重装时 `bootstrap` 重试，失败后重新加载旧代理）；Windows CI 上“放弃告警”用例超时已在 `530046e` 修复。验证：合并时 114 个文件 / 1540 个用例通过；2026-10-25 在 main 上复核为 120 个文件 / 1654 个用例通过（8 条按设计跳过），`tsc` 通过。**仍未验证**：由重新登录触发的 launchd 恢复（只验证了手动运行同一条命令）；Linux systemd 真机；Windows（探针 5，`autostart_unsupported`）。
+> **状态（2026-10-25 回填）：已实现并合并**（PR #12，`1f5c0e8`，分支 `phase-3d1-restore-all-autostart-unread`）。Task 1–7 的提交见各任务末尾；随后有四处复审后的修复：`f9c98e6`（没有运行中的团队时 `restoreAll` 不再等 Orca）、`5a8e80c`（`unread_skipped` 去重，“放弃”告警按动作取最新一条）、`9914d2a`（`uninstall` / `status` 不再依赖安装用的命令）、`c7fa4ab`（macOS 重装时 `bootstrap` 重试，失败后重新加载旧代理）；Windows CI 上“放弃告警”用例超时已在 `530046e` 修复。验证：合并时 114 个文件 / 1540 个用例通过；2026-10-25 在 main 上复核为 120 个文件 / 1654 个用例通过（8 条按设计跳过），`tsc` 通过。**仍未验证**：由重新登录触发的 launchd 恢复（只验证了手动运行同一条命令）；开机触发的 Linux systemd 恢复（systemd 路径本身已于 2026-10-25 在 Lima VM 上真机验证）；Windows（探针 5，`autostart_unsupported`）。
 
 **Spec:** `docs/superpowers/specs/2026-10-16-phase-3d-screen-signals-remote-autostart-design.md`（下称 spec）的第 0、6、7、8、10 节与第 11 节对应条目。块 (c)(d) 不在本 plan（3D-2，探针后写）。依赖的 3A、3C 已合并（PR #11）。
 
@@ -323,7 +323,7 @@ test('uninstall plan runs launchctl bootout / systemctl disable and deletes only
 
 ### Task 7: 收尾与真机验证
 
-> **状态（2026-10-24）：** Step 1 完成（114 个文件、1540 个用例通过，typecheck 通过）。Step 2 的 (a)(c) 在本机验证；(b) `restore --all --actor autostart` 与 (d) 未读红点用占位团队验证通过（见 `spikes/REPORT.md` “3D-1 真机验证”及其续）。**仍未验证**：真正重新登录后由 launchd 触发的恢复；Linux systemd 真机。
+> **状态（2026-10-24）：** Step 1 完成（114 个文件、1540 个用例通过，typecheck 通过）。Step 2 的 (a)(c) 在本机验证；(b) `restore --all --actor autostart` 与 (d) 未读红点用占位团队验证通过（见 `spikes/REPORT.md` “3D-1 真机验证”及其续）。**仍未验证**：真正重新登录后由 launchd 触发的恢复。Linux systemd 已于 2026-10-25 在 Lima VM 上真机验证（见下）。
 
 **Files:**
 - Modify: `docs/superpowers/specs/2026-10-16-phase-3d-screen-signals-remote-autostart-design.md`（顶部状态行标注 3D-1 已实现）、`docs/superpowers/plans/2026-10-16-phase-3d-screen-signals-remote-autostart.md`（索引状态）
@@ -334,5 +334,5 @@ test('uninstall plan runs launchctl bootout / systemctl disable and deletes only
   - [ ] (b) **重新登录后** Orca 就绪时所有 `up` 团队被恢复，时间线每个团队一行、执行者 `autostart`。**未验证“由登录触发”**；手动执行同一条 `restore --all --wait-orca 2m --actor autostart` 已通过（占位团队，时间线一行、执行者 `autostart`）；
   - [x] (c) launchd 最小环境下 `node` 与 `orca` 都能启动，日志里没有 “command not found”；
   - [x] (d) 有新待办时 Orca 侧栏里牵头岗 workspace 出现未读标记，同一批不重复标记（占位团队，`isUnread` 读回 `true`，第三轮没有再次标记）。
-  - 另：Linux systemd 只有单元测试，没有真机。
+  - [x] Linux systemd（2026-10-25，Lima VM `agent`，Linux 6.8 aarch64，node 24.22.0；`spikes/REPORT.md` “3D-1 Linux systemd 真机验证”）：安装、手动启动 unit、`status`、重装、卸载均通过；开机触发本身未验证。
 - [x] **Step 3: 更新 spec 与索引 plan 的状态行；提交** — `git commit -m "docs: mark phase 3d-1 done"`（已提交：`3226c0d`、`d073ea4`）

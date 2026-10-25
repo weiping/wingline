@@ -63,7 +63,20 @@ export class Auth {
     return crypto.createHash('sha256').update(token).digest('hex')
   }
 
+  /** 清掉已过期的登录令牌与会话；每次发新令牌时顺手做，条目数本来就很少。 */
+  private sweep(): void {
+    const t = this.now()
+    for (const [k, e] of this.tokens) if (t > e.expiresAt) this.tokens.delete(k)
+    for (const [k, e] of this.sessions) if (t > e.expiresAt) this.sessions.delete(k)
+  }
+
+  /** 当前保留的条目数（测试用）。 */
+  size(): { tokens: number; sessions: number } {
+    return { tokens: this.tokens.size, sessions: this.sessions.size }
+  }
+
   issueLoginToken(): string {
+    this.sweep()
     const raw = this.random(32).toString('base64url')
     const h = this.hash(raw)
     // 5 分钟有效

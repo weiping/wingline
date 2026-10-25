@@ -456,3 +456,20 @@ test('listTeamTaskLog and listPatrolEvents accept afterId', () => {
   expect(r.listPatrolEvents('duo', { afterId: 1 }).map((x) => x.id)).toEqual([2, 3])
   r.close()
 })
+
+test('maxEventIds: newest id per source for one team, 0 where there is nothing, other teams ignored', () => {
+  const r = Registry.open(':memory:')
+  expect(r.maxEventIds('duo')).toEqual({ task: 0, patrol: 0, command: 0 })
+  r.upsertTeam({ name: 'duo', specPath: '/s', specHash: 'h', runId: null, coordinatorHandle: null, status: 'up' })
+  r.upsertTeam({ name: 'solo', specPath: '/s2', specHash: 'h', runId: null, coordinatorHandle: null, status: 'up' })
+  r.appendAudit({ team: 'duo', actor: 'a', command: 'c', target: null, outcome: 'ok' })
+  r.appendAudit({ team: 'duo', actor: 'a', command: 'c', target: null, outcome: 'ok' })
+  r.appendAudit({ team: 'solo', actor: 'a', command: 'c', target: null, outcome: 'ok' })
+  r.appendPatrolEvent({ team: 'duo', post: 'p', signal: 's', taskId: 't', action: 'a' })
+  const m = r.maxEventIds('duo')
+  expect(m.command).toBe(r.listAudit('duo').at(-1)!.id)
+  expect(m.patrol).toBe(r.listPatrolEvents('duo').at(-1)!.id)
+  expect(m.task).toBe(0)
+  expect(r.maxEventIds('solo').command).toBe(r.listAudit('solo').at(-1)!.id)
+})
+

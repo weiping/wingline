@@ -76,3 +76,19 @@ test('safeEqual handles matching and non-matching strings', () => {
   expect(safeEqual('abc', 'abd')).toBe(false)
   expect(safeEqual('abc', 'ab')).toBe(false)
 })
+
+test('M-17: expired login tokens and sessions are swept when new ones are issued, not kept until someone happens to look them up', () => {
+  let now = 1_000_000
+  const auth = new Auth({ now: () => now })
+  auth.issueLoginToken(); auth.issueLoginToken()            // 从未被兑换
+  const { sid } = auth.redeem(auth.issueLoginToken())!      // 兑换成会话，之后再没人访问
+  expect(auth.size()).toEqual({ tokens: 2, sessions: 1 })
+  now += 300_001                                            // 登录令牌过期（5 分钟）
+  auth.issueLoginToken()
+  expect(auth.size()).toEqual({ tokens: 1, sessions: 1 })   // 过期令牌清掉了，会话还没到期
+  now += 43_200_001                                         // 会话过期（12 小时）
+  auth.issueLoginToken()
+  expect(auth.size()).toEqual({ tokens: 1, sessions: 0 })
+  expect(auth.session(`wl_sid=${sid}`)).toBeNull()
+})
+

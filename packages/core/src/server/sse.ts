@@ -1,7 +1,7 @@
 import crypto from 'node:crypto'
 import type { CommandDeps } from '../commands/deps.js'
 import type { CachedOrca } from '../view/snapshot.js'
-import { readTimeline, readTimelineAfter, type LogCursor } from '../commands/log.js'
+import { currentCursor, readTimelineAfter, type LogCursor } from '../commands/log.js'
 import { ps } from '../commands/ps.js'
 import { attention } from '../commands/dispatcher/attention.js'
 import { dispatcherHealth } from '../commands/dispatcher/lifecycle.js'
@@ -62,8 +62,7 @@ export class TeamFeeds {
   }
 
   async subscribe(team: string, write: (chunk: string) => void, lastEventId?: string): Promise<() => void> {
-    const { cursor: currentCursor } = await readTimeline(this.deps, { team, limit: 1 })
-    const subCursor = cursorFrom(lastEventId, currentCursor)
+    const subCursor = cursorFrom(lastEventId, currentCursor(this.deps, team))
 
     let loop = this.loops.get(team)
     if (!loop) {

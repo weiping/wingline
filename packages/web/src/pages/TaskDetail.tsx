@@ -43,6 +43,14 @@ export function TaskDetail({ team, id }: { team: string; id: string }) {
         <dd>{t.parentId ? <Link href={taskPath(team, t.parentId)}>{t.parentId}</Link> : '—'}</dd>
         <dt>标签</dt>
         <dd>{t.tags.length > 0 ? t.tags.join('、') : '—'}</dd>
+        {t.gateOutput && (
+          <>
+            <dt>闸门输出</dt>
+            <dd>
+              <code>{t.gateOutput}</code>
+            </dd>
+          </>
+        )}
       </dl>
 
       <div class="actions">

@@ -1,7 +1,7 @@
 # 雁阵 Wingline 阶段 3D：画面信号、远端环境恢复、未读标记与登录后自动恢复设计
 
 - 日期：2026-10-16（2026-10-23 按两轮复审重写第 3–8、10–13 节，见末尾“复审修订”）
-- 状态（2026-10-25 回填）：**块 a、b、c、d 均已实现并合并**——3D-1（块 a + b，PR #12）、3D-2 块 (d) 远端环境（PR #13）及其接回核对（PR #15）、3D-2 块 (c) 画面信号（PR #18）；逐块的提交、验证与未验证项见末尾“实施记录”。**仍未验证**：由重新登录触发的 launchd 恢复、Linux systemd 真机、Windows 自启动（探针 5，`autostart_unsupported`）、没有同路径挂载的 VM 与旧版 Orca 下的远端分支，以及块 (c) 的**真实画面**（模式表与样本仍是 provisional，依据 claude 2.1.310 程序本体的字符串）。实现计划见 `docs/superpowers/plans/2026-10-16-phase-3d-screen-signals-remote-autostart.md`（索引）及其下四份：`2026-10-23-phase-3d1-…`、`2026-10-24-phase-3d2d-…`、`2026-10-24-phase-3d2d2-…`、`2026-10-25-phase-3d2c-…`
+- 状态（2026-10-25 回填）：**块 a、b、c、d 均已实现并合并**——3D-1（块 a + b，PR #12）、3D-2 块 (d) 远端环境（PR #13）及其接回核对（PR #15）、3D-2 块 (c) 画面信号（PR #18）；逐块的提交、验证与未验证项见末尾“实施记录”。**仍未验证**：由重新登录 / 开机触发的自启动恢复（macOS launchd、Linux systemd 都只验证了手动运行同一条命令）、Windows 自启动（探针 5，`autostart_unsupported`）、没有同路径挂载的 VM 与旧版 Orca 下的远端分支，以及块 (c) 的**真实画面**（模式表与样本仍是 provisional，依据 claude 2.1.310 程序本体的字符串）。实现计划见 `docs/superpowers/plans/2026-10-16-phase-3d-screen-signals-remote-autostart.md`（索引）及其下四份：`2026-10-23-phase-3d1-…`、`2026-10-24-phase-3d2d-…`、`2026-10-24-phase-3d2d2-…`、`2026-10-25-phase-3d2c-…`
 - 范围：阶段 3 的收尾子项目 D，集中前面各份 spec 推迟到阶段 3 的事项：
   1. 读画面的巡查信号：“上下文快满”（`context_low`）与“用量上限”（`usage_limit`）；
   2. 远端 / 配对环境（如 Lima VM）里岗位的会话恢复：字段与 `--session` 手工恢复先做，自动搜索待探针；
@@ -405,7 +405,7 @@ test/fixtures/screens/ + .gitattributes     # 画面样本（eol=lf）
 
 | 块 | 内容 | 合并 | 主要提交 | 验证 | 未验证 / 与 spec 的差异 |
 | --- | --- | --- | --- | --- | --- |
-| (a) | `wl restore --all`、`wl autostart`（macOS / Linux） | PR #12（`1f5c0e8`） | `7efa1e2`（`restoreAll`、`waitForOrca`）、`8219057`（CLI）；修复 `f9c98e6`、`9914d2a`、`c7fa4ab` | macOS 真机：launchd 最小环境能启动 node 与 orca、`restore --all --actor autostart`（手动运行，时间线一行、执行者 `autostart`） | 由**重新登录**触发的恢复没验证；Linux systemd 只有单元测试；Windows 返回 `autostart_unsupported` |
+| (a) | `wl restore --all`、`wl autostart`（macOS / Linux） | PR #12（`1f5c0e8`） | `7efa1e2`（`restoreAll`、`waitForOrca`）、`8219057`（CLI）；修复 `f9c98e6`、`9914d2a`、`c7fa4ab` | macOS 真机：launchd 最小环境能启动 node 与 orca、`restore --all --actor autostart`（手动运行，时间线一行、执行者 `autostart`） | 由**重新登录**触发的恢复没验证；Linux systemd 已在 Lima VM 真机验证安装 / 手动运行 / 状态 / 重装 / 卸载（2026-10-25，见 `spikes/REPORT.md`），开机 / 登录触发本身未验证；Windows 返回 `autostart_unsupported` |
 | (b) | 未读标记 | PR #12 | `407e3a0`（`patrol.unread_mark`、`worktreeSet({ unread })`）、`5ce21c2`（`unread_marks`）、`8bf7157`；修复 `5a8e80c`；`86836a3`（画面信号不产生未读键） | macOS 真机：占位团队，`isUnread` 读回 `true`，同一批不重复标记 | 真机只验证了单个团队；多个团队共用一个 worktree 时的未读行为没有真机 |
 | (d) | 远端环境 `posts[].environment` | PR #13（`a51f9cf`） | `e8c9e07`、`9d260d2`、`671b087`；修复 `c5db6c1`（`environment_not_found`）、`719b6e9` | Lima 同路径挂载真机：找回并接回 | 没有同路径挂载的 VM、旧版 Orca（命中无 `snippet`）只有单元测试 |
 | (d2) | 接回后核对提示落进原会话（第 5.4 节） | PR #15（`7222b82`） | `996fe8d`、`b4891c3`、`849fdb6`（标识并入会话标记） | Lima 真机：透传 → `resumed`；不透传 → `uncertain` | “搜得到但很慢”的真机没做；3 次 × 2 秒的依据只有几次样本 |
@@ -414,4 +414,4 @@ test/fixtures/screens/ + .gitattributes     # 画面样本（eol=lf）
 - **全量验证**：2026-10-25 在 main（`6b1f348`）上 `tsc -p tsconfig.typecheck.json` 通过，`vitest run` 120 个文件 / 1654 个用例通过（8 条按设计跳过）。
 - **块 (c) 的测试顺序**：`screen-signals.ts`（`26e11c8`）是先实现、后补的测试；补了变异检查——把 10 个关键行为（首轮观察、暂停、自动继续、`resumedAt` 基线、清除循环豁免、清除后去重、再通知窗口、会话键、重置时间已知、发送结果判断）逐个改坏，每项都被测试抓到。
 - **探针状态**：1、3、4、6 已完成；2 只完成程序本体部分（真实画面仍缺）；5（Windows）未做。
-- **下一步**（不属于本阶段的交付，真遇到时再做）：块 (c) 的真机核对——在这两种提示真的出现时用 `spikes/phase-3d2.ts sample <handle> <名字>` 取样，替换 provisional 样本并去掉标记；重新登录触发的自启动验证；Linux systemd 真机。
+- **下一步**（不属于本阶段的交付，真遇到时再做）：块 (c) 的真机核对——在这两种提示真的出现时用 `spikes/phase-3d2.ts sample <handle> <名字>` 取样，替换 provisional 样本并去掉标记；由重新登录（macOS）或开机（Linux）触发的自启动验证。

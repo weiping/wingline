@@ -1,7 +1,7 @@
 # 雁阵 Wingline 阶段 3B：本地 HTTP API 与控制台设计
 
 - 日期：2026-10-16
-- 状态：**已实现（有三项页面缺口，见第 7 节页面表中“未实现，见复审 M-15”的标注）**（2026-10-19 合并 PR #6，2026-10-20 合并 PR #7 复审修复，2026-10-22 合并 PR #9 复审跟进；改动见 `docs/superpowers/plans/2026-10-16-phase-3b-console.md`、`docs/superpowers/plans/2026-10-20-phase-3b-review-fixes.md` 与 `docs/superpowers/plans/2026-10-22-phase-3b-review-followup.md`；复审结论与处置见 `docs/superpowers/reviews/2026-10-20-phase-3b-code-review.md`）
+- 状态：**已实现**（原有的三项页面缺口——卡住原因角标、gate 输出文件路径、时间范围筛选——已在 2026-10-25 补上）（2026-10-19 合并 PR #6，2026-10-20 合并 PR #7 复审修复，2026-10-22 合并 PR #9 复审跟进；改动见 `docs/superpowers/plans/2026-10-16-phase-3b-console.md`、`docs/superpowers/plans/2026-10-20-phase-3b-review-fixes.md` 与 `docs/superpowers/plans/2026-10-22-phase-3b-review-followup.md`；复审结论与处置见 `docs/superpowers/reviews/2026-10-20-phase-3b-code-review.md`）
 - 范围：阶段 3（控制台与恢复）子项目 B：`wl console` 本地服务（HTTP API + SSE）、登录与安全、控制台 6 个页面（总览、收件箱、任务看板、任务详情、岗位详情、时间线）、`wl console --open` 在 Orca 内打开。
 - 依赖：阶段 3A（`docs/superpowers/specs/2026-10-16-phase-3a-restore-timeline-design.md`，下称 3A：`auditedCommands`、`audit_events`、`TimelineEvent`、`wl log` 的合并与游标、会话标记）、阶段 2A（任务命令与 `--stale` 判定）、阶段 2B（`attention`、`dispatcherHealth`、`dispatcher status`、冻结 / 静音 / 回答提问、调度员的启动方式与循环异常处理）。
 - 不含：团队编辑器、设置页、向 Orca 原生界面同步状态（终端标题、工作区卡片状态行、`--workspace-status`、未读红点）、`wl tui`——均为 3C；页面上的 `up`/`down`/`restore` 与调度员启停。
@@ -154,10 +154,10 @@ wl console [--port <n>] [--open] [--worktree <选择器>] [--link] [--json]
 | --- | --- | --- | --- |
 | 总览 | `/t/:team` | 调度员状态卡（运行中 / 已停止 / 失联、心跳）、Run 状态、待办数；岗位卡片（地址、agent、状态、当前任务、冻结 / 静音 / 巡查信号标记）；最近 20 条时间线 | 岗位卡上“发消息” |
 | 收件箱 | `/t/:team/inbox` | `wl attention` 的分节：调度员失联、待回答的提问、等待决策的 gate、冻结岗位、卡住的任务、巡查信号、告警 | 每条旁边的操作按钮（提问 → 回答；gate → resolve / 改派；派发失主 → recover；冻结 → 解冻；巡查信号 → 静音 / 发消息）。没有对应写接口的（例如需要岗位自己执行的 `wl task done`）显示可复制的命令 |
-| 任务看板 | `/t/:team/tasks` | 按 ready / dispatched / blocked / completed / failed 分列；卡片显示标题、主人、标签、第几轮、卡住原因角标（未实现，见复审 M-15：目前只在“只看卡住的”视图里显示，分列卡片上没有）；按标签、主人、“只看卡住的”筛选 | 新建任务（可直接派给岗位） |
-| 任务详情 | `/t/:team/tasks/:id` | 标题、状态、主人、计划、父 / 子任务（评审 / 交接链）、闸门失败次数、最近一次完成的结果与 gate 输出文件路径（未实现，见复审 M-15）、完整变迁历史 | 按状态显示：转人工、改派、recover、resolve |
+| 任务看板 | `/t/:team/tasks` | 按 ready / dispatched / blocked / completed / failed 分列；卡片显示标题、主人、标签、第几轮、卡住原因角标（2026-10-25 补上：来自 `?stale=true`，取不到时只是没有角标）；按标签、主人、“只看卡住的”筛选 | 新建任务（可直接派给岗位） |
+| 任务详情 | `/t/:team/tasks/:id` | 标题、状态、主人、计划、父 / 子任务（评审 / 交接链）、闸门失败次数、最近一次完成的结果与 gate 输出文件路径（2026-10-25 补上：`gateOutput`，没有或已被 7 天清理时不显示）、完整变迁历史 | 按状态显示：转人工、改派、recover、resolve |
 | 岗位详情 | `/t/:team/posts/:post` | 状态、会话 ID（不显示会话标记，见 3A 第 4.3 节）、当前与排队任务、巡查信号及等级、冻结 / 静音信息、终端最后 40 行（只读，5 秒刷新）、该岗位的时间线 | 发消息、冻结 / 解冻、静音 / 取消静音 |
-| 时间线 | `/t/:team/log` | `TimelineEvent` 列表，新的在上，实时追加；按来源、岗位、任务、时间范围筛选（时间范围未实现，见复审 M-15）；展开查看完整 `detail`，点任务 / 岗位跳转详情 | — |
+| 时间线 | `/t/:team/log` | `TimelineEvent` 列表，新的在上，实时追加；按来源、岗位、任务、时间范围筛选（时间范围为最近 15 分钟 / 1 小时 / 24 小时 / 7 天，2026-10-25 补上）；展开查看完整 `detail`，点任务 / 岗位跳转详情 | — |
 
 通用交互：
 

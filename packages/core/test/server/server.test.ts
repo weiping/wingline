@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
-import { expect, test } from 'vitest'
+import { expect, test, vi } from 'vitest'
 import { consoleWorktree, createConsoleServer, openTab, SECURITY_HEADERS } from '../../src/server/index.js'
 import { Registry } from '../../src/registry/registry.js'
 import { FakeOrca, seedRunningTeam } from '../commands/fake-client.js'
@@ -810,3 +810,23 @@ test('an input error (400) is not logged', async () => {
     await s.close()
   }
 })
+
+test('M-11: readBody reads a slightly oversized body to the end (so the client still gets 413) but cuts the connection once the overrun passes OVERRUN_LIMIT', async () => {
+  const { Readable } = await import('node:stream')
+  const { readBody, OVERRUN_LIMIT } = await import('../../src/server/index.js')
+  const fake = (totalBytes: number, chunk = 64 * 1024) => {
+    let sent = 0
+    const r = new Readable({ autoDestroy: false, read() { if (sent >= totalBytes) return void this.push(null); sent += chunk; this.push(Buffer.alloc(chunk, 0x78)) } })
+    const destroy = vi.spyOn(r, 'destroy')
+    return { req: r as unknown as import('node:http').IncomingMessage, destroy, sent: () => sent }
+  }
+  const limit = 64 * 1024
+  const small = fake(limit + 128 * 1024)                       // 超出 128 KB：读完，不掐断
+  expect(await readBody(small.req, limit)).toEqual({ body: null, tooLarge: true })
+  expect(small.destroy).not.toHaveBeenCalled()
+  const huge = fake(512 * 1024 * 1024)                         // 要发 512 MB：超出 1 MB 后掐断，不读完
+  expect(await readBody(huge.req, limit)).toEqual({ body: null, tooLarge: true })
+  expect(huge.destroy).toHaveBeenCalled()
+  expect(huge.sent()).toBeLessThan(limit + OVERRUN_LIMIT + 8 * 64 * 1024)
+})
+
