@@ -1,4 +1,4 @@
-import type { SpecPlan } from '@wingline/core'
+import type { SpecPlan } from '@weiping/wingline-core'
 import { CommandHint } from './CommandHint.js'
 import { Pill } from './common.js'
 

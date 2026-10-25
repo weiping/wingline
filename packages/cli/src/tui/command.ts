@@ -1,4 +1,4 @@
-import { WinglineError, type CommandDeps, type TeamRow } from '@wingline/core'
+import { WinglineError, type CommandDeps, type TeamRow } from '@weiping/wingline-core'
 import { runTui } from './app.js'
 import type { TuiIo } from './types.js'
 import { pickTeam } from './views/picker.js'

@@ -1,4 +1,4 @@
-import type { AttentionReport, DispatcherStatus, PsRow, TimelineEvent } from '@wingline/core'
+import type { AttentionReport, DispatcherStatus, PsRow, TimelineEvent } from '@weiping/wingline-core'
 import { useApi } from '../hooks.js'
 import { useStreamListener } from '../stream.js'
 import { CommandHint } from '../components/CommandHint.js'

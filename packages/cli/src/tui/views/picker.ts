@@ -1,4 +1,4 @@
-import type { TeamRow } from '@wingline/core'
+import type { TeamRow } from '@weiping/wingline-core'
 import { parseKeys } from '../keys.js'
 import { oneLine } from '../text.js'
 import { Screen } from '../screen.js'

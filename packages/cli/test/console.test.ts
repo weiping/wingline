@@ -3,7 +3,7 @@ import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, expect, test } from 'vitest'
-import { createConsoleServer, exitCodeOf, writeConsoleFile, type CommandDeps } from '@wingline/core'
+import { createConsoleServer, exitCodeOf, writeConsoleFile, type CommandDeps } from '@weiping/wingline-core'
 import { consoleCmd, renderConsole, stopServer } from '../src/console.js'
 import { FakeOrca, mkDeps, seedRunningTeam } from '../../core/test/commands/fake-client.js'
 

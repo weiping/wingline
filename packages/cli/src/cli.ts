@@ -9,7 +9,7 @@ import {
   followTimeline, listStale, listTasks, parseDuration, planTask, ps, readTimeline, reassignTask, recoverTask, releaseTask, resolveGate, resolveOrcaExecutable, restore, restoreAll, restoreAllExitCode, restoreExitCode, send, showTask, startTask,
   autostartInstall, autostartStatusOf, autostartUninstall, type AutostartSys, up, winglineHome, dispatcherUp, dispatcherDown, dispatcherStatus, dispatcherReply, freezePostCmd, unfreezePostCmd, hushCmd, unhushCmd, runDispatcherLoop, type CommandDeps,
   type TimelineEvent, type TimelineSource,
-} from '@wingline/core'
+} from '@weiping/wingline-core'
 import { consoleCmd, renderConsole, renderReady } from './console.js'
 import { tuiCmd } from './tui/command.js'
 import type { TuiIo } from './tui/types.js'

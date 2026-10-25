@@ -1,7 +1,7 @@
 import {
   WinglineError, attention, auditedWriteCommands, cachedOrca, listTasks, ps, readTimeline, readTimelineAfter,
   type AttentionReport, type CachedOrca, type CommandDeps, type LogCursor, type WriteCommands,
-} from '@wingline/core'
+} from '@weiping/wingline-core'
 import { parseKeys } from './keys.js'
 import { reduce, initialTuiState } from './reduce.js'
 import { renderView } from './render.js'

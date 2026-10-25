@@ -1,5 +1,5 @@
 import { useState } from 'preact/hooks'
-import type { StaleItem, TaskRow } from '@wingline/core'
+import type { StaleItem, TaskRow } from '@weiping/wingline-core'
 import { api } from '../api.js'
 import { useApi } from '../hooks.js'
 import { useStreamListener } from '../stream.js'

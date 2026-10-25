@@ -26,8 +26,8 @@ importers:
 
   packages/cli:
     dependencies:
-      '@wingline/core':
-        specifier: workspace:*
+      '@weiping/wingline-core':
+        specifier: workspace:^
         version: link:../core
       commander:
         specifier: ^13.0.0

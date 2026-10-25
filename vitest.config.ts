@@ -8,7 +8,7 @@ const windowsCi = process.platform === 'win32' && !!process.env.CI
 
 export default defineConfig({
   resolve: {
-    alias: { '@wingline/core': path.resolve(__dirname, 'packages/core/src/index.ts') },
+    alias: { '@weiping/wingline-core': path.resolve(__dirname, 'packages/core/src/index.ts') },
   },
   // 控制台前端（packages/web）用 Preact 的自动 JSX 运行时
   esbuild: { jsx: 'automatic', jsxImportSource: 'preact' },

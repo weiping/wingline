@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import type { AttentionReport, TimelineEvent } from '@wingline/core'
+import type { AttentionReport, TimelineEvent } from '@weiping/wingline-core'
 import { renderAttention, renderTimelineEvent } from '../src/output.js'
 
 const at = '2026-10-16T10:00:00.000Z'

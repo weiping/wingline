@@ -25,10 +25,20 @@ Wingline adds a team layer to Orca: a declarative team spec, long-lived posts (`
 前提：
 
 - [Orca](https://github.com/stablyai/orca) 1.4.222 或更高版本，已运行（`orca open`）；
-- Node ≥ 22.13；
-- pnpm（`corepack enable` 即可）。
+- Node ≥ 22.13。
 
-npm 包尚未发布，目前从源码安装：
+### npm 安装（推荐）
+
+```bash
+npm install -g @weiping/wingline
+wl --version        # 自动装上 wl 与 wingline 两个命令
+```
+
+全局安装后 `wl` / `wingline` 命令自动可用（由包的 `bin` 字段提供），无需再手动建符号链接。需要登录后自动恢复时再执行 `wl autostart install`（见[登录后自动恢复](#登录后自动恢复wl-restore---all-与-wl-autostart)）。
+
+`@weiping/wingline-core` 与 `@weiping/wingline` 分别发布到 npm；`@weiping/wingline` 依赖 `@weiping/wingline-core`，安装时会一并拉取。
+
+### 从源码安装（开发）
 
 ```bash
 git clone https://github.com/weiping/wingline.git

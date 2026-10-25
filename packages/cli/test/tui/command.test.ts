@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { PassThrough, Writable } from 'node:stream'
 import { expect, test, vi } from 'vitest'
-import type { CommandDeps, TeamRow } from '@wingline/core'
+import type { CommandDeps, TeamRow } from '@weiping/wingline-core'
 import { run, type Commands } from '../../src/cli.js'
 import { tuiCmd } from '../../src/tui/command.js'
 import { pickTeam } from '../../src/tui/views/picker.js'

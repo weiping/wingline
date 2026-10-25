@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events'
 import { Writable } from 'node:stream'
 import { afterEach, expect, test, vi } from 'vitest'
 import { ask, FakeOrca, seedRunningTeam } from '../../../core/test/commands/fake-client.js'
-import { WinglineError, type WriteCommands } from '@wingline/core'
+import { WinglineError, type WriteCommands } from '@weiping/wingline-core'
 import { initialTuiState, reduce, runTui } from '../../src/tui/app.js'
 import { LineInput } from '../../src/tui/input.js'
 import { parseKeys } from '../../src/tui/keys.js'
@@ -344,7 +344,7 @@ test('a failing read marks the data stale without exiting, and the next good rea
   const h = harness()
   let fail = false
   const done = h.start({
-    read: { attention: async (d: never, t: string) => { if (fail) throw new Error('boom'); return (await import('@wingline/core')).attention(d, t) } },
+    read: { attention: async (d: never, t: string) => { if (fail) throw new Error('boom'); return (await import('@weiping/wingline-core')).attention(d, t) } },
   })
   await until(() => h.text().includes('builder@duo'))
   expect(h.text()).not.toContain('数据过期')
@@ -361,7 +361,7 @@ test('data refreshes never overlap: a slow read is not started again, and a refr
   let active = 0
   let max = 0
   let calls = 0
-  const core = await import('@wingline/core')
+  const core = await import('@weiping/wingline-core')
   const done = h.start({
     dataMs: 5,
     read: {
@@ -393,7 +393,7 @@ test('an exception inside the loop restores the terminal before rejecting', asyn
   let n = 0
   const bomb = { get address(): string { throw new Error('render boom') }, agent: 'x', status: 'live', handle: null, worktree: 'c', isLead: false }
   const done = h.start({
-    read: { ps: async (d: never, a: { team: string }) => (++n > 1 ? [bomb] : (await import('@wingline/core')).ps(d, a)) },
+    read: { ps: async (d: never, a: { team: string }) => (++n > 1 ? [bomb] : (await import('@weiping/wingline-core')).ps(d, a)) },
   })
   await expect(done).rejects.toThrow('render boom')
   const out = h.stdout.all()

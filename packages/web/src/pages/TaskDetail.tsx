@@ -1,4 +1,4 @@
-import type { ShownTask } from '@wingline/core'
+import type { ShownTask } from '@weiping/wingline-core'
 import { api } from '../api.js'
 import { useApi } from '../hooks.js'
 import { useStreamListener } from '../stream.js'

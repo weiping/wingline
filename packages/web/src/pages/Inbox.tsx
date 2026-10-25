@@ -1,4 +1,4 @@
-import type { AttentionReport, StaleItem } from '@wingline/core'
+import type { AttentionReport, StaleItem } from '@weiping/wingline-core'
 import { api } from '../api.js'
 import { useApi } from '../hooks.js'
 import { useStreamListener } from '../stream.js'

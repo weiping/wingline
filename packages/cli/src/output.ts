@@ -2,7 +2,7 @@ import {
   WinglineError, type DoneResult, type DownResult, type PsRow, type RestoreAllResult, type RestorePost, type RestoreResult, type SendResultRow, type ShownTask, type StaleItem,
   type TaskRow, type TimelineEvent, type UpResult,
   type AttentionReport, type DispatcherHealth, type DispatcherStatus, type createTask, type escalateTask, type reassignTask, type recoverTask, type resolveGate, type startTask,
-} from '@wingline/core'
+} from '@weiping/wingline-core'
 
 const UP_LABEL = { already_live: '已在岗', launched: '已拉起', failed: '失败', uncertain: '不确定' } as const
 const RUN_LABEL = {

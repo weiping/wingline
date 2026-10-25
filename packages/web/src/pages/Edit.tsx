@@ -1,4 +1,4 @@
-import type { SpecPlan } from '@wingline/core'
+import type { SpecPlan } from '@weiping/wingline-core'
 import { useEffect, useRef, useState } from 'preact/hooks'
 import { ApiError, api, errorText } from '../api.js'
 import { useApi } from '../hooks.js'

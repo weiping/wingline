@@ -3,7 +3,7 @@ import { PassThrough } from 'node:stream'
 import { afterEach, expect, test } from 'vitest'
 import os from 'node:os'
 import path from 'node:path'
-import { READ_ONLY_CALLS, WinglineError, WRITE_COMMANDS, type AttentionReport, type CommandDeps, type RestoreResult, type TimelineEvent } from '@wingline/core'
+import { READ_ONLY_CALLS, WinglineError, WRITE_COMMANDS, type AttentionReport, type CommandDeps, type RestoreResult, type TimelineEvent } from '@weiping/wingline-core'
 import { AUDIT } from '../src/audit-table.js'
 import { callLogOptions, defaultMakeDeps, installWarningFilter, isReadOnlyCall, run, type Commands } from '../src/cli.js'
 
@@ -438,7 +438,7 @@ test('B-M10: wl task done names why a link target was not typed and suggests wl 
 })
 
 test('F-5: the verified Orca range starts at 1.4.222 (the 2A orchestration semantics were verified there)', async () => {
-  const { inRange } = await import('@wingline/core')
+  const { inRange } = await import('@weiping/wingline-core')
   const verified = JSON.parse(fs.readFileSync(new URL('../src/verified.json', import.meta.url), 'utf8')) as { verifiedOrca: string }
   expect(inRange('1.4.221', verified.verifiedOrca)).toBe(false)
   expect(inRange('1.4.222', verified.verifiedOrca)).toBe(true)

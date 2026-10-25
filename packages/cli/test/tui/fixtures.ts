@@ -1,4 +1,4 @@
-import type { AttentionReport, PsRow, QuestionRow, TimelineEvent } from '@wingline/core'
+import type { AttentionReport, PsRow, QuestionRow, TimelineEvent } from '@weiping/wingline-core'
 import type { TuiData } from '../../src/tui/types.js'
 
 export const posts: PsRow[] = [

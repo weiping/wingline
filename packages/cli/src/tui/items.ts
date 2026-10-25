@@ -1,4 +1,4 @@
-import { postAddress, type StaleItem, type TimelineEvent } from '@wingline/core'
+import { postAddress, type StaleItem, type TimelineEvent } from '@weiping/wingline-core'
 import { renderTimelineEvent } from '../output.js'
 import { cleanEvent, oneLine } from './text.js'
 import type { MenuItem, PendingAction, TimelineFilterSpec, TuiData, TuiState, View } from './types.js'

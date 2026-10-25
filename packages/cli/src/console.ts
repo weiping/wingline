@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 import {
   WinglineError, commandLine, consoleWorktree, createConsoleServer, nodeOnPath, openTab, pidAlive, readConsoleFile, removeConsoleFileIfMine,
   requestLink, selfCommand, writeConsoleFile, type CommandDeps,
-} from '@wingline/core'
+} from '@weiping/wingline-core'
 
 /** 构建后前端位于 dist/web，与本文件编译出的 dist/console.js 同级。 */
 const WEB_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), 'web')

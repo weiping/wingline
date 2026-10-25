@@ -1,7 +1,7 @@
 import { createContext } from 'preact'
 import type { ComponentChildren } from 'preact'
 import { useCallback, useContext, useEffect, useRef, useState } from 'preact/hooks'
-import type { PsRow, TimelineEvent } from '@wingline/core'
+import type { PsRow, TimelineEvent } from '@weiping/wingline-core'
 import { ApiError, api } from './api.js'
 
 export type StreamState = 'live' | 'reconnecting' | 'closed'

@@ -1,4 +1,4 @@
-import type { TimelineEvent } from '@wingline/core'
+import type { TimelineEvent } from '@weiping/wingline-core'
 import { postPath, taskPath } from '../router.js'
 import { Link } from './Link.js'
 import { SOURCE_LABEL, clock, postOf } from './common.js'

@@ -8,7 +8,7 @@
     "jsx": "react-jsx",
     "jsxImportSource": "preact",
     "paths": {
-      "@wingline/core": [
+      "@weiping/wingline-core": [
         "./packages/core/src/index.ts"
       ]
     },

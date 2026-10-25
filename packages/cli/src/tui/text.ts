@@ -1,4 +1,4 @@
-import { plainText, type TimelineEvent } from '@wingline/core'
+import { plainText, type TimelineEvent } from '@weiping/wingline-core'
 
 /**
  * 外部文本（提问正文、任务标题、时间线字段……）显示前一律经这里：剥掉 ANSI/OSC 序列和控制字符，折成一行。

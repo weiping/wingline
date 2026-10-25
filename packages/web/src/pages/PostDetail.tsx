@@ -1,4 +1,4 @@
-import type { PostDetail as PostDetailData } from '@wingline/core'
+import type { PostDetail as PostDetailData } from '@weiping/wingline-core'
 import { api } from '../api.js'
 import { useApi } from '../hooks.js'
 import { useStreamListener } from '../stream.js'

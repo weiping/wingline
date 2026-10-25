@@ -1,4 +1,4 @@
-import type { PsRow } from '@wingline/core'
+import type { PsRow } from '@weiping/wingline-core'
 import { api } from '../api.js'
 import { postPath } from '../router.js'
 import { ActionDialog } from './ActionDialog.js'

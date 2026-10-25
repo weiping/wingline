@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'preact/hooks'
-import type { TimelineEvent } from '@wingline/core'
+import type { TimelineEvent } from '@weiping/wingline-core'
 import { useApi } from '../hooks.js'
 import { useStream, useStreamListener } from '../stream.js'
 import { EventRow } from '../components/EventRow.js'

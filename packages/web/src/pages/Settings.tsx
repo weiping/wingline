@@ -1,4 +1,4 @@
-import type { AboutItem, AboutTeam } from '@wingline/core'
+import type { AboutItem, AboutTeam } from '@weiping/wingline-core'
 import { useApi } from '../hooks.js'
 import { Link } from '../components/Link.js'
 import { teamPath } from '../router.js'

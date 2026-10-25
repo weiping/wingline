@@ -1,4 +1,4 @@
-import type { AttentionReport, PsRow, TaskRow, TimelineEvent, TimelineSource, WriteCommands } from '@wingline/core'
+import type { AttentionReport, PsRow, TaskRow, TimelineEvent, TimelineSource, WriteCommands } from '@weiping/wingline-core'
 import type { LineInput } from './input.js'
 import type { ScreenOut } from './screen.js'
 

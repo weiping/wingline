@@ -1,4 +1,4 @@
-import type { AuditCtx, AuditTable } from '@wingline/core'
+import type { AuditCtx, AuditTable } from '@weiping/wingline-core'
 import type { Commands } from './cli.js'
 
 /** 地址参数取 `@` 之后的团队名；解析不出（没有 `@`）记 `-`。 */
