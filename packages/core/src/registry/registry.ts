@@ -882,6 +882,13 @@ export class Registry {
     return Number(this.db.prepare(sql).run(before, ...(team === undefined ? [] : [team])).changes)
   }
 
+  /** 三个时间线来源里本团队最新的行号（没有行 → 0）；SSE 订阅只要游标，不必把三张表读出来。 */
+  maxEventIds(team: string): { task: number; patrol: number; command: number } {
+    const maxOf = (table: string): number =>
+      Number((this.db.prepare(`SELECT MAX(id) AS m FROM ${table} WHERE team = ?`).get(team) as { m: number | null }).m ?? 0)
+    return { task: maxOf('task_log'), patrol: maxOf('patrol_events'), command: maxOf('audit_events') }
+  }
+
   listTeamTaskLog(team: string, o: { afterId?: number; since?: string; limit?: number } = {}): TaskLogRow[] {
     return this.pageRows('task_log', team, o).map(logRow)
   }

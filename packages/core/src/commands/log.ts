@@ -136,6 +136,13 @@ export async function readTimeline(deps: CommandDeps, a: TimelineFilter): Promis
   return { events: n > 0 ? filtered.slice(-n) : [], cursor: cursorOf(all) }
 }
 
+/** 当前游标（三个来源各自最新的行号）：只查最大 id，不读事件本身；SSE 订阅用它代替 `readTimeline(limit: 1)`。 */
+export function currentCursor(deps: CommandDeps, team: string): LogCursor {
+  knownTeam(deps, team)
+  pruneOldAudit(deps, team, deps.now())
+  return deps.registry.maxEventIds(team)
+}
+
 /** 游标之后的三源行；follow 每轮调一次。 */
 export async function readTimelineAfter(
   deps: CommandDeps, team: string, cursor: LogCursor, filter: Omit<TimelineFilter, 'team'> = {},

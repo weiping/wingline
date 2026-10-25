@@ -1,5 +1,5 @@
 import fs from 'node:fs'
-import { afterEach, beforeEach, expect, test } from 'vitest'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { cursorFrom, TeamFeeds } from '../../src/server/sse.js'
 import { draftPathOf } from '../../src/spec/draft.js'
 import { cachedOrca } from '../../src/view/snapshot.js'
@@ -221,3 +221,25 @@ test('SSE snapshot attentionCounts includes warnings', async () => {
   unsub()
   feeds.closeAll()
 })
+
+test('M-10: subscribing only asks for the newest row ids; it does not page the three event tables (cost no longer grows with history)', async () => {
+  const o = new FakeOrca()
+  const { deps, registry } = seedRunningTeam(o)
+  const d = { ...deps, orca: cachedOrca(o) }
+  for (let i = 0; i < 5; i++) registry.appendAudit({ team: 'duo', actor: 'human', command: `c${i}`, target: null, outcome: 'ok' })
+  registry.appendPatrolEvent({ team: 'duo', post: 'builder@duo', signal: 'x', taskId: 't', action: 'a' })
+  const spies = [vi.spyOn(registry, 'listAudit'), vi.spyOn(registry, 'listPatrolEvents'), vi.spyOn(registry, 'listTeamTaskLog')]
+  const writes: string[] = []
+  let tickTimeline: () => Promise<void> = async () => {}
+  const feeds = new TeamFeeds(d, { setTimer: ((fn: any, ms: number) => { if (ms === 2000) tickTimeline = fn; return 1 as any }) as any, clearTimer: () => {} })
+  const unsub = await feeds.subscribe('duo', (c) => writes.push(c))
+  expect(spies.map((x) => x.mock.calls.length)).toEqual([0, 0, 0])
+  // the cursor is still right: nothing old is replayed, and a row written afterwards is pushed exactly once
+  await tickTimeline()
+  expect(writes).toHaveLength(0)
+  registry.appendAudit({ team: 'duo', actor: 'human', command: 'after', target: null, outcome: 'ok' })
+  await tickTimeline()
+  expect(writes.filter((w) => w.includes('event: timeline'))).toHaveLength(1)
+  unsub()
+})
+
