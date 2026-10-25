@@ -42,13 +42,158 @@ wl --version
 
 命令行为 `wingline`，简写 `wl`；上面只链接了 `wl`，需要全名再链一个 `wingline` 即可。Windows 上可以直接用 `node <仓库>\packages\cli\dist\main.js`。
 
-可选：把 `skills/wingline-post` 装进岗位所用 agent 的 skills 目录，岗位就知道地址格式和怎么用 `wl send` 联系同伴。
+可选：把 `skills/wingline-post` 装进岗位所用 agent 的 skills 目录，岗位就知道地址格式和怎么用 `wl send` 联系同伴（具体命令见[岗位之间怎么说话](#岗位之间怎么说话)）。
 
 ### Orca 可执行文件
 
 按顺序查找：`WINGLINE_ORCA` → `ORCA_CLI_COMMAND` → Linux 的 `orca-ide` / macOS 的 `orca` / Windows 的 `orca.exe`、`orca.cmd`。Orca 的 Windows 安装（1.4.224）只提供 `orca.cmd`，经 `cmd.exe` 调用：无法传递换行，整条命令行不能超过约 8000 字符。所以启动包会写入文件再发送一行指引，含换行或过长的 `wl send` 消息会被拒绝——请改成单行，或把内容写进文件后只发路径。
 
 数据目录 `~/.wingline/`（可用 `WINGLINE_HOME` 改变）：`state.db` 注册表，`logs/` 调用日志与 gate 输出（保留 7 天）。
+
+## 在 Orca 里怎么用
+
+雁阵不是 Orca 的插件，它是一层壳：所有动作都经由 `orca … --json` 完成（`terminal create/send/wait/read/close`、`orchestration run-create/dispatch/task-*/gate-*/check/reply`、`worktree show/set`、`tab create`、`search`），不 fork Orca、不读写 Orca 的内部文件、不另起进程管理器。所以「在 Orca 里用雁阵」= 用一份 `team.yaml` 描述常驻团队，让 Orca 负责终端、agent 会话与任务编排，雁阵负责团队规格、质量闸门、巡查与重启恢复。
+
+### 概念对照
+
+| 雁阵 | 在 Orca 里对应什么 |
+| --- | --- |
+| 团队 `duo` | 一个 orchestration Run，objective 是 `wingline:duo` |
+| 岗位 `builder@duo` | 一个常驻 Orca 终端，终端标题就是岗位地址 |
+| 调度员 `dispatcher@duo` | 团队自己的一个 Orca 终端，跑 `wl dispatcher run <团队>` |
+| 任务 | 一个 Orca 原生 orchestration task；雁阵只在本地多记「主人」和「第几轮」 |
+| 闸门失败 / 转人工 | 一个 Orca gate，可以在 Orca 界面里直接 resolve |
+| 岗位的工作状态 | 岗位所在 worktree 的看板状态 + 卡片注释 + 未读标记 |
+
+### 五步跑起来
+
+**1. 装命令。** 见[安装](#安装)；仓库已 clone 并装好依赖时：
+
+```bash
+cd <wingline 仓库目录>
+pnpm build
+ln -sf "$PWD/packages/cli/dist/main.js" ~/.local/bin/wl   # 确保 ~/.local/bin 在 PATH 里
+wl --version
+```
+
+**2. 写团队规格。** 复制模板 `teams/duo/`，改 `repo` 和 `worktree`：
+
+```yaml
+name: duo
+repo: path:/Users/checker/workspace/dev/your-repo
+norms: NORMS.md
+lead: builder
+posts:
+  - id: builder
+    agent: claude
+    model: opus
+    worktree: current       # 或 Orca 的 worktree 选择器（name: / branch: / path:）
+    brief: [briefs/builder.md]
+  - id: checker
+    agent: codex
+    launch: 'codex --model gpt-6-astra -c model_reasoning_effort="high"'
+    worktree: current
+    brief: [briefs/checker.md]
+gates:
+  builder: 'pnpm test'      # 在该岗位的 worktree 根目录执行
+links:
+  builder:
+    reviewed_by: [checker]  # 完成后自动给 checker 建评审任务并派过去
+```
+
+`worktree: current` 表示「`wl up` 时所在目录的那个 Orca worktree」，首次 `wl up` 会把它固定成绝对路径；之后重跑 `wl up` 时，仍在运行的岗位保持原来的路径不变，新建的岗位按新的调用目录解析。
+
+**3. 拉起团队。** 在 **Orca 之外的普通终端** 里执行（原因见下面的「在 Orca 终端里跑 `wl up`」）：
+
+```bash
+wl up teams/duo/team.yaml   # 建 builder@duo 与 checker@duo 两个 Orca 终端
+wl ps                       # 看岗位是否 live
+```
+
+**4. 派任务。** 人在普通终端里建任务并派给岗位：
+
+```bash
+wl task create duo --title "实现登录" --post builder@duo
+```
+
+岗位在自己的 Orca 终端里（agent 自己执行）：
+
+```bash
+wl task plan <id> "先加接口，再补测试"   # 配了 plan_first 时，start 之前必须有计划
+wl task start <id>
+# …干活…
+wl task done <id>                        # 先跑 gate；通过后自动给 checker 建评审任务并派过去
+```
+
+**5. 无人值守。** 调度员替你盯人：
+
+```bash
+wl dispatcher up duo      # 在新终端 dispatcher@duo 里常驻
+wl attention duo          # 一屏列出需要你处理的事项，每条附一条可复制的命令
+wl console --open         # 本地网页控制台，直接在 Orca 内置浏览器里打开
+wl tui                    # 终端里的全屏视图（总览 / 收件箱 / 时间线）
+```
+
+### 岗位在 Orca 界面里能看见什么
+
+调度员在跑时（`patrol.workspace_status` 默认开）：
+
+- **看板状态**：岗位所在 worktree 显示 `todo` / `in-progress` / `in-review` / `completed`。
+- **卡片注释**（`patrol.worktree_comment: true`）：每行一个岗位，形如 `builder：实现登录（进行中，第 2 轮） ⚠ 无进展`。
+- **未读标记**（`patrol.unread_mark` 默认开）：牵头岗有新的待办就给它的 worktree 打红点。
+- **控制台**：`wl console --open` 走 `orca tab create --url` 在 Orca 内置浏览器开控制台；服务没起时会在 Orca 里新开 `console@wingline` 终端跑起来。
+- **终端标题**：岗位终端的标题就是 `builder@duo`、`checker@duo`，在 Orca 的终端列表里一眼认得出谁是谁。
+
+这些状态由雁阵维护：你在 Orca 界面里手动改了，雁阵下一次算出新值时会覆盖。调度员没在运行时不同步。
+
+### 岗位之间怎么说话
+
+岗位 agent 需要知道两个约定：地址格式 `<岗位>@<团队>`，以及用 `wl send` 联系同伴。把 `skills/wingline-post` 装进该 agent 的 skills 目录即可（Claude Code 是 `~/.claude/skills/`，Codex 是 `~/.codex/skills/`）：
+
+```bash
+ln -sf "$PWD/skills/wingline-post" ~/.claude/skills/wingline-post
+ln -sf "$PWD/skills/wingline-post" ~/.codex/skills/wingline-post
+```
+
+Orca 自带的 `orca skills install` 装不了它——那是 Orca 的内置清单，`wingline-post` 是本仓库的本地 skill。
+
+装好后岗位就能：
+
+```bash
+wl send checker@duo "请审查 src/foo.ts：新增了 X，测试在 test/foo.test.ts"
+```
+
+消息超过 4000 字符要写进文件、只发路径；返回「已送达」才算送达，退出码 3 表示只是输入了、没有确认被处理，此时先 `wl ps` 看对方状态，别立刻重发。
+
+### 在 Orca 终端里跑 `wl up`
+
+Orca 会把调用者认成那个终端，报 `This terminal is attested as … and cannot act as …`，Run 建不出来。两种解法：
+
+- 在 Orca 之外的普通终端（Terminal.app、iTerm）里跑 `wl up`——最省事，推荐这个；
+- 或在 Orca 终端里先剥掉身份变量：
+
+```bash
+env -u ORCA_TERMINAL_HANDLE -u ORCA_AGENT_LAUNCH_TOKEN -u ORCA_AGENT_LAUNCH wl up teams/duo/team.yaml
+```
+
+岗位终端里的 agent 执行 `wl` 不受影响（那正是隐式身份解析要用的）。
+
+### 与 Orca 自带的 `orca claude-teams` 的区别
+
+Orca 1.4.239 的 `orca agent-context` 里已经列出了 `orca claude-teams`（「在当前 Orca 终端里启动 Claude Code Agent Teams」）：在 Orca 终端里跑它，Claude Code 的 Agent Teams 会以 Orca 原生分屏打开 teammates。它和雁阵不冲突，但解决的不是同一层问题：
+
+| | `orca claude-teams` | 雁阵 |
+| --- | --- | --- |
+| agent | 只有 Claude Code | claude / codex / 任意 agent |
+| 岗位常驻 | 否，一次会话内的 teammates | 是，终端常驻，跨天在岗 |
+| 跨岗位流转 | 靠 Claude 原生 Team 机制 | Orca 编排层 + 声明式 `links` |
+| 质量闸门 | 无 | `gates`，命令通过才算完成 |
+| 评审链 | 无 | `reviewed_by` / `hands_to` 自动建单并派发 |
+| 卡住看门狗 | 无 | 调度员巡查 → 提醒岗位 → 通知牵头岗 → 冻结 |
+| 重启恢复 | 无 | `wl restore` / `wl autostart` |
+| 界面同步 | 无 | 看板状态、卡片注释、未读标记、网页控制台 |
+
+要在 Orca 里开几个 Claude 分屏用前者；要用「常驻团队 + 流程约束 + 跨 agent」用后者。
 
 ## 快速开始
 
@@ -65,7 +210,7 @@ wl down duo --close                # 停止团队并关闭终端
 
 所有命令支持 `--json`。退出码：0 成功；1 输入有误；2 Orca 明确报错；3 结果不确定（不会自动重发或关闭）；4 内部错误。
 
-> **在 Orca 自己的终端里运行 `wl up`**（比如在 Orca 里开的 Claude Code 里）：Orca 会把调用者认成那个终端，报 `This terminal is attested as … and cannot act as …`，Run 建不出来。先去掉三个身份变量再运行：`env -u ORCA_TERMINAL_HANDLE -u ORCA_AGENT_LAUNCH_TOKEN -u ORCA_AGENT_LAUNCH wl up teams/duo/team.yaml`。岗位终端里的 agent 执行 `wl` 不受影响（那正是隐式身份解析要用的）。
+> `wl up` 要在 **Orca 之外的普通终端** 里跑（原因与变通办法见[在 Orca 终端里跑 `wl up`](#在-orca-终端里跑-wl-up)）。想看它与 Orca 的对应关系、界面里会看到什么，见[在 Orca 里怎么用](#在-orca-里怎么用)。
 
 ## 用例
 
