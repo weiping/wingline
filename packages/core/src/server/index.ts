@@ -92,7 +92,13 @@ const SPEC_BODY_ROUTE = /^\/api\/teams\/[^/]+\/spec(?:\/validate)?$/
 
 const bodyLimitFor = (pathname: string) => (SPEC_BODY_ROUTE.test(pathname) ? SPEC_BODY_LIMIT : BODY_LIMIT)
 
-async function readBody(req: http.IncomingMessage, limit: number): Promise<{ body: unknown; tooLarge: boolean }> {
+/**
+ * 超过上限的部分照常读完再回 413（立刻断开会让客户端看到连接重置而不是 413）；
+ * 但超出上限 `OVERRUN_LIMIT` 以上就是恶意或出错的客户端，直接掐断连接，不陪它把几个 GB 读完。
+ */
+export const OVERRUN_LIMIT = 1024 * 1024
+
+export async function readBody(req: http.IncomingMessage, limit: number): Promise<{ body: unknown; tooLarge: boolean }> {
   let received = 0
   const chunks: Buffer[] = []
   let tooLarge = false
@@ -100,10 +106,11 @@ async function readBody(req: http.IncomingMessage, limit: number): Promise<{ bod
   await new Promise<void>((resolve, reject) => {
     req.on('data', (c: Buffer) => {
       received += c.length
-      if (received > limit) {
-        tooLarge = true
-      } else {
-        chunks.push(c)
+      if (received <= limit) return void chunks.push(c)
+      tooLarge = true
+      if (received > limit + OVERRUN_LIMIT) {
+        req.destroy()
+        resolve()
       }
     })
     req.on('end', () => resolve())
