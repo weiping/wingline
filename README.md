@@ -1,10 +1,17 @@
 # Wingline 雁阵
 
+[![npm](https://img.shields.io/npm/v/@weiping/wingline)](https://www.npmjs.com/package/@weiping/wingline)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Persistent, role-based agent teams on top of [Orca](https://github.com/stablyai/orca).
 
 Wingline adds a team layer to Orca: a declarative team spec, long-lived posts (`builder@duo`), a task workflow with quality gates and automatic review chains, budgets, restart-safe commands, and a per-team dispatcher that relays questions and patrols for stuck work. It drives Orca only through `orca … --json` — no fork, no plugin back doors, no second process supervisor.
 
 雁阵在 Orca 之上加一层“常驻团队”：用一份 `team.yaml` 描述团队，每个岗位是一个常驻的 Orca 终端；任务在岗位之间流转，完成时自动跑质量闸门、自动派出评审；调度员替你盯着团队，转述岗位的提问、发现卡住的任务并逐级提醒。
+
+```bash
+npm install -g @weiping/wingline
+```
 
 > 状态：阶段 0–1（团队与岗位）、阶段 2A（任务工作流）、阶段 2B（调度员与巡查）、阶段 3A（重启恢复与审计时间线）、阶段 3B（本地控制台）、阶段 3C（团队编辑器 / Orca 界面同步 / `wl tui`）已完成；阶段 3D 已实现登录后自动恢复（`wl restore --all` / `wl autostart`）、未读标记与远端环境（Lima 等）的会话恢复，读画面的巡查信号（上下文快满、用量上限）及后续阶段见[设计总纲](docs/superpowers/specs/2026-10-10-wingline-design.md)。
 
@@ -529,10 +536,25 @@ patrol:
 ## 开发
 
 ```bash
+pnpm install     # 需要先装 pnpm（corepack enable 即可）
 pnpm test         # 单元 + 契约测试
 pnpm typecheck
 pnpm test:live    # 真机集成测试；需要运行中的 Orca，会创建并关闭终端
 ```
+
+## 发布
+
+包名：CLI 是 [`@weiping/wingline`](https://www.npmjs.com/package/@weiping/wingline)，引擎是 [`@weiping/wingline-core`](https://www.npmjs.com/package/@weiping/wingline-core)，后者是前者的依赖，安装时会一并拉取。
+
+```bash
+# 1. 改 packages/core/package.json 与 packages/cli/package.json 里的 version
+# 2. 一条命令构建并发布（先 core 后 cli）：
+pnpm publish
+```
+
+发布用的是 pnpm 的 workspace 协议替换：cli 里的 `workspace:^` 依赖在发布时自动替换成真实版本号，所以两个包的 version 要同步改。发布需要 npm 登录（`npm whoami` 确认），且账号对 `@weiping` scope 有写权限。
+
+> 小坑：user scope 首次发布 scoped 包后，registry CDN 会缓存几分钟 404——`npm view` / `npm install` 可能短暂 404 但 tarball URL 已 200，等几分钟自愈。
 
 - Design spec: [docs/superpowers/specs/2026-10-10-wingline-design.md](docs/superpowers/specs/2026-10-10-wingline-design.md)
 - Implementation plans: [docs/superpowers/plans/](docs/superpowers/plans/)
