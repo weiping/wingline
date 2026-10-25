@@ -59,7 +59,7 @@ Orca 擅长把多个 coding agent 放进各自的 worktree 并行运行，并用
 | 0 验证 | `spikes/` 下 5 个探针脚本 + `spikes/REPORT.md` | 决定依赖假设的设计走主方案还是退路 | **已完成** |
 | 1 MVP | `team.yaml` 规格与校验、岗位注册表、`OrcaClient`、`wl up / ps / send / down`、`duo` 模板 | core 命令层 | **已完成** |
 | 2 团队工作流 | 调度员、`wl task` 系列、`reviewed_by` / `hands_to` / `consults` 连接、质量闸门、先计划后动手、就绪队列与自领、顺手记下新发现、预算、巡查与熔断 | 事件表与任务状态机 | **已完成**（2A 任务工作流、2B 调度员与巡查） |
-| 3 控制台与恢复 | 本地 HTTP API + SSE、控制台 8 个页面、审计时间线、`wl restore`、`wl tui` | HTTP API | **已完成（有保留）**：3A 恢复与时间线、3B 控制台（有三项页面缺口，见 3B spec）、3C 编辑器/Orca 同步/`wl tui`、3D 画面信号/远端恢复/未读标记/自动恢复均已完成并合并（3D 的画面信号模式表是 provisional，由重新登录触发的自启动与 Linux 真机也未验证，见 3D spec 末尾“实施记录”） |
+| 3 控制台与恢复 | 本地 HTTP API + SSE、控制台 8 个页面、审计时间线、`wl restore`、`wl tui` | HTTP API | **已完成（有保留）**：3A 恢复与时间线、3B 控制台、3C 编辑器/Orca 同步/`wl tui`、3D 画面信号/远端恢复/未读标记/自动恢复均已完成并合并（3D 的画面信号模式表是 provisional，由重新登录触发的自启动与 Linux 真机也未验证，见 3D spec 末尾“实施记录”） |
 | 4 进阶协作 | 多路并跑择优、合并队列、头雁轮换（`wl lead pass`）、换班（`wl shift`）、团队决策日志 | — | 未开始 |
 | 5 模板与分发 | 团队包（git 文件夹 + SHA-256 锁文件）、`wl pack install`、工作流模板、`debate` 等团队模板、工单联动 | — | 未开始 |
 | 6 可选 | Slack 桥接；Orca 开放面板数据通道后把控制台迁入侧边栏 | — | 未开始 |

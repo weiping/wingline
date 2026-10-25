@@ -6,7 +6,7 @@
 
 | 份 | 内容 | 前置 | 状态 |
 | --- | --- | --- | --- |
-| **3D-1** | 块 (a) `wl restore --all` + `wl autostart`（macOS / Linux）；块 (b) 未读标记 | 探针 3、6（Task 1，真机） | **已实现并合并**（2026-10-24，PR #12 `1f5c0e8`）：`docs/superpowers/plans/2026-10-23-phase-3d1-restore-all-autostart-unread.md`；真机已验证 launchd 最小环境、`restore --all --actor autostart`、未读红点；重新登录触发与 Linux 真机待验证 |
+| **3D-1** | 块 (a) `wl restore --all` + `wl autostart`（macOS / Linux）；块 (b) 未读标记 | 探针 3、6（Task 1，真机） | **已实现并合并**（2026-10-24，PR #12 `1f5c0e8`）：`docs/superpowers/plans/2026-10-23-phase-3d1-restore-all-autostart-unread.md`；真机已验证 launchd 最小环境、`restore --all --actor autostart`、未读红点；重新登录触发待验证；Linux systemd 已于 2026-10-25 在 Lima VM 上真机验证（开机触发本身未验证） |
 | **3D-2 (d)** | 块 (d) 远端环境恢复 | 探针 4 已完成 | **已实现并合并**（2026-10-24，PR #13 `a51f9cf`）：`docs/superpowers/plans/2026-10-24-phase-3d2d-remote-environment.md`；真机已验证 Lima 同路径挂载下的找回与接回 |
 | **3D-2 (d2)** | 块 (d) 补充：接回后核对提示落进了原会话 | 真机反例（包装脚本不透传 `--resume` 会静默假成功） | **已实现并合并**（2026-10-24，PR #15 `7222b82`）：`docs/superpowers/plans/2026-10-24-phase-3d2d2-verify-remote-resume.md`；Lima 真机已验证 |
 | **3D-2 (c)** | 块 (c) 画面信号 `context_low` / `usage_limit` | 探针 1 已完成；探针 2 只有 claude 2.1.310 程序本体里的提示原文，没有真实画面 | **已实现并合并**（2026-10-25，PR #18 `6b1f348`）：`docs/superpowers/plans/2026-10-25-phase-3d2c-screen-signals.md`（Task 1–7 完成；**Task 8 的真机核对未做**，模式表与样本仍是 provisional，等画面上真的出现这两种提示时用 `spikes/phase-3d2.ts sample` 取样替换） |

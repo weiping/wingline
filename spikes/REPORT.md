@@ -834,3 +834,21 @@ WINGLINE_SPIKE_WORKTREE=<专用测试 worktree 选择器> pnpm tsx spikes/worktr
 
 **怎么发现模式失效**：画面上明明出现了提示，`wl attention` 却没有 `context_low` / `usage_limit`。多半是 Claude 换了版本、措辞变了；对照 `patterns.ts` 的正则取一份真实画面再改。
 
+## 3D-1 Linux systemd 真机验证（2026-10-25，Lima VM `agent`，Linux 6.8 aarch64，node 24.22.0）
+
+在 Lima VM 里用宿主机构建的 CLI（同路径挂载 `/Users/…/packages/cli/dist/main.js`）验证 `wl autostart` 的 Linux 分支。VM 里有 systemd 用户会话（`State=active`，`Linger=yes`），`node` 与 `orca` 在 `~/.local/bin`；用临时 `WINGLINE_HOME`（`/tmp/wl-vm-qjDS`），没有登记团队。
+
+**已验证**
+- `autostart status`（未安装）：报“未安装”并给出单元位置。
+- `autostart install --wait-orca 1m`：写出 `~/.config/systemd/user/wingline-restore.service`，内容与预期一致——`Type=oneshot`、显式 `PATH`（node 目录、`~/.local/bin`、系统目录）、`ExecStart` 全是绝对路径（含 `--actor autostart --home … --orca …`）、日志追加到 `autostart.log`、`WantedBy=default.target`；`is-enabled` 为 `enabled`，`default.target.wants/` 里有指向它的链接，`list-dependencies default.target` 里能看到它。
+- `systemctl --user start wingline-restore.service`：在 systemd 的最小环境里启动成功，`Result=success`、`ExecMainStatus=0`，耗时约 0.2 秒；`autostart.log` 里是“没有处于运行状态的团队，无需恢复”（说明 node 与脚本都启动了，且没有团队时不等 Orca）。
+- `autostart status`（已安装）：显示命令和日志最后一行。
+- 重装（改 `--wait-orca 2m`）：幂等，单元里只有一份、`wants` 链接只有一个。
+- `autostart uninstall`：单元文件和 `wants` 链接都删掉；再卸载一次仍成功（“没有安装过自启动，无需卸载”）。
+- 前后对比 `systemctl --user list-unit-files`：完全一致，VM 里原有的单元（containerd、magpie 等）没有被动过。
+
+**未验证**
+- 开机 / 登录由 systemd 自动触发这一次（需要重启 VM，会打断 VM 里在用的服务，没做）。
+- 有运行中的团队时的 `restore --all`（VM 里没有可用的 Orca 团队环境）。
+- 残留：VM 里 `/tmp/wl-vm-qjDS/`（日志）与 `/tmp/units.before`、`/tmp/units.after` 是这次留下的临时文件，没有删除。
+
