@@ -1,6 +1,6 @@
 {
   "name": "@weiping/wingline",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "雁阵 Wingline：在 Orca 之上运行常驻 agent 团队的命令行（wl）",
   "license": "MIT",
   "type": "module",

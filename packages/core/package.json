@@ -1,6 +1,6 @@
 {
   "name": "@weiping/wingline-core",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Wingline 核心：在 Orca 之上运行常驻 agent 团队的引擎（注册表、编排、巡查、恢复）",
   "license": "MIT",
   "type": "module",
