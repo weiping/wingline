@@ -36,17 +36,19 @@ function snakeKeys(v: unknown): unknown {
   return Object.fromEntries(Object.entries(v).map(([k, x]) => [snake(k), snakeKeys(x)]))
 }
 
-/** 把 TeamSpec 还原成 YAML 里的字段形态，供按字段比较。 */
+/** 把 TeamSpec 还原成 YAML 里的字段形态，供按字段比较。岗位级字段（plan_first / self_claim / tags）也进哈希，预演必须同样列出。 */
 function fieldView(s: TeamSpec): Record<string, unknown> {
   const links: Record<string, Record<string, string[]>> = {}
   const gates: Record<string, string> = {}
+  const posts: Record<string, Record<string, unknown>> = {}
   for (const p of s.posts) {
     const l = { reviewed_by: p.reviewedBy, hands_to: p.handsTo, consults: p.consults ?? [] }
     const filled = Object.fromEntries(Object.entries(l).filter(([, v]) => v.length > 0))
     if (Object.keys(filled).length > 0) links[p.id] = filled
     if (p.gate) gates[p.id] = p.gate
+    posts[p.id] = { plan_first: p.planFirst, self_claim: p.selfClaim, tags: p.tags }
   }
-  return { lead: s.lead, links, gates, budgets: snakeKeys(s.budgets), patrol: snakeKeys(s.patrol) }
+  return { lead: s.lead, links, gates, budgets: snakeKeys(s.budgets), patrol: snakeKeys(s.patrol), posts }
 }
 
 function flatten(v: unknown, prefix: string, out: Map<string, unknown>): void {

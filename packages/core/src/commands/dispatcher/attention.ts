@@ -25,6 +25,10 @@ export interface AttentionReport {
   warnings: string[]
 }
 
+/** 待办数的唯一口径：CLI `wl dispatcher status`、控制台顶栏与 TUI 都用它，别再各写一遍。 */
+export const pendingCount = (r: Pick<AttentionReport, 'frozen' | 'signals' | 'questions' | 'stale' | 'warnings'>): number =>
+  r.frozen.length + r.signals.length + r.questions.length + r.stale.length + r.warnings.length
+
 const DAY_MS = 24 * 3_600_000
 
 /** spec 第 6.5 节：由规格文件、注册表与常量推导，条件成立期间一直显示。 */
@@ -55,8 +59,7 @@ function specOf(deps: CommandDeps, team: string): TeamSpec | null {
 }
 
 function lastCommand(deps: CommandDeps, team: string, s: PatrolStateRow): string | null {
-  const events = deps.registry.listPatrolEvents(team, { limit: 500 })
-  const hit = events.findLast((e) => e.action === 'notify' && e.post === s.post && e.signal === s.signal && (e.taskId ?? '') === s.taskId)
+  const hit = deps.registry.lastNotifyEventOf(team, s.post, s.signal, s.taskId)
   const command = (hit?.detail as { command?: string } | null | undefined)?.command
   return command ?? null
 }
@@ -118,9 +121,9 @@ function groupWarnings(events: Array<{ action: string; outcome?: string | null }
 export async function dispatcherStatus(deps: CommandDeps, team: string): Promise<DispatcherStatus> {
   const { registry } = deps
   const now = deps.now()
-  const events = registry.listPatrolEvents(team, { limit: 500 })
-  const last = (match: (action: string) => boolean) => {
-    const e = events.findLast((x) => match(x.action))
+  // 定点查询而非读最新 500 条：巡查事件保留 30 天、每 5 分钟写若干条，500 条窗口会把更早的 check/scan 挤出去
+  const lastOf = (actions: string[]) => {
+    const e = registry.lastPatrolEventOf(team, actions)
     return e ? { at: e.at, outcome: e.outcome ?? 'ok' } : null
   }
   const report = await attention(deps, team)
@@ -128,11 +131,11 @@ export async function dispatcherStatus(deps: CommandDeps, team: string): Promise
   return {
     team,
     health: report.dispatcher,
-    lastCheck: last((a) => a.startsWith('check_')),
-    lastScan: last((a) => a === 'scan' || a === 'scan_skipped'),
+    lastCheck: lastOf(['check_ok', 'check_failed']),
+    lastScan: lastOf(['scan', 'scan_skipped']),
     frozen: report.frozen.length,
     hushed: registry.listHushes(team).filter((h) => Date.parse(h.until) > now.getTime()).length,
-    attentionItems: report.frozen.length + report.signals.length + report.questions.length + report.stale.length,
-    warnings: groupWarnings(events.filter((e) => e.at >= since && WARNING_ACTIONS.has(e.action))),
+    attentionItems: pendingCount(report),
+    warnings: groupWarnings(registry.listPatrolEvents(team, { since, limit: 10_000 }).filter((e) => WARNING_ACTIONS.has(e.action))),
   }
 }

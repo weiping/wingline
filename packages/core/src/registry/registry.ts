@@ -173,6 +173,8 @@ export interface PatrolStateRow {
   detail?: Record<string, unknown> | null
 }
 export interface FrozenRow {
+  /** 冻结行自带的团队名：被冻结的可以是没登记的终端，所以别从地址里反推。 */
+  team: string
   post: string
   reason: string
   signal: string | null
@@ -235,7 +237,7 @@ const patrolRow = (r: Row): PatrolStateRow => ({
 })
 
 const frozenRow = (r: Row): FrozenRow => ({
-  post: r.post as string, reason: r.reason as string, signal: r.signal as string | null, frozenAt: r.frozen_at as string,
+  team: r.team as string, post: r.post as string, reason: r.reason as string, signal: r.signal as string | null, frozenAt: r.frozen_at as string,
 })
 
 const questionRow = (r: Row): QuestionRow => ({
@@ -701,7 +703,9 @@ export class Registry {
 
   /** unfreeze 用：该岗位所有巡查行回到 level 0 并标记已清除（spec 第 7 节）。画面信号的行不动：解冻不该清掉用量暂停，也不该在提示仍留屏时让它重新通知一次。 */
   resetPatrolForPost(post: string, at: string): void {
-    this.db.prepare("UPDATE patrol_state SET level = 0, cleared_at = ?, last_nudged_at = NULL WHERE post = ? AND signal NOT IN ('context_low', 'usage_limit')").run(at, post)
+    this.db
+      .prepare("UPDATE patrol_state SET level = 0, cleared_at = ?, last_nudged_at = NULL, notify_count = 0, next_due_at = NULL WHERE post = ? AND signal NOT IN ('context_low', 'usage_limit')")
+      .run(at, post)
   }
 
   freezePost(a: { post: string; team: string; reason: string; signal?: string | null }): void {
@@ -809,6 +813,14 @@ export class Registry {
     return r ? eventRow(r) : null
   }
 
+  /** 该信号主体最近一次 notify 事件（不受巡查事件保留窗口影响）；task_id 为 NULL 的主体与空串比较。 */
+  lastNotifyEventOf(team: string, post: string, signal: string, taskId: string): (PatrolEvent & { id: number; at: string }) | null {
+    const r = this.db
+      .prepare("SELECT * FROM patrol_events WHERE team = ? AND action = 'notify' AND post = ? AND signal = ? AND COALESCE(task_id, '') = ? ORDER BY id DESC LIMIT 1")
+      .get(team, post, signal, taskId) as Row | undefined
+    return r ? eventRow(r) : null
+  }
+
   // —— 阶段 3A：审计事件、团队任务日志、时间线游标 ——
   // 三者共用 pageRows 的分页语义：id 升序；不带 afterId 取最新 limit 条；带 afterId 取游标之后最早的 limit 条。
 
@@ -901,6 +913,21 @@ export class Registry {
 
   prunePatrolEvents(before: string): number {
     return Number(this.db.prepare('DELETE FROM patrol_events WHERE at < ?').run(before).changes)
+  }
+
+  /**
+   * 已结束状态的日常清理：已清除的巡查行、已回答的提问、已定案且过保留期的任务账本行。
+   * 不动：pending/uncertain 行（可能还在重放）、代数键（restore:*、<team>:<post>:*，删了会让代数从头数起）、
+   * done:*:delivered:* 交付行（解冻时按冻结时间点数被跳过的任务）。
+   */
+  pruneFinishedState(before: string): void {
+    this.db.prepare('DELETE FROM patrol_state WHERE cleared_at IS NOT NULL AND cleared_at < ?').run(before)
+    this.db.prepare('DELETE FROM questions WHERE answered_at IS NOT NULL AND answered_at < ?').run(before)
+    this.db.prepare(
+      `DELETE FROM requests WHERE state = 'done' AND updated_at < ?
+       AND (id LIKE 'dispatch:%' OR id LIKE 'recover:%' OR id LIKE 'resolve:%' OR id LIKE 'oneshot:%'
+            OR (id LIKE 'done:%' AND id NOT LIKE 'done:%:delivered:%'))`,
+    ).run(before)
   }
 
   /** finished_at > after（null 表示不限）的已完成判定，按 finished_at 升序。 */

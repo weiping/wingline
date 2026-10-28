@@ -58,10 +58,16 @@ export async function restore(deps: CommandDeps, a: RestoreArgs): Promise<Restor
     if (hash !== row.specHash) {
       throw new WinglineError('input', 'team_spec_changed', `团队 ${a.team} 的规格已变化`, { hint: `不支持在线修改编队，请先执行 wl down ${a.team}` })
     }
+    const seenSession = new Set<string>()
     for (const [post, id] of Object.entries(a.sessions ?? {})) {
       if (!spec.posts.some((p) => p.id === post) || !SESSION_ID.test(id)) {
         throw new WinglineError('input', 'session_override_invalid', `--session ${post}=${id} 无效：岗位不在团队里，或会话 ID 格式不符`)
       }
+      // 同一会话指定给两个岗位：后者会在运行期撞上 reserved，这里提前拒绝
+      if (seenSession.has(id)) {
+        throw new WinglineError('input', 'session_override_invalid', `--session ${post}=${id} 无效：会话 ${id} 已指定给另一个岗位`)
+      }
+      seenSession.add(id)
     }
 
     // 第 2、3 步：按 team.yaml 顺序，牵头岗最先（lead 先就绪，Run 才有认领人）

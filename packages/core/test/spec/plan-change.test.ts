@@ -85,6 +85,19 @@ test('field diffs list lead, gates, budgets and patrol before/after', () => {
   expect(planSpecChange(current, next(DUO_YAML), PLAN_OPTS).fields).toEqual([])
 })
 
+test('post-level fields that enter the spec hash (plan_first / self_claim / tags) are listed too', () => {
+  const { current, next } = setup()
+  const y = DUO_YAML.replace('    agent: claude\n    model: opus\n', '    agent: claude\n    model: opus\n    plan_first: true\n    self_claim: true\n    tags: [api]\n')
+  const r = planSpecChange(current, next(y), PLAN_OPTS)
+  expect(r.fields).toEqual(
+    expect.arrayContaining([
+      { path: 'posts.builder.plan_first', before: false, after: true },
+      { path: 'posts.builder.self_claim', before: false, after: true },
+      { path: 'posts.builder.tags', before: [], after: ['api'] },
+    ]),
+  )
+})
+
 test('3D-2: adding, changing or removing a post environment is a launch change (and suggests wl down --close)', () => {
   const { current, next } = setup()
   const withEnv = (name?: string) => (name ? DUO_YAML.replace('    agent: claude\n    model: opus\n', `    agent: claude\n    model: opus\n    environment: ${name}\n`) : DUO_YAML)

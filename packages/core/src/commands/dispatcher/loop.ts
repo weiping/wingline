@@ -195,6 +195,8 @@ function maintain(deps: CommandDeps, st: LoopState): void {
     deps.registry.prunePatrolEvents(new Date(now.getTime() - EVENT_KEEP_MS).toISOString())
     // 审计事件同保留 30 天（3A spec §6.4）；调度员循环 + wl log 各清理一次。
     pruneAuditBestEffort(deps, st.team.name, new Date(now.getTime() - EVENT_KEEP_MS).toISOString())
+    // 已结束状态同样只留 30 天：已清除的巡查行、已回答的提问、已定案的账本行，不清会一直涨
+    deps.registry.pruneFinishedState(new Date(now.getTime() - EVENT_KEEP_MS).toISOString())
     st.logDay = dayOf(now)
   }
   const target = mustTeamReady(deps, st.team.name)

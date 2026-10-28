@@ -2,7 +2,7 @@ import type { HandlerContext, Router } from './http.js'
 import { checkParam } from './http.js'
 import { ps, type PsRow } from '../commands/ps.js'
 import { dispatcherHealth } from '../commands/dispatcher/lifecycle.js'
-import { attention, dispatcherStatus } from '../commands/dispatcher/attention.js'
+import { attention, dispatcherStatus, pendingCount } from '../commands/dispatcher/attention.js'
 import { signalSummary } from '../commands/dispatcher/signal-summary.js'
 import { listTasks, showTask } from '../commands/task/query.js'
 import { listStale, type TaskRow } from '../commands/task/query.js'
@@ -29,17 +29,11 @@ async function teamSummary(ctx: HandlerContext, name: string) {
   const posts = await ps(ctx.deps, { team: name })
   const disp = dispatcherHealth(ctx.deps, name).state
   const att = await attention(ctx.deps, name)
-  const attentionCount = (disp === 'stale' ? 1 : 0) +
-    att.frozen.length +
-    att.signals.length +
-    att.questions.length +
-    att.stale.length +
-    att.warnings.length
   return {
     name,
     postsCount: posts.length,
     dispatcher: disp,
-    attentionCount,
+    attentionCount: pendingCount(att),
   }
 }
 
@@ -189,8 +183,16 @@ function registerLogRoute(r: Router): void {
     const post = ctx.query.get('post') ?? undefined
     const since = ctx.query.get('since') ?? undefined
     const source = (ctx.query.get('source') as any) ?? undefined
+    // 与 wl log 的 --limit 同一口径：非正整数按用法错报，而不是 NaN 静默读空
     const limitStr = ctx.query.get('limit')
-    const limit = limitStr ? parseInt(limitStr, 10) : undefined
+    let limit: number | undefined
+    if (limitStr !== null) {
+      limit = Number(limitStr)
+      if (!(Number.isInteger(limit) && limit >= 1)) {
+        const { WinglineError } = await import('../errors.js')
+        throw new WinglineError('input', 'limit_invalid', `limit ${limitStr} 无效：应为正整数`)
+      }
+    }
 
     return await readTimeline(ctx.deps, { team, task, post, since, source, limit })
   })

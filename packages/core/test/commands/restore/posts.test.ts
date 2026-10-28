@@ -66,6 +66,16 @@ test('a dead post with a found session is resumed with the resume command, notif
   expect(s.registry.getPost('builder@duo')!.status).toBe('live')
 })
 
+test('a resume terminal that still exists but is disconnected is reused, never duplicated onto the same session', async () => {
+  const s = seed(new FakeOrca(), { handle: 'term-1', status: 'uncertain' })
+  s.o.terminals.push({ handle: 'term-1', title: 'builder@duo', connected: false, worktreeId: 'wt-1' })
+  s.o.sessions.push(hit('s1'))
+  const r = await restorePost(s.l, s.post, { dryRun: false, briefing: s.briefing })
+  expect(r).toMatchObject({ outcome: 'resumed', sessionId: 's1' })
+  expect(s.o.created).toEqual([])
+  expect(s.registry.getPost('builder@duo')!.handle).toBe('term-1')
+})
+
 test('a resumed terminal that is back at a shell prompt is uncertain, not live; the rerun re-checks and finishes once the agent is up', async () => {
   const s = seed(new FakeOrca())
   s.o.onCreate = () => { s.o.previews.set('term-1', 'user@host ~/repo % ') }

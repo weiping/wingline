@@ -223,7 +223,14 @@ async function handleSse(
     })
 
     const lastEventId = req.headers['last-event-id'] as string | undefined
-    unsub = await feeds.subscribe(team, (chunk) => res.write(chunk), lastEventId)
+    // 背压：对端不读时 res.write 返回 false，继续写会把事件无限堆在内存里——直接断开；
+    // EventSource 会带 Last-Event-ID 自动重连，从断点补回，不丢事件。
+    const write = (chunk: string): void => {
+      if (res.write(chunk)) return
+      unsub?.()
+      res.destroy()
+    }
+    unsub = await feeds.subscribe(team, write, lastEventId)
 
     if (closed || req.destroyed || res.destroyed) {
       unsub()
@@ -238,7 +245,7 @@ async function handleSse(
     })
     res.flushHeaders()
     sseClients.add(res)
-    feeds.replaySnapshot(team, (chunk) => res.write(chunk))
+    feeds.replaySnapshot(team, write)
   } catch (err) {
     respondError(res, err, warn, `GET /api/teams/${team}/events`)
   }

@@ -2,7 +2,7 @@ import crypto from 'node:crypto'
 import { WinglineError } from '../errors.js'
 import type { Registry } from '../registry/registry.js'
 import type { PostSpec, TeamSpec } from '../spec/load.js'
-import { postAddress, requestId, type CommandDeps, type Step } from './deps.js'
+import { postAddress, requestId, WAIT_SUBMIT_SEC, type CommandDeps, type Step } from './deps.js'
 import { screenGuard } from './task/notify.js'
 
 export interface Launch {
@@ -12,7 +12,6 @@ export interface Launch {
 }
 
 export const WAIT_TIMEOUT_MS = 60_000
-export const WAIT_SUBMIT_SEC = 10
 
 /** 先记 pending，再调用，最后按结果记 done / uncertain / failed。ok 为 false 表示 Orca 回执未确认成功。 */
 export async function recorded<T>(reg: Registry, id: string, fn: () => Promise<T>, ok: (v: T) => boolean = () => true) {

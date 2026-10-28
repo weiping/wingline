@@ -8,10 +8,6 @@ const RESUME_TEMPLATES: Record<string, (launch: string, sessionId: string) => st
   claude: (launch, sessionId) => `${launch} --resume ${sessionId}`,
 }
 
-export function supportsResume(agent: string): boolean {
-  return agent in RESUME_TEMPLATES
-}
-
 /** 拼出该 agent 的接回命令；不支持接回的 agent 返回 null（调用方走 fresh）。 */
 export function resumeCommand(agent: string, launch: string, sessionId: string): string | null {
   if (!SESSION_ID.test(sessionId)) {

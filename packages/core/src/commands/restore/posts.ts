@@ -3,10 +3,10 @@ import { checkBriefingLimit } from '../../brief/render.js'
 import { WinglineError } from '../../errors.js'
 import type { Registry } from '../../registry/registry.js'
 import type { PostSpec } from '../../spec/load.js'
-import { postAddress, requestId, type CommandDeps } from '../deps.js'
+import { postAddress, requestId, WAIT_SUBMIT_SEC, type CommandDeps } from '../deps.js'
 import { briefText } from '../up.js'
 import {
-  ensureMarker, lifetimeGen, recorded, startPost, stepDone, WAIT_SUBMIT_SEC, WAIT_TIMEOUT_MS, withMarker, type Launch,
+  ensureMarker, lifetimeGen, recorded, startPost, stepDone, WAIT_TIMEOUT_MS, withMarker, type Launch,
 } from '../launch.js'
 import { locatePost } from '../locate.js'
 import { screenGuard } from '../task/notify.js'
@@ -32,7 +32,7 @@ export const restoreKey = (team: string, post: string, gen: number, step: 'creat
   `restore:${team}:${post}:${gen}:${step}`
 
 /** 已完成的 restore create 中最大代数加 1；本代 create 尚未完成（中断重跑沿用原代）时不前进。终端仍活着（located）时调用方走 kept 或补完上一代（pendingResume），不会拉起新代。 */
-export function restoreGen(reg: Registry, team: string, post: string, _located: boolean): number {
+export function restoreGen(reg: Registry, team: string, post: string): number {
   let g = 0
   while (reg.getRequest(restoreKey(team, post, g, 'create'))?.state === 'done') g++
   return g
@@ -119,7 +119,7 @@ async function landingResult(
  * 返回要补完的会话 ID 与请求键；否则 null。会话 ID 没缓存、岗位已 live、句柄对不上都不算。
  */
 function pendingResume(reg: Registry, team: string, post: string, handle: string): { sessionId: string; rid: StepKey } | null {
-  const gen = restoreGen(reg, team, post, true) - 1
+  const gen = restoreGen(reg, team, post) - 1
   if (gen < 0) return null
   const rid: StepKey = (step) => restoreKey(team, post, gen, step)
   const row = reg.getPost(postAddress(post, team))
@@ -221,16 +221,17 @@ export async function restorePost(
 
     if (sessionId !== null && command !== null) {
       if (o.dryRun) return { address, outcome: 'resumed', sessionId }
-      const gen = restoreGen(registry, l.spec.name, post.id, located !== null)
+      const gen = restoreGen(registry, l.spec.name, post.id)
       const rid = (step: 'create' | 'wait' | 'notice') => restoreKey(l.spec.name, post.id, gen, step)
-      let handle = stepDone(registry, rid('create')) ? row.handle : null
+      // 终端还在（哪怕暂时断连）就复用它：再建一个会把同一会话接进两个终端；账本句柄只在终端已消失时用
+      let handle = located?.handle ?? (stepDone(registry, rid('create')) ? row.handle : null)
       if (!handle) {
         const created = await recorded(registry, rid('create'), () =>
           orca.terminalCreate({ worktree: post.worktree, title: address, command }),
         )
         handle = created.value.handle
-        registry.setPostHandle(address, handle)
       }
+      registry.setPostHandle(address, handle)
       registry.setSessionId(address, sessionId)
       return await settleResume(l, address, handle, sessionId, rid, retry, remote)
     }

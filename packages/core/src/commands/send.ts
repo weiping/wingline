@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { WinglineError } from '../errors.js'
 import type { SendResult } from '../orca/types.js'
-import { nextRequestId, preflight, type CommandDeps } from './deps.js'
+import { nextRequestId, preflight, WAIT_SUBMIT_SEC, type CommandDeps } from './deps.js'
 import { locatePost } from './locate.js'
 
 export interface SendResultRow {
@@ -11,7 +11,6 @@ export interface SendResultRow {
 }
 
 const MAX_MESSAGE = 4000
-const WAIT_SUBMIT_SEC = 10
 
 function checkMessage(deps: CommandDeps, message: string): void {
   if (message.length > MAX_MESSAGE) {

@@ -47,6 +47,14 @@ test('--session for a post not in the team, or a malformed id → session_overri
   await expect(restore(made.deps, { team: 'duo', sessions: { builder: 'bad id!' } })).rejects.toMatchObject({ code: 'session_override_invalid' })
 })
 
+test('--session giving one session to two posts is rejected up front, before any Orca write', async () => {
+  const o = new FakeOrca()
+  const made = restarted(o)
+  await expect(restore(made.deps, { team: 'duo', sessions: { builder: 's1', checker: 's1' } })).rejects.toMatchObject({ code: 'session_override_invalid' })
+  expect(o.created).toEqual([])
+  expect(o.sent).toEqual([])
+})
+
 test('spec changed on disk → team_spec_changed before any Orca write', async () => {
   const o = new FakeOrca()
   const made = restarted(o)

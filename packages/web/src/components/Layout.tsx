@@ -72,17 +72,15 @@ export function StreamBanner() {
   )
 }
 
-/** 顶栏：连接状态 + 待办数（来自 snapshot 的 attentionCounts）。必须在 StreamProvider 内。 */
+/** 顶栏：连接状态 + 待办数（core 的 `pendingCount`，与总览页、TUI 同一口径）。必须在 StreamProvider 内。 */
 export function TopBar() {
   const { state, snapshot } = useStream()
   const [label, tone] = STATE_TEXT[state]
-  const c = snapshot?.attentionCounts
-  const pending = c ? c.frozen + c.signals + c.questions + c.stale + (c.warnings ?? 0) : 0
   return (
     <header class="topbar">
       <Pill tone={tone}>{label}</Pill>
       <span class="badge" aria-label="待办">
-        待办 {pending}
+        待办 {snapshot?.attention ?? 0}
       </span>
       {snapshot && <span class="muted small">调度员：{snapshot.dispatcher}</span>}
     </header>

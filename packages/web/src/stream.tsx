@@ -6,12 +6,12 @@ import { ApiError, api } from './api.js'
 
 export type StreamState = 'live' | 'reconnecting' | 'closed'
 
-/** 服务端 snapshot 事件（见 spec 6.4）。 */
+/** 服务端 snapshot 事件（见 spec 6.4）。`attention` 是 core `pendingCount` 的待办数，前端不再自己相加。 */
 export interface TeamSnapshot {
   team: string
   posts: PsRow[]
   dispatcher: string
-  attentionCounts: { frozen: number; signals: number; questions: number; stale: number; warnings: number }
+  attention: number
 }
 
 interface Handlers {

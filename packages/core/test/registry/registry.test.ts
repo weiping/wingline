@@ -473,3 +473,49 @@ test('maxEventIds: newest id per source for one team, 0 where there is nothing, 
   expect(r.maxEventIds('solo').command).toBe(r.listAudit('solo').at(-1)!.id)
 })
 
+test('pruneFinishedState drops cleared patrol rows, answered questions and settled task ledger rows, but keeps pending rows, generational keys and deliveries', () => {
+  const r = Registry.open(':memory:', { now: () => new Date('2026-09-01T00:00:00.000Z') })
+  r.upsertTeam({ name: 'duo', specPath: '/s', specHash: 'h', runId: null, coordinatorHandle: null, status: 'up' })
+  const OLD = '2026-09-01T00:00:00.000Z'
+  const row = (over: Partial<PatrolStateRow> = {}): PatrolStateRow => ({
+    team: 'duo', post: 'builder@duo', signal: 'no_progress', taskId: 't1', level: 0, since: 'A', levelAt: 'A',
+    lastNudgedAt: null, notifyCount: 0, nextDueAt: null, clearedAt: null, ...over,
+  })
+  r.putPatrolState(row({ clearedAt: OLD }))                                        // 清除已久 → 删
+  r.putPatrolState(row({ signal: 'overdue', taskId: 't2' }))                        // 仍活跃 → 留
+  r.putPatrolState(row({ signal: 'usage_limit', taskId: '', clearedAt: OLD }))      // 画面信号清了也删
+  r.recordQuestion({ team: 'duo', messageId: 'q-old', taskId: 't1', dispatchId: 'd', asker: 'a', body: 'b', options: [], relayedAt: OLD })
+  r.answerQuestion('q-old', OLD)                                                    // 已回答且过保留期 → 删
+  r.recordQuestion({ team: 'duo', messageId: 'q-open', taskId: 't2', dispatchId: 'd', asker: 'a', body: 'b', options: [], relayedAt: OLD })
+  r.beginRequest('dispatch:t1:0'); r.finishRequest('dispatch:t1:0', 'done', {})      // 已定案 → 删
+  r.beginRequest('oneshot:x1')                                                      // pending → 留
+  r.beginRequest('done:t0:0:delivered:builder@duo'); r.finishRequest('done:t0:0:delivered:builder@duo', 'done', {}) // 交付行 → 留
+  r.beginRequest('restore:duo:builder:0:create'); r.finishRequest('restore:duo:builder:0:create', 'done', {})       // 代数键 → 留
+  r.pruneFinishedState('2026-10-01T00:00:00.000Z')
+  expect(r.getPatrolState('duo', 'builder@duo', 'no_progress', 't1')).toBeNull()
+  expect(r.getPatrolState('duo', 'builder@duo', 'overdue', 't2')).not.toBeNull()
+  expect(r.getPatrolState('duo', 'builder@duo', 'usage_limit', '')).toBeNull()
+  expect(r.getQuestion('q-old')).toBeNull()
+  expect(r.getQuestion('q-open')).not.toBeNull()
+  expect(r.getRequest('dispatch:t1:0')).toBeNull()
+  expect(r.getRequest('oneshot:x1')).not.toBeNull()
+  expect(r.getRequest('done:t0:0:delivered:builder@duo')).not.toBeNull()
+  expect(r.getRequest('restore:duo:builder:0:create')).not.toBeNull()
+  r.close()
+})
+
+test('lastNotifyEventOf finds the newest notify of one subject regardless of newer events, treating NULL task_id as empty', () => {
+  const r = Registry.open(':memory:')
+  r.upsertTeam({ name: 'duo', specPath: '/s', specHash: 'h', runId: null, coordinatorHandle: null, status: 'up' })
+  r.appendPatrolEvent({ team: 'duo', post: 'b@duo', signal: 'no_progress', taskId: 't1', action: 'notify', detail: { command: 'old' } })
+  r.appendPatrolEvent({ team: 'duo', post: 'b@duo', signal: 'no_progress', taskId: 't2', action: 'notify', detail: { command: 'other task' } })
+  r.appendPatrolEvent({ team: 'duo', post: 'b@duo', signal: 'no_progress', taskId: 't1', action: 'notify', detail: { command: 'new' } })
+  for (let i = 0; i < 600; i++) r.appendPatrolEvent({ team: 'duo', action: 'check_ok' })
+  expect((r.lastNotifyEventOf('duo', 'b@duo', 'no_progress', 't1')!.detail as { command: string }).command).toBe('new')
+  expect((r.lastNotifyEventOf('duo', 'b@duo', 'no_progress', 't2')!.detail as { command: string }).command).toBe('other task')
+  r.appendPatrolEvent({ team: 'duo', post: 'c@duo', signal: 'usage_limit', taskId: null, action: 'notify', detail: { command: 'usage' } })
+  expect((r.lastNotifyEventOf('duo', 'c@duo', 'usage_limit', '')!.detail as { command: string }).command).toBe('usage')
+  expect(r.lastNotifyEventOf('duo', 'b@duo', 'waiting_answer', 't1')).toBeNull()
+  r.close()
+})
+

@@ -6,16 +6,8 @@ import { ActionDialog } from '../components/ActionDialog.js'
 import { CommandHint } from '../components/CommandHint.js'
 import { Link } from '../components/Link.js'
 import { ErrorBox, Loading, Pill, Section, postOf } from '../components/common.js'
+import { STALE_REASON } from '../labels.js'
 import { taskPath } from '../router.js'
-
-const REASON: Record<StaleItem['reason'], string> = {
-  done_unfinished: '已完成但未收尾',
-  call_uncertain: '调用结果不确定',
-  dead_assignee: '派发失主',
-  owner_idle: '主人迟迟未开始',
-  bypassed: '绕过闸门上报',
-  blocked_waiting: '等待决策',
-}
 
 const Empty = () => <p class="muted small">暂无</p>
 
@@ -135,7 +127,7 @@ export function Inbox({ team }: { team: string }) {
           hung.map((s) => (
             <div class="row" key={`${s.taskId}:${s.reason}`}>
               <div>
-                <Link href={taskPath(team, s.taskId)}>{s.title}</Link> <Pill tone="warn">{REASON[s.reason]}</Pill>{' '}
+                <Link href={taskPath(team, s.taskId)}>{s.title}</Link> <Pill tone="warn">{STALE_REASON[s.reason]}</Pill>{' '}
                 <span class="muted small">主人 {s.owner ? postOf(s.owner) : '—'}</span>
               </div>
               {s.reason === 'dead_assignee' ? (
@@ -164,6 +156,7 @@ export function Inbox({ team }: { team: string }) {
                 <strong>{postOf(s.post)}</strong> <span class="muted small">{s.signal} · L{s.level}{s.summary ? ` · ${s.summary}` : ''}</span>
               </div>
               <div class="actions">
+                {s.command ? <CommandHint command={s.command} /> : null}
                 <ActionDialog
                   label="发消息"
                   title={`发给 ${postOf(s.post)}`}

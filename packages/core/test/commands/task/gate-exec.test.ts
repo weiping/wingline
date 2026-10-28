@@ -4,7 +4,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { expect, test } from 'vitest'
 import { WinglineError } from '../../../src/errors.js'
-import { GATE_BODY_LIMIT, gateBody, gateCwd, runGate, writeGateOutput } from '../../../src/commands/task/gate-exec.js'
+import { GATE_BODY_LIMIT, GATE_OUTPUT_LIMIT_BYTES, gateBody, gateCwd, runGate, writeGateOutput } from '../../../src/commands/task/gate-exec.js'
 import { FakeOrca, seedRunningTeam } from '../fake-client.js'
 
 const repoRoot = path.resolve(fileURLToPath(import.meta.url), '../../../../../..')
@@ -37,6 +37,21 @@ test('timeout kills the whole process tree, counts as a failure and says so', as
   await new Promise((res) => setTimeout(res, 300))
   expect(() => process.kill(grandchild, 0)).toThrow()
 })
+test('a gate that floods its output is killed at the cap, keeping the tail', async () => {
+  // 每秒 64 MB 的输出：没有上限时这条 gate 会一直吃到超时（12 秒 ≈ 768 MB）
+  const r = await runGate('node -e "setInterval(()=>process.stdout.write(\'x\'.repeat(1048576)),1)"', opts({ timeoutMs: 12_000 }))
+  expect(r).toMatchObject({ passed: false, timedOut: false, overflowed: true })
+  expect(r.output.length).toBeLessThan(GATE_OUTPUT_LIMIT_BYTES * 1.5)
+  expect(r.output.length).toBeGreaterThan(GATE_OUTPUT_LIMIT_BYTES / 2)
+  expect(r.output.endsWith('已终止，只保留尾部）')).toBe(true)
+})
+test('output below the cap is kept whole and not marked', async () => {
+  const r = await runGate('node -e "process.stdout.write(\'y\'.repeat(1048576)); process.exit(0)"', opts())
+  expect(r).toMatchObject({ passed: true, timedOut: false })
+  expect(r.overflowed).toBeUndefined()
+  expect(r.output).not.toContain('超过')
+})
+
 test('gateCwd: path: selector directly; other selectors via worktree show; unreadable → gate_cwd_unknown', async () => {
   const o = new FakeOrca(); const { deps, registry } = seedRunningTeam(o)
   expect(await gateCwd(deps, 'builder@duo')).toBe(os.tmpdir())                // seedRunningTeam 给 builder 的是 path:<tmpdir>

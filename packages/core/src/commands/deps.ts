@@ -22,6 +22,9 @@ export interface CommandDeps {
 
 export type Step = 'create' | 'wait' | 'brief' | 'send' | 'close'
 
+/** terminalSend 的提交等待秒数：launch / restore / send / notify 共用一份，别再各写一个 10。 */
+export const WAIT_SUBMIT_SEC = 10
+
 export const postAddress = (post: string, team: string) => `${post}@${team}`
 
 /**

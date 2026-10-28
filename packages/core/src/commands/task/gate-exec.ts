@@ -6,17 +6,23 @@ import type { CommandDeps } from '../deps.js'
 
 export interface GateExecResult {
   passed: boolean
-  /** 完整输出（不截断）。 */
+  /** 输出正文；超过 GATE_OUTPUT_LIMIT_BYTES 时只留尾部，并在末尾标明被截断。 */
   output: string
   timedOut: boolean
   /** 被 Ctrl-C / SIGTERM 中断（不计为 gate 失败）。 */
   interrupted?: boolean
+  /** 输出超过上限，gate 被终止并计为失败。 */
+  overflowed?: boolean
 }
 
+/** 输出只保留尾部这么多字节：`yes`、`tail -f` 这类跑飞的 gate 不能把内存吃光。 */
+export const GATE_OUTPUT_LIMIT_BYTES = 8 * 1024 * 1024
+
 const TIMEOUT_MARK = '\n（gate 超时，已终止）'
+const OVERFLOW_MARK = `\n（gate 输出超过 ${GATE_OUTPUT_LIMIT_BYTES / 1024 / 1024} MB，已终止，只保留尾部）`
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000
 
-/** 超时要杀整棵进程树：POSIX 杀进程组，Windows 用 taskkill /T。 */
+/** 超时、输出超限都要杀整棵进程树：POSIX 杀进程组，Windows 用 taskkill /T。 */
 function killTree(pid: number): void {
   try {
     if (process.platform === 'win32') {
@@ -38,8 +44,10 @@ function spawnGate(command: string, opts: { cwd: string; timeoutMs: number }): P
     // gate 是用户在 team.yaml 里写的完整 shell 命令行，必须经 shell 解释（2A spec 第 3 节约束 6，总纲 §2.4）；全项目只此一处。
     const child = spawn(command, { shell: true, cwd: opts.cwd, detached: process.platform !== 'win32', windowsHide: true })
     const chunks: Buffer[] = []
+    let kept = 0
     let timedOut = false
     let interrupted = false
+    let overflowed = false
     // 运行期间 Ctrl-C / SIGTERM：把 gate 的整个进程组一起杀掉，不留孤儿
     const onSignal = () => {
       interrupted = true
@@ -54,16 +62,33 @@ function spawnGate(command: string, opts: { cwd: string; timeoutMs: number }): P
       SIGNALS.forEach((s) => process.off(s, onSignal))
     }
     SIGNALS.forEach((s) => process.on(s, onSignal))
-    child.stdout.on('data', (d: Buffer) => chunks.push(d))
-    child.stderr.on('data', (d: Buffer) => chunks.push(d))
+    /** 只留尾部：超过上限就丢最前面的块，并终止 gate（整份输出既没必要也存不住）。 */
+    const collect = (d: Buffer) => {
+      chunks.push(d)
+      kept += d.length
+      if (kept <= GATE_OUTPUT_LIMIT_BYTES) return
+      if (!overflowed) {
+        overflowed = true
+        killTree(child.pid!)
+      }
+      while (chunks.length > 1 && kept > GATE_OUTPUT_LIMIT_BYTES) kept -= (chunks.shift() as Buffer).length
+    }
+    child.stdout.on('data', collect)
+    child.stderr.on('data', collect)
     child.on('error', (err) => {
       cleanup()
       resolve({ passed: false, output: `无法启动 gate：${err.message}`, timedOut: false })
     })
     child.on('close', (code) => {
       cleanup()
-      const output = Buffer.concat(chunks).toString('utf8') + (timedOut ? TIMEOUT_MARK : '')
-      resolve({ passed: code === 0 && !timedOut && !interrupted, output, timedOut, ...(interrupted ? { interrupted } : {}) })
+      const output = Buffer.concat(chunks).toString('utf8') + (timedOut ? TIMEOUT_MARK : '') + (overflowed ? OVERFLOW_MARK : '')
+      resolve({
+        passed: code === 0 && !timedOut && !interrupted && !overflowed,
+        output,
+        timedOut,
+        ...(interrupted ? { interrupted } : {}),
+        ...(overflowed ? { overflowed } : {}),
+      })
     })
   })
 }

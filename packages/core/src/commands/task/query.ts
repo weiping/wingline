@@ -161,6 +161,16 @@ export async function showTask(deps: CommandDeps, a: { id: string; team?: string
 // —— 卡住的任务（spec 第 10 节 --stale；2B 的巡查与 wl attention 复用）——
 
 export type StaleReason = 'done_unfinished' | 'call_uncertain' | 'dead_assignee' | 'owner_idle' | 'bypassed' | 'blocked_waiting'
+
+/** 卡住原因的短标签：TUI 与文档共用（控制台前端只 import type，标签在 web/src/labels.ts 另放一份）。 */
+export const STALE_REASON_LABEL: Record<StaleReason, string> = {
+  done_unfinished: '已完成但未收尾',
+  call_uncertain: '调用结果不确定',
+  dead_assignee: '派发失主',
+  owner_idle: '主人迟迟未开始',
+  bypassed: '绕过闸门上报',
+  blocked_waiting: '等待决策',
+}
 export interface StaleItem {
   taskId: string
   title: string
@@ -202,7 +212,7 @@ function doneUnfinished(x: StaleInput): StaleItem[] {
 }
 
 /** 账本键 → 任务与重跑命令；oneshot:* 不归任何任务。 */
-function commandOfKey(x: StaleInput, key: string, t: TaskRow): string | null {
+function commandOfKey(key: string, t: TaskRow): string | null {
   const [kind] = key.split(':')
   if (kind === 'dispatch') return `wl task start ${t.id} --as ${as(t.claimedBy)}`
   if (kind === 'done') return `wl task done ${t.id} --as ${as(t.claimedBy)}`
@@ -244,7 +254,7 @@ function callUncertain(x: StaleInput, now: Date, th: StaleThresholds): StaleItem
     const task = x.tasks.find((t) => t.id === taskIdOfKey(x, r.id))
     if (r.id.startsWith('dispatch:') && (task?.status === 'completed' || task?.status === 'failed')) return []
     if (task && epochOfKey(r.id) < task.epoch) return []
-    const command = task ? commandOfKey(x, r.id, task) : null
+    const command = task ? commandOfKey(r.id, task) : null
     return task && command ? [item(task, 'call_uncertain', r.updatedAt, command)] : []
   })
 }

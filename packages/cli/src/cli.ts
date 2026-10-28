@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import type { Writable } from 'node:stream'
-import { Command, CommanderError, Option } from 'commander'
+import { Command, CommanderError, InvalidArgumentError, Option } from 'commander'
 import {
   READ_ONLY_CALLS, Registry, type CallLogOptions, WinglineError, attention, auditedCommands, claimTask, createCallLog, createOrcaClient, createOrcaRunner, createTask, doneTask, down, escalateTask, exitCodeOf,
   followTimeline, listStale, listTasks, parseDuration, planTask, ps, readTimeline, reassignTask, recoverTask, releaseTask, resolveGate, resolveOrcaExecutable, restore, restoreAll, restoreAllExitCode, restoreExitCode, send, showTask, startTask,
@@ -391,7 +391,11 @@ export async function run(
   program
     .command('console')
     .description('本地控制台服务')
-    .option('--port <n>', '监听端口', (v) => parseInt(v, 10))
+    .option('--port <n>', '监听端口', (v) => {
+      const n = Number(v)
+      if (!(Number.isInteger(n) && n >= 1 && n <= 65535)) throw new InvalidArgumentError(`不是有效端口：${v}`)
+      return n
+    })
     .option('--open', '在 Orca 内置浏览器中打开')
     .option('--worktree <selector>', '工作区选择器')
     .option('--link', '获取一次性登录链接')

@@ -38,11 +38,14 @@ async function stillReady(deps: CommandDeps, team: string, ids: string[]): Promi
   }
 }
 
-/** 解冻：先重置巡查行与游标，最后删冻结行（中途崩溃仍是冻结状态，可重跑）。 */
+/** 解冻：先重置巡查行与游标，最后删冻结行（中途崩溃仍是冻结状态，可重跑）。团队以冻结行为准——巡查可能冻结的是没登记的终端（任务派去了陌生终端），knownPost 会把它判成 post_unknown，永远解不开。 */
 export async function unfreezePostCmd(deps: CommandDeps, a: { address: string }): Promise<{ skipped: Array<{ taskId: string; command: string }> }> {
-  const team = knownPost(deps, a.address)
   const frozen = deps.registry.getFrozen(a.address)
-  if (!frozen) throw new WinglineError('input', 'post_not_frozen', `岗位 ${a.address} 没有被冻结`)
+  if (!frozen) {
+    knownPost(deps, a.address) // 没冻结：按原口径报 team_unknown / post_unknown
+    throw new WinglineError('input', 'post_not_frozen', `岗位 ${a.address} 没有被冻结`)
+  }
+  const team = frozen.team
   const at = deps.now().toISOString()
   deps.registry.resetPatrolForPost(a.address, at)
   deps.registry.setCursor(team, a.address, at)

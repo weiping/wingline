@@ -1,5 +1,5 @@
 import { WinglineError } from '../../errors.js'
-import type { CommandDeps } from '../deps.js'
+import { WAIT_SUBMIT_SEC, type CommandDeps } from '../deps.js'
 import { locatePost } from '../locate.js'
 
 export type ScreenState = 'clear' | 'at_prompt' | 'shell' | 'unknown'
@@ -25,7 +25,6 @@ export const PROMPT_PATTERNS: readonly RegExp[] = [
 const SHELL_PROMPT = /(?:(?:[$#]|(?<!\d)%)\s*$)|(?:^PS .*>\s*$)|(?:^[A-Za-z]:\\.*>\s*$)/
 
 export const SCREEN_TAIL_LINES = 8
-const WAIT_SUBMIT_SEC = 10
 
 /** 纯函数：取 preview 最后 8 行，任一行命中 PROMPT_PATTERNS → at_prompt；否则最后一个非空行像 shell 提示符 → shell；空 → unknown；其余 clear。 */
 export function classifyPreview(preview: string): ScreenState {

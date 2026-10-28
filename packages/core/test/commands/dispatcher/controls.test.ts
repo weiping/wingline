@@ -18,11 +18,11 @@ test("unfreezePostCmd: not frozen → post_not_frozen; resets that post's patrol
   const c = clock(); const o = new FakeOrca(); const { deps, registry } = seedRunningTeam(o, { now: c.now })
   await expect(unfreezePostCmd(deps, { address: 'checker@duo' })).rejects.toMatchObject({ code: 'post_not_frozen' })
   registry.freezePost({ post: 'checker@duo', team: 'duo', reason: 'x' })
-  registry.putPatrolState({ team: 'duo', post: 'checker@duo', signal: 'no_progress', taskId: 't1', level: 3, since: 'A', levelAt: 'A', lastNudgedAt: null, notifyCount: 0, nextDueAt: null, clearedAt: null })
+  registry.putPatrolState({ team: 'duo', post: 'checker@duo', signal: 'no_progress', taskId: 't1', level: 3, since: 'A', levelAt: 'A', lastNudgedAt: null, notifyCount: 2, nextDueAt: 'FUTURE', clearedAt: null })
   const { id: child } = await o.taskCreate({ spec: 's', taskTitle: 'c', run: 'run-1', from: 'coord-1' })
   registry.beginRequest('done:t0:0:delivered:checker@duo'); registry.finishRequest('done:t0:0:delivered:checker@duo', 'done', { target: 'checker@duo', taskId: child, delivery: 'skipped_frozen' })
   expect(await unfreezePostCmd(deps, { address: 'checker@duo' })).toEqual({ skipped: [{ taskId: child, command: `wl task start ${child} --as checker@duo` }] })
-  expect(registry.getPatrolState('duo', 'checker@duo', 'no_progress', 't1')).toMatchObject({ level: 0, clearedAt: c.now().toISOString() })
+  expect(registry.getPatrolState('duo', 'checker@duo', 'no_progress', 't1')).toMatchObject({ level: 0, notifyCount: 0, nextDueAt: null, clearedAt: c.now().toISOString() })
   expect(registry.getCursor('checker@duo')).toBe(c.now().toISOString())
 })
 test('hushCmd defaults to 30 minutes; unhushCmd clears', async () => {
@@ -30,4 +30,11 @@ test('hushCmd defaults to 30 minutes; unhushCmd clears', async () => {
   expect(await hushCmd(deps, { address: 'checker@duo' })).toEqual({ until: new Date(c.now().getTime() + 1_800_000).toISOString() })
   await unhushCmd(deps, { address: 'checker@duo' })
   expect(registry.hushedUntil('checker@duo')).toBeNull()
+})
+test('unfreezePostCmd works for a frozen terminal that is not a registered post (task dispatched to a stray terminal)', async () => {
+  const o = new FakeOrca(); const { deps, registry } = seedRunningTeam(o)
+  // 巡查按终端标题记地址：冻结行可以指向没登记过的终端；knownPost 口径下这条永远解不开
+  registry.freezePost({ post: 'stray@duo', team: 'duo', reason: 'patrol: no_progress' })
+  await expect(unfreezePostCmd(deps, { address: 'stray@duo' })).resolves.toEqual({ skipped: [] })
+  expect(registry.getFrozen('stray@duo')).toBeNull()
 })

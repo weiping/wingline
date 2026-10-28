@@ -1,4 +1,4 @@
-import { postAddress, type StaleItem, type TimelineEvent } from '@weiping/wingline-core'
+import { postAddress, STALE_REASON_LABEL, type StaleItem, type TimelineEvent } from '@weiping/wingline-core'
 import { renderTimelineEvent } from '../output.js'
 import { cleanEvent, oneLine } from './text.js'
 import type { MenuItem, PendingAction, TimelineFilterSpec, TuiData, TuiState, View } from './types.js'
@@ -63,11 +63,6 @@ const recoverItem = (taskId: string): MenuItem => ({
   label: '恢复派发', steps: [], build: () => action('recoverTask', { id: taskId }, `恢复任务 ${taskId} 的派发`),
 })
 
-const STALE_LABEL: Record<StaleItem['reason'], string> = {
-  done_unfinished: '已完成但未收尾', call_uncertain: '调用结果不确定', dead_assignee: '派发失主',
-  owner_idle: '主人迟迟未开始', bypassed: '绕过闸门上报', blocked_waiting: '等待决策',
-}
-
 function postRows(data: TuiData): Row[] {
   const frozen = new Set(data.attention.frozen.map((f) => f.post))
   const hushed = new Set(data.hushed)
@@ -111,7 +106,7 @@ function inboxRows(data: TuiData): Row[] {
     ...a.frozen.map((f): Row => ({ section: '冻结的岗位', text: `${oneLine(f.post)}  ${oneLine(f.reason)}`, actions: [unfreezeItem(f.post)] })),
     ...rest.map((s): Row => ({
       section: '卡住的任务',
-      text: `${oneLine(s.title)}  ${STALE_LABEL[s.reason]}  主人 ${s.owner ? oneLine(s.owner) : '—'}`,
+      text: `${oneLine(s.title)}  ${STALE_REASON_LABEL[s.reason]}  主人 ${s.owner ? oneLine(s.owner) : '—'}`,
       actions: s.reason === 'dead_assignee' ? [recoverItem(s.taskId)] : [],
       hint: s.command,
     })),
@@ -119,6 +114,7 @@ function inboxRows(data: TuiData): Row[] {
       section: '巡查信号',
       text: `${oneLine(s.post)}  ${s.signal} L${s.level}${s.summary ? `  ${oneLine(s.summary)}` : ''}`,
       actions: [hushItem(s.post), sendItem(s.post)],
+      hint: s.command ?? undefined,
     })),
   ]
 }

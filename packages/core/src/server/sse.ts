@@ -3,7 +3,7 @@ import type { CommandDeps } from '../commands/deps.js'
 import type { CachedOrca } from '../view/snapshot.js'
 import { currentCursor, readTimelineAfter, type LogCursor } from '../commands/log.js'
 import { ps } from '../commands/ps.js'
-import { attention } from '../commands/dispatcher/attention.js'
+import { attention, pendingCount } from '../commands/dispatcher/attention.js'
 import { dispatcherHealth } from '../commands/dispatcher/lifecycle.js'
 
 export function cursorFrom(lastEventId: string | undefined, start: LogCursor): LogCursor {
@@ -34,6 +34,9 @@ interface TeamLoop {
   lastSnapshotHash: string | null
   /** 最近一次推送的快照；晚加入的订阅者立即拿到它，不必等数据再变。 */
   lastSnapshot: string | null
+  /** 上一轮 tick 还没跑完时跳过本轮：Orca 慢的时候 2s/5s 定时会叠着跑。 */
+  timelineBusy: boolean
+  snapshotBusy: boolean
 }
 
 export class TeamFeeds {
@@ -73,6 +76,8 @@ export class TeamFeeds {
         pingTimer: null,
         lastSnapshotHash: null,
         lastSnapshot: null,
+        timelineBusy: false,
+        snapshotBusy: false,
       }
       this.loops.set(team, loop)
       this.startLoop(team, loop)
@@ -104,12 +109,24 @@ export class TeamFeeds {
   private startLoop(team: string, loop: TeamLoop): void {
     // 1. timeline loop (2s)
     loop.timelineTimer = this.setTimer(async () => {
-      await this.tickTimeline(team, loop)
+      if (loop.timelineBusy) return
+      loop.timelineBusy = true
+      try {
+        await this.tickTimeline(team, loop)
+      } finally {
+        loop.timelineBusy = false
+      }
     }, this.timelineMs)
 
     // 2. snapshot loop (5s)
     loop.snapshotTimer = this.setTimer(async () => {
-      await this.tickSnapshot(team, loop)
+      if (loop.snapshotBusy) return
+      loop.snapshotBusy = true
+      try {
+        await this.tickSnapshot(team, loop)
+      } finally {
+        loop.snapshotBusy = false
+      }
     }, this.snapshotMs)
 
     // 3. ping loop (15s)
@@ -146,13 +163,7 @@ export class TeamFeeds {
         team,
         posts,
         dispatcher: disp,
-        attentionCounts: {
-          frozen: att.frozen.length,
-          signals: att.signals.length,
-          questions: att.questions.length,
-          stale: att.stale.length,
-          warnings: att.warnings.length,
-        },
+        attention: pendingCount(att),
       }
       const serialized = JSON.stringify(data)
       const hash = crypto.createHash('sha256').update(serialized).digest('hex')

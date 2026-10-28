@@ -97,7 +97,7 @@ test('GET /api/teams/:team/posts/:post returns the last 40 preview lines as plai
   expect(res.preview.join('\n')).not.toContain('\x1b')
 })
 
-test('GET /api/teams/:team/log returns TimelineEvent[] with filters', async () => {
+test('GET /api/teams/:team/log returns TimelineEvent[] with filters; a bad limit is limit_invalid, not a silent empty list', async () => {
   const o = new FakeOrca()
   const { deps } = seedRunningTeam(o)
   const d = { ...deps, orca: cachedOrca(o) }
@@ -112,6 +112,10 @@ test('GET /api/teams/:team/log returns TimelineEvent[] with filters', async () =
     body: null,
   })) as any
   expect(Array.isArray(res.events)).toBe(true)
+  await expect(route.h({ deps: d, params: { team: 'duo' }, query: new URLSearchParams('limit=abc'), body: null }))
+    .rejects.toMatchObject({ code: 'limit_invalid' })
+  await expect(route.h({ deps: d, params: { team: 'duo' }, query: new URLSearchParams('limit=0'), body: null }))
+    .rejects.toMatchObject({ code: 'limit_invalid' })
 })
 
 test.each(['Duo', '..'])('team param %s is rejected with invalid_param', async (bad) => {

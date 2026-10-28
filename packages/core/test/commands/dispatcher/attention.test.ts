@@ -55,6 +55,19 @@ test('dispatcherStatus summarizes health, last check/scan and warnings from patr
   expect(s).toMatchObject({ health: { state: 'stopped' }, lastScan: { outcome: 'failed:runtime_unavailable' }, warnings: [expect.stringContaining('links_cycle')] })
 })
 
+test('signal commands and last check survive 500+ newer patrol events (targeted query, not a 500-row window)', async () => {
+  const o = new FakeOrca(); const { deps, registry } = seedRunningTeam(o)
+  registry.putPatrolState({ team: 'duo', post: 'builder@duo', signal: 'owner_idle', taskId: 't1', level: 2, since: 'A', levelAt: 'A', lastNudgedAt: null, notifyCount: 1, nextDueAt: null, clearedAt: null })
+  registry.appendPatrolEvent({ team: 'duo', post: 'builder@duo', signal: 'owner_idle', taskId: 't1', action: 'notify', detail: { command: 'wl task start t1 --as builder@duo' } })
+  registry.appendPatrolEvent({ team: 'duo', action: 'check_failed', outcome: 'failed:lost' })
+  // 一天的巡查量就把 500 条窗口挤满；之后命令与“上次检查”都不该消失
+  for (let i = 0; i < 600; i++) registry.appendPatrolEvent({ team: 'duo', action: 'check_ok', outcome: 'ok' })
+  const r = await attention(deps, 'duo')
+  expect(r.signals.find((s) => s.signal === 'owner_idle')!.command).toBe('wl task start t1 --as builder@duo')
+  const st = await dispatcherStatus(deps, 'duo')
+  expect(st.lastCheck).toMatchObject({ outcome: 'ok' })
+})
+
 test('3D: screen signals carry a server-side summary, ordinary signals do not, and nothing leaks the session marker', async () => {
   const o = new FakeOrca(); const { deps, registry } = seedRunningTeam(o)
   const base = { team: 'duo', level: 1, since: 'A', levelAt: 'A', lastNudgedAt: null, notifyCount: 0, nextDueAt: null, clearedAt: null }

@@ -1,3 +1,4 @@
+import { pendingCount } from '@weiping/wingline-core'
 import { dispatcherLine } from '../output.js'
 import { rowsOf } from './items.js'
 import { oneLine } from './text.js'
@@ -28,7 +29,7 @@ const HELP = [
 function header(s: TuiState, data: TuiData): string[] {
   const tabs = TABS.map(([v, label]) => (v === s.view ? `[${label}]` : ` ${label} `)).join(' ')
   const a = data.attention
-  const pending = a.frozen.length + a.signals.length + a.questions.length + a.stale.length + a.warnings.length
+  const pending = pendingCount(a)
   const disp = dispatcherLine(a.dispatcher) ?? '调度员：未启动'
   return [`雁阵 ${oneLine(data.team)}   ${tabs}`, `${disp}   待办 ${pending}${s.stale ? '   [数据过期]' : ''}`]
 }

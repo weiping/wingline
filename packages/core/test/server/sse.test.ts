@@ -198,11 +198,10 @@ test('two subscribers on one team share one loop; the loop stops when both leave
   expect(timerCount).toBe(0)
 })
 
-test('SSE snapshot attentionCounts includes warnings', async () => {
+test('SSE snapshot carries the one attention count, warnings included', async () => {
   const o = new FakeOrca()
   const { deps, registry } = seedRunningTeam(o)
   const spec = registry.getTeam('duo')!.specPath
-  fs.writeFileSync(draftPathOf(spec), fs.readFileSync(spec, 'utf8'))
   const d = { ...deps, orca: cachedOrca(o) }
   const writes: string[] = []
   let tickSnapshot: () => Promise<void> = async () => {}
@@ -214,10 +213,15 @@ test('SSE snapshot attentionCounts includes warnings', async () => {
     clearTimer: () => {},
   })
   const unsub = await feeds.subscribe('duo', (chunk) => writes.push(chunk))
+  const lastCount = () => {
+    const frame = writes.filter((w) => w.includes('event: snapshot\n')).pop()!
+    return (JSON.parse(frame.split('\n').find((l) => l.startsWith('data: '))!.slice(6)) as { attention: number }).attention
+  }
   await tickSnapshot()
-  const frame = writes.find((w) => w.includes('event: snapshot\n'))!
-  const data = JSON.parse(frame.split('\n').find((l) => l.startsWith('data: '))!.slice(6))
-  expect(data.attentionCounts).toMatchObject({ warnings: 1 })
+  const before = lastCount()
+  fs.writeFileSync(draftPathOf(spec), fs.readFileSync(spec, 'utf8'))
+  await tickSnapshot()
+  expect(lastCount()).toBe(before + 1)
   unsub()
   feeds.closeAll()
 })
@@ -241,5 +245,31 @@ test('M-10: subscribing only asks for the newest row ids; it does not page the t
   await tickTimeline()
   expect(writes.filter((w) => w.includes('event: timeline'))).toHaveLength(1)
   unsub()
+})
+
+test('a slow tick is not re-entered: while one timeline tick is in flight the next interval skips', async () => {
+  const o = new FakeOrca()
+  const { deps } = seedRunningTeam(o)
+  const d = { ...deps, orca: cachedOrca(o) }
+  let release: () => void = () => {}
+  const gate = new Promise<void>((resolve) => (release = resolve))
+  let calls = 0
+  const registry = deps.registry as any
+  const real = registry.listTeamTaskLog.bind(registry)
+  registry.listTeamTaskLog = (...args: unknown[]) => {
+    calls += 1
+    return gate.then(() => real(...args))
+  }
+  let tickTimeline: () => Promise<void> = async () => {}
+  const feeds = new TeamFeeds(d, { setTimer: ((fn: any, ms: number) => { if (ms === 2000) tickTimeline = fn; return 1 as any }) as any, clearTimer: () => {} })
+  const unsub = await feeds.subscribe('duo', () => {})
+  const first = tickTimeline()
+  const second = tickTimeline()
+  expect(calls).toBe(1)
+  release()
+  await Promise.all([first, second])
+  registry.listTeamTaskLog = real
+  unsub()
+  feeds.closeAll()
 })
 

@@ -6,6 +6,7 @@ import { useStreamListener } from '../stream.js'
 import { ActionDialog } from '../components/ActionDialog.js'
 import { Link } from '../components/Link.js'
 import { ErrorBox, Loading, Pill, Section, postOf } from '../components/common.js'
+import { STALE_REASON } from '../labels.js'
 import { taskPath } from '../router.js'
 
 const COLUMNS: Array<[TaskRow['status'], string]> = [
@@ -15,15 +16,6 @@ const COLUMNS: Array<[TaskRow['status'], string]> = [
   ['completed', '完成'],
   ['failed', '失败'],
 ]
-
-const REASON_NOTE: Record<StaleItem['reason'], string> = {
-  done_unfinished: '已完成但未收尾',
-  call_uncertain: '调用结果不确定',
-  dead_assignee: '派发失主',
-  owner_idle: '主人迟迟未开始',
-  bypassed: '绕过闸门上报',
-  blocked_waiting: '等待决策',
-}
 
 function TaskCard({ t, team, stuck }: { t: TaskRow; team: string; stuck?: StaleItem['reason'] }) {
   return (
@@ -41,7 +33,7 @@ function TaskCard({ t, team, stuck }: { t: TaskRow; team: string; stuck?: StaleI
           </span>
         ))}
         {t.gateFailures > 0 && <Pill tone="bad">闸门失败 {t.gateFailures} 次</Pill>}
-        {stuck && <Pill tone="warn">卡住：{REASON_NOTE[stuck]}</Pill>}
+        {stuck && <Pill tone="warn">卡住：{STALE_REASON[stuck]}</Pill>}
       </div>
     </article>
   )
@@ -115,7 +107,7 @@ export function TaskBoard({ team }: { team: string }) {
         <Section title="卡住的任务" count={stale.data.tasks.length}>
           {stale.data.tasks.map((s) => (
             <div class="row" key={`${s.taskId}:${s.reason}`}>
-              <Link href={taskPath(team, s.taskId)}>{s.title}</Link> <Pill tone="warn">{REASON_NOTE[s.reason]}</Pill>{' '}
+              <Link href={taskPath(team, s.taskId)}>{s.title}</Link> <Pill tone="warn">{STALE_REASON[s.reason]}</Pill>{' '}
               <span class="muted small">主人 {s.owner ?? '—'}</span>
             </div>
           ))}
@@ -127,7 +119,7 @@ export function TaskBoard({ team }: { team: string }) {
   if (board.error) return <ErrorBox error={board.error} />
   if (!board.data) return <Loading />
   const reasonOf = new Map<string, StaleItem['reason']>()
-  for (const s of stale.data?.tasks ?? []) if (s.taskId && s.reason in REASON_NOTE) reasonOf.set(s.taskId, s.reason)
+  for (const s of stale.data?.tasks ?? []) if (s.taskId && s.reason in STALE_REASON) reasonOf.set(s.taskId, s.reason)
   const visible = board.data.tasks.filter(
     (t) => (!tag || t.tags.includes(tag)) && (!owner || (t.claimedBy ?? '').startsWith(`${owner}@`)),
   )
