@@ -180,16 +180,18 @@ export async function restorePost(
   const retry = `wl restore ${l.spec.name}`
   try {
     const located = await locatePost(orca, address)
-    if (located && located.connected) {
-      // 上次接回没走完（终端是 restore 拉起的、空闲等待或接回提示未定案）：补完它，而不是报 kept
+    if (located) {
+      // 上次接回没走完（终端是 restore 拉起或复用的、空闲等待或接回提示未定案）：补完它，而不是报 kept 或再开新代
       const pending = pendingResume(registry, l.spec.name, post.id, located.handle)
       if (pending && o.dryRun) return { address, outcome: 'resumed', sessionId: pending.sessionId }
       if (pending) return await settleResume(l, address, located.handle, pending.sessionId, pending.rid, retry, remote)
-      if (!o.dryRun) {
-        registry.setPostHandle(address, located.handle)
-        registry.setPostStatus(address, 'live')
+      if (located.connected) {
+        if (!o.dryRun) {
+          registry.setPostHandle(address, located.handle)
+          registry.setPostStatus(address, 'live')
+        }
+        return { address, outcome: 'kept' }
       }
-      return { address, outcome: 'kept' }
     }
 
     const row = registry.getPost(address)!
@@ -223,14 +225,11 @@ export async function restorePost(
       if (o.dryRun) return { address, outcome: 'resumed', sessionId }
       const gen = restoreGen(registry, l.spec.name, post.id)
       const rid = (step: 'create' | 'wait' | 'notice') => restoreKey(l.spec.name, post.id, gen, step)
-      // 终端还在（哪怕暂时断连）就复用它：再建一个会把同一会话接进两个终端；账本句柄只在终端已消失时用
-      let handle = located?.handle ?? (stepDone(registry, rid('create')) ? row.handle : null)
-      if (!handle) {
-        const created = await recorded(registry, rid('create'), () =>
-          orca.terminalCreate({ worktree: post.worktree, title: address, command }),
-        )
-        handle = created.value.handle
-      }
+      // 终端还在（哪怕暂时断连）就复用它并同样记入 create 账本，避免把同一会话接进两个终端或下一代重用旧代数
+      const created = await recorded(registry, rid('create'), async () =>
+        located ? { handle: located.handle } : orca.terminalCreate({ worktree: post.worktree, title: address, command }),
+      )
+      const handle = created.value.handle
       registry.setPostHandle(address, handle)
       registry.setSessionId(address, sessionId)
       return await settleResume(l, address, handle, sessionId, rid, retry, remote)

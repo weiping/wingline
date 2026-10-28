@@ -1,5 +1,6 @@
 import type { HandlerContext, Router } from './http.js'
 import { checkParam } from './http.js'
+import { WinglineError } from '../errors.js'
 import { ps, type PsRow } from '../commands/ps.js'
 import { dispatcherHealth } from '../commands/dispatcher/lifecycle.js'
 import { attention, dispatcherStatus, pendingCount } from '../commands/dispatcher/attention.js'
@@ -168,7 +169,7 @@ function registerPostRoutes(r: Router): void {
     const posts = await ps(ctx.deps, { team })
     const pRow = posts.find((p) => p.address === address)
     if (!pRow) {
-      throw new (await import('../errors.js')).WinglineError('input', 'invalid_param', `岗位 ${address} 不存在`)
+      throw new WinglineError('input', 'invalid_param', `岗位 ${address} 不存在`)
     }
     return await buildPostDetail(ctx, team, address, pRow)
   })
@@ -189,7 +190,6 @@ function registerLogRoute(r: Router): void {
     if (limitStr !== null) {
       limit = Number(limitStr)
       if (!(Number.isInteger(limit) && limit >= 1)) {
-        const { WinglineError } = await import('../errors.js')
         throw new WinglineError('input', 'limit_invalid', `limit ${limitStr} 无效：应为正整数`)
       }
     }

@@ -66,14 +66,22 @@ test('a dead post with a found session is resumed with the resume command, notif
   expect(s.registry.getPost('builder@duo')!.status).toBe('live')
 })
 
-test('a resume terminal that still exists but is disconnected is reused, never duplicated onto the same session', async () => {
+test('a resume terminal that still exists but is disconnected is reused, and a later restart advances the restore generation', async () => {
   const s = seed(new FakeOrca(), { handle: 'term-1', status: 'uncertain' })
   s.o.terminals.push({ handle: 'term-1', title: 'builder@duo', connected: false, worktreeId: 'wt-1' })
   s.o.sessions.push(hit('s1'))
   const r = await restorePost(s.l, s.post, { dryRun: false, briefing: s.briefing })
   expect(r).toMatchObject({ outcome: 'resumed', sessionId: 's1' })
   expect(s.o.created).toEqual([])
+  expect(s.o.sent).toHaveLength(1)
   expect(s.registry.getPost('builder@duo')!.handle).toBe('term-1')
+
+  // 之后终端真的关掉了，再跑一次 restore：应进到下一代，新建终端并再发一次接回提示
+  s.o.terminals = []
+  const r2 = await restorePost(s.l, s.post, { dryRun: false, briefing: s.briefing })
+  expect(r2).toMatchObject({ outcome: 'resumed', sessionId: 's1' })
+  expect(s.o.created).toHaveLength(1)
+  expect(s.o.sent).toHaveLength(2)
 })
 
 test('a resumed terminal that is back at a shell prompt is uncertain, not live; the rerun re-checks and finishes once the agent is up', async () => {
