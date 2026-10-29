@@ -28,6 +28,16 @@ function sampleRequest(pattern: string): { path: string; body: Record<string, un
       return { path: '/api/teams/duo/tasks/task-1/reassign', body: { to: 'builder' } }
     case '/api/teams/:team/tasks/:id/recover':
       return { path: '/api/teams/duo/tasks/task-1/recover', body: {} }
+    case '/api/teams/:team/tasks/:id/claim':
+      return { path: '/api/teams/duo/tasks/task-1/claim', body: { as: 'builder@duo' } }
+    case '/api/teams/:team/tasks/:id/release':
+      return { path: '/api/teams/duo/tasks/task-1/release', body: { as: 'builder@duo' } }
+    case '/api/teams/:team/tasks/:id/plan':
+      return { path: '/api/teams/duo/tasks/task-1/plan', body: { as: 'builder@duo', text: '先读代码再改' } }
+    case '/api/teams/:team/tasks/:id/start':
+      return { path: '/api/teams/duo/tasks/task-1/start', body: { as: 'builder@duo' } }
+    case '/api/teams/:team/tasks/:id/done':
+      return { path: '/api/teams/duo/tasks/task-1/done', body: { as: 'builder@duo' } }
     case '/api/teams/:team/gates/:gateId/resolve':
       return { path: '/api/teams/duo/gates/gate-1/resolve', body: { resolution: 'proceed' } }
     case '/api/teams/:team/posts/:post/freeze':
@@ -72,6 +82,11 @@ function makeRecordingCmds() {
     reassignTask: record('reassignTask', { id: 'task-1', to: 'builder@duo' }) as any,
     recoverTask: record('recoverTask', { id: 'task-1' }) as any,
     resolveGate: record('resolveGate', { gateId: 'gate-1' }) as any,
+    claimTask: record('claimTask') as any,
+    releaseTask: record('releaseTask') as any,
+    planTask: record('planTask') as any,
+    startTask: record('startTask', { delivery: 'self' }) as any,
+    doneTask: record('doneTask', { outcome: 'done' }) as any,
     freezePostCmd: record('freezePostCmd', {}) as any,
     unfreezePostCmd: record('unfreezePostCmd', {}) as any,
     hushCmd: record('hushCmd', {}) as any,
@@ -160,7 +175,7 @@ test('an uncertain send returns error with retry and retryRequest', async () => 
   })
 })
 
-test.each(WRITE_ROUTES)('$pattern：审计行带 console: 前缀、actor human', async (spec) => {
+test.each(WRITE_ROUTES)('$pattern：审计行带 console: 前缀；actor 取 as（无 as 记 human）', async (spec) => {
   const o = new FakeOrca()
   const { deps } = seedRunningTeam(o)
   deps.registry.insertTaskExt({ taskId: 'task-1', team: 'duo', tags: [], kind: 'work' })
@@ -182,7 +197,7 @@ test.each(WRITE_ROUTES)('$pattern：审计行带 console: 前缀、actor human',
   const audit = deps.registry.listAudit('duo')
   const last = audit.at(-1)!
   expect(last.command).toMatch(/^console: /)
-  expect(last.actor).toBe('human')
+  expect(last.actor).toBe(typeof sample.body.as === 'string' ? sample.body.as : 'human')
 })
 
 test.each(WRITE_ROUTES)('$pattern：原样重试体（原字段 + retryRequest）被接受，不撞 unknown_field', async (spec) => {
@@ -388,7 +403,7 @@ test('gates resolve 的 reassign=123（非字符串） → 400 invalid_param', a
   })
 })
 
-test('retryRequest 下传契约：仅 send、createTask、escalateTask 下传，其余 15 条不向下传', async () => {
+test('retryRequest 下传契约：仅 send、createTask、escalateTask 下传，其余 20 条不向下传', async () => {
   const o = new FakeOrca()
   const { deps } = seedRunningTeam(o)
   deps.registry.insertTaskExt({ taskId: 'task-1', team: 'duo', tags: [], kind: 'work' })
@@ -416,6 +431,11 @@ test('retryRequest 下传契约：仅 send、createTask、escalateTask 下传，
   expect(calls.reassignTask!.at(-1)?.retryRequest).toBeUndefined()
   expect(calls.recoverTask!.at(-1)?.retryRequest).toBeUndefined()
   expect(calls.resolveGate!.at(-1)?.retryRequest).toBeUndefined()
+  expect(calls.claimTask!.at(-1)?.retryRequest).toBeUndefined()
+  expect(calls.releaseTask!.at(-1)?.retryRequest).toBeUndefined()
+  expect(calls.planTask!.at(-1)?.retryRequest).toBeUndefined()
+  expect(calls.startTask!.at(-1)?.retryRequest).toBeUndefined()
+  expect(calls.doneTask!.at(-1)?.retryRequest).toBeUndefined()
   expect(calls.freezePostCmd!.at(-1)?.retryRequest).toBeUndefined()
   expect(calls.unfreezePostCmd!.at(-1)?.retryRequest).toBeUndefined()
   expect(calls.hushCmd!.at(-1)?.retryRequest).toBeUndefined()
@@ -448,6 +468,58 @@ test.each([
   const res = await route.h({ deps: d, params: route.params, query: new URLSearchParams(), body })
   expect(res).toBeDefined()
   expect(calls[name]!.at(-1)).toEqual(expected)
+})
+
+/** 任务执行流 5 条路由共用的测试底座：录制命令 + 可复用的 POST。 */
+function taskFlowHarness(verb: string) {
+  const o = new FakeOrca()
+  const { deps } = seedRunningTeam(o)
+  deps.registry.insertTaskExt({ taskId: 'task-1', team: 'duo', tags: [], kind: 'work' })
+  const d = { ...deps, orca: cachedOrca(o) }
+  const { cmds, calls } = makeRecordingCmds()
+  const r = new Router()
+  registerWriteRoutes(r, cmds)
+  const route = r.match('POST', `/api/teams/duo/tasks/task-1/${verb}`)!
+  const post = (body: unknown) => route.h({ deps: d, params: route.params, query: new URLSearchParams(), body })
+  return { post, calls }
+}
+
+test.each([
+  ['claim', {}],
+  ['release', {}],
+  ['plan', { text: '先读代码再改' }],
+  ['start', {}],
+  ['done', {}],
+])('任务执行流 %s 的路由可达并带上了 as', async (verb, extra) => {
+  const { post, calls } = taskFlowHarness(verb)
+  const res = await post({ as: 'builder@duo', ...extra })
+  expect(res).toBeDefined()
+  expect(calls[`${verb}Task`]!.at(-1)).toMatchObject({ id: 'task-1', as: 'builder@duo', ...extra })
+})
+
+test('as 不带 @ 时按本团队岗位解释成完整地址', async () => {
+  const { post, calls } = taskFlowHarness('claim')
+  await post({ as: 'builder' })
+  expect(calls.claimTask!.at(-1)).toMatchObject({ id: 'task-1', as: 'builder@duo' })
+})
+
+test('as 必须属于该团队，跨团队的 as 被拒绝', async () => {
+  const { post, calls } = taskFlowHarness('claim')
+  await expect(post({ as: 'builder@other' })).rejects.toMatchObject({ kind: 'input', code: 'invalid_param' })
+  expect(calls.claimTask).toBeUndefined()
+})
+
+test('as 缺省或格式不对时报 invalid_param', async () => {
+  const { post } = taskFlowHarness('claim')
+  await expect(post({})).rejects.toMatchObject({ kind: 'input', code: 'invalid_param' })
+  await expect(post({ as: 'bad name' })).rejects.toMatchObject({ kind: 'input', code: 'invalid_param' })
+})
+
+test('plan 的 text 缺省或为空白时报 invalid_param', async () => {
+  const { post, calls } = taskFlowHarness('plan')
+  await expect(post({ as: 'builder@duo' })).rejects.toMatchObject({ kind: 'input', code: 'invalid_param' })
+  await expect(post({ as: 'builder@duo', text: '   ' })).rejects.toMatchObject({ kind: 'input', code: 'invalid_param' })
+  expect(calls.planTask).toBeUndefined()
 })
 
 test('未启动的团队启动调度员时给出可读提示，而不是 500', async () => {

@@ -6,7 +6,11 @@ import { auditedCommands, type AuditCtx, type AuditTable } from '../audit.js'
 import { send } from '../commands/send.js'
 import { createTask } from '../commands/task/create.js'
 import { escalateTask, recoverTask, resolveGate } from '../commands/task/escalate.js'
-import { reassignTask } from '../commands/task/claim.js'
+import { claimTask, reassignTask, releaseTask } from '../commands/task/claim.js'
+import { planTask } from '../commands/task/plan.js'
+import { startTask } from '../commands/task/start.js'
+import { doneTask, type DoneResult } from '../commands/task/done.js'
+import type { Delivery } from '../commands/task/dispatch.js'
 import { freezePostCmd, hushCmd, unfreezePostCmd, unhushCmd } from '../commands/dispatcher/controls.js'
 import { dispatcherDown, dispatcherUp } from '../commands/dispatcher/lifecycle.js'
 import { dispatcherReply } from '../commands/dispatcher/inbox.js'
@@ -29,6 +33,11 @@ export interface WriteCommands {
   reassignTask: typeof reassignTask
   recoverTask: typeof recoverTask
   resolveGate: typeof resolveGate
+  claimTask: (deps: CommandDeps, a: { id: string; as?: string }) => Promise<void>
+  releaseTask: (deps: CommandDeps, a: { id: string; as?: string }) => Promise<void>
+  planTask: (deps: CommandDeps, a: { id: string; as?: string; text: string }) => Promise<void>
+  startTask: (deps: CommandDeps, a: { id: string; as?: string }) => Promise<{ delivery: Delivery; reason?: string; already?: true }>
+  doneTask: (deps: CommandDeps, a: { id: string; as?: string }) => Promise<DoneResult>
   freezePostCmd: typeof freezePostCmd
   unfreezePostCmd: typeof unfreezePostCmd
   hushCmd: typeof hushCmd
@@ -97,6 +106,40 @@ export const WRITE_ROUTES: WriteRouteSpec[] = [
     check: ['team', 'id'],
     fields: ['retryRequest'],
     call: async (cmds, ctx) => cmds.recoverTask(ctx.deps, { id: ctx.params.id! }),
+  },
+  {
+    pattern: '/api/teams/:team/tasks/:id/claim',
+    check: ['team', 'id'],
+    fields: ['as', 'retryRequest'],
+    call: async (cmds, ctx) => cmds.claimTask(ctx.deps, { id: ctx.params.id!, as: actorOf(ctx) }),
+  },
+  {
+    pattern: '/api/teams/:team/tasks/:id/release',
+    check: ['team', 'id'],
+    fields: ['as', 'retryRequest'],
+    call: async (cmds, ctx) => cmds.releaseTask(ctx.deps, { id: ctx.params.id!, as: actorOf(ctx) }),
+  },
+  {
+    pattern: '/api/teams/:team/tasks/:id/plan',
+    check: ['team', 'id'],
+    fields: ['as', 'text', 'retryRequest'],
+    call: async (cmds, ctx) => {
+      const { text } = ctx.body
+      if (typeof text !== 'string' || !text.trim()) throw new WinglineError('input', 'invalid_param', '参数 text 不合法')
+      return cmds.planTask(ctx.deps, { id: ctx.params.id!, as: actorOf(ctx), text })
+    },
+  },
+  {
+    pattern: '/api/teams/:team/tasks/:id/start',
+    check: ['team', 'id'],
+    fields: ['as', 'retryRequest'],
+    call: async (cmds, ctx) => cmds.startTask(ctx.deps, { id: ctx.params.id!, as: actorOf(ctx) }),
+  },
+  {
+    pattern: '/api/teams/:team/tasks/:id/done',
+    check: ['team', 'id'],
+    fields: ['as', 'retryRequest'],
+    call: async (cmds, ctx) => cmds.doneTask(ctx.deps, { id: ctx.params.id!, as: actorOf(ctx) }),
   },
   {
     pattern: '/api/teams/:team/gates/:gateId/resolve',
@@ -193,6 +236,17 @@ export const WRITE_ROUTES: WriteRouteSpec[] = [
 ]
 
 const ofAddress = (a: { address: string }) => a.address.split('@')[1] ?? '-'
+
+/** 任务执行流的执行者：必填；不带 @ 时按本团队岗位解释，带 @ 时团队后缀必须一致。 */
+function actorOf(ctx: HandlerContext): string {
+  const raw = ctx.body.as
+  if (typeof raw !== 'string' || !raw.trim()) throw new WinglineError('input', 'invalid_param', '参数 as 不合法')
+  if (!raw.includes('@')) { checkParam('post', raw); return postAddress(raw, ctx.params.team!) }
+  const [post, team] = raw.split('@')
+  checkParam('post', post!)
+  if (team !== ctx.params.team) throw new WinglineError('input', 'invalid_param', '执行者不属于该团队')
+  return raw
+}
 const byTask = (idOf: (a: any) => string) => (_a: unknown, ctx: AuditCtx) => ctx.deps.registry.getTaskExt(idOf(_a))?.team ?? '-'
 const byGate = (gateId: (a: any) => string) => (_a: unknown, ctx: AuditCtx) => ctx.deps.registry.getGate(gateId(_a))?.team ?? '-'
 
@@ -231,6 +285,36 @@ export const CONSOLE_AUDIT: AuditTable<WriteCommands> = {
     team: byGate((a) => a.gateId),
     target: (a) => a.gateId,
     summary: (a) => ({ resolution: a.resolution, reassign: a.reassign }),
+  },
+  claimTask: {
+    command: 'task claim',
+    team: byTask((a) => a.id),
+    target: (a) => a.id,
+    summary: (a) => ({ as: a.as }),
+  },
+  releaseTask: {
+    command: 'task release',
+    team: byTask((a) => a.id),
+    target: (a) => a.id,
+    summary: (a) => ({ as: a.as }),
+  },
+  planTask: {
+    command: 'task plan',
+    team: byTask((a) => a.id),
+    target: (a) => a.id,
+    summary: (a) => ({ as: a.as, text: a.text }),
+  },
+  startTask: {
+    command: 'task start',
+    team: byTask((a) => a.id),
+    target: (a) => a.id,
+    summary: (a) => ({ as: a.as }),
+  },
+  doneTask: {
+    command: 'task done',
+    team: byTask((a) => a.id),
+    target: (a) => a.id,
+    summary: (a) => ({ as: a.as }),
   },
   freezePostCmd: {
     command: 'dispatcher freeze',
@@ -312,6 +396,12 @@ export function auditedWriteCommands(prefix: 'console:' | 'tui:'): WriteCommands
     reassignTask,
     recoverTask,
     resolveGate,
+    // 任务执行流：控制台口径只透传 id/as（+plan 的 text），resumeEpoch 等其余参数不暴露
+    claimTask: (deps, a) => claimTask(deps, { id: a.id, as: a.as }),
+    releaseTask: (deps, a) => releaseTask(deps, { id: a.id, as: a.as }),
+    planTask: (deps, a) => planTask(deps, { id: a.id, as: a.as, text: a.text }),
+    startTask: (deps, a) => startTask(deps, { id: a.id, as: a.as }),
+    doneTask: (deps, a) => doneTask(deps, { id: a.id, as: a.as }),
     freezePostCmd,
     unfreezePostCmd,
     hushCmd,
