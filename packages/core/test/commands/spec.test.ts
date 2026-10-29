@@ -6,6 +6,7 @@ import { draftPathOf, fileHash, textHash } from '../../src/spec/draft.js'
 import { DUO_YAML } from '../spec/helpers.js'
 import { FakeOrca, seedRunningTeam } from './fake-client.js'
 import { restore } from '../../src/commands/restore/index.js'
+import { taskPreflight } from '../../src/commands/task/preflight.js'
 
 const EDITED = DUO_YAML.replace('model: opus', 'model: sonnet')
 
@@ -132,4 +133,10 @@ test('运行中团队保存文档：注册表里的规格哈希变旧，restore 
   const { deps } = seed()
   await saveSpecCmd(deps, { team: 'duo', yaml: DUO_YAML, baseHash: null, running: true, files: { 'NORMS.md': '# 改过的规范\n' } })
   await expect(restore(deps, { team: 'duo' })).rejects.toMatchObject({ code: 'team_spec_changed' })
+})
+
+test('运行中团队保存文档后，任务操作前置同样报 team_spec_changed（认领/开始/完成被暂停，需 down + up）', async () => {
+  const { deps } = seed()
+  await saveSpecCmd(deps, { team: 'duo', yaml: DUO_YAML, baseHash: null, running: true, files: { 'NORMS.md': '# 改过的规范\n' } })
+  await expect(taskPreflight(deps, 'duo')).rejects.toMatchObject({ code: 'team_spec_changed' })
 })
