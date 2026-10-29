@@ -20,6 +20,9 @@ import { restore } from '../commands/restore/index.js'
 import { up, type UpResult } from '../commands/up.js'
 import type { DownResult } from '../commands/down.js'
 import type { RestoreResult } from '../commands/restore/index.js'
+import { initTeamCmd } from '../commands/init.js'
+import { autostartInstall, autostartUninstall } from '../commands/autostart/index.js'
+import { realAutostartSys } from '../commands/autostart/sys.js'
 
 /** 控制台口径的参数：带 team 名（审计表靠它取团队），开关在路由层已归一成 boolean。 */
 export interface ConsoleUpArgs { team: string; draft?: boolean; newRun?: boolean; adoptRun?: string }
@@ -50,6 +53,9 @@ export interface WriteCommands {
   restore: (deps: CommandDeps, a: ConsoleRestoreArgs) => Promise<RestoreResult>
   dispatcherUp: (deps: CommandDeps, a: { team: string }) => Promise<{ address: string; outcome: 'already_running' | 'started'; handle?: string }>
   dispatcherDown: (deps: CommandDeps, a: { team: string; close?: boolean }) => Promise<{ address: string; outcome: 'noop' | 'closed' | 'already_gone' }>
+  initTeamCmd: typeof initTeamCmd
+  autostartInstall: (deps: CommandDeps, a: { waitOrca?: string }) => Promise<{ platform: string; file: string; command: string[]; logPath: string; waitOrca: string }>
+  autostartUninstall: (deps: CommandDeps) => Promise<{ file: string; removed: boolean }>
 }
 
 export interface WriteRouteSpec {
@@ -233,6 +239,28 @@ export const WRITE_ROUTES: WriteRouteSpec[] = [
     fields: ['close', 'retryRequest'],
     call: async (cmds, ctx) => cmds.dispatcherDown(ctx.deps, { team: ctx.params.team!, close: ctx.body.close ?? true }),
   },
+  {
+    pattern: '/api/teams',
+    check: [],
+    fields: ['mode', 'name', 'repo', 'template', 'dir', 'specPath', 'retryRequest'],
+    call: async (cmds, ctx) => {
+      const { mode, name, repo, template, dir, specPath } = ctx.body
+      if (mode !== 'template' && mode !== 'import') throw new WinglineError('input', 'invalid_param', '参数 mode 不合法')
+      return cmds.initTeamCmd(ctx.deps, { mode, name, repo, template, dir, specPath })
+    },
+  },
+  {
+    pattern: '/api/autostart/install',
+    check: [],
+    fields: ['waitOrca', 'retryRequest'],
+    call: async (cmds, ctx) => cmds.autostartInstall(ctx.deps, { waitOrca: ctx.body.waitOrca }),
+  },
+  {
+    pattern: '/api/autostart/uninstall',
+    check: [],
+    fields: ['retryRequest'],
+    call: async (cmds, ctx) => cmds.autostartUninstall(ctx.deps),
+  },
 ]
 
 const ofAddress = (a: { address: string }) => a.address.split('@')[1] ?? '-'
@@ -385,6 +413,21 @@ export const CONSOLE_AUDIT: AuditTable<WriteCommands> = {
     team: (a) => a.team,
     summary: (a) => ({ close: a.close }),
   },
+  initTeamCmd: {
+    command: 'init',
+    // 新建团队没有 :team 路径参数：团队名从结果里取
+    team: (_a, ctx) => (ctx.result as { team?: string } | undefined)?.team ?? '-',
+    summary: (a, ctx) => ({ mode: a.mode, template: a.template, created: (ctx.result as { created?: boolean } | undefined)?.created }),
+  },
+  autostartInstall: {
+    command: 'autostart install',
+    team: () => '-',
+    summary: (a) => ({ waitOrca: a.waitOrca }),
+  },
+  autostartUninstall: {
+    command: 'autostart uninstall',
+    team: () => '-',
+  },
 }
 
 /** 控制台用 `console:`，TUI 用 `tui:`；两者共用同一张审计表，执行者都是 human。 */
@@ -419,6 +462,10 @@ export function auditedWriteCommands(prefix: 'console:' | 'tui:'): WriteCommands
     restore: (deps, a) => restore(deps, { team: a.team, dryRun: !!a.dryRun, noTasks: !!a.noTasks, sessions: a.sessions }),
     dispatcherUp: (deps, a) => dispatcherUp(deps, { team: a.team }),
     dispatcherDown: (deps, a) => dispatcherDown(deps, { team: a.team, close: a.close ?? true }),
+    initTeamCmd,
+    // 系统宿主（launchd/systemd）只有真实执行时才能取：默认 realAutostartSys，测试经 cmds 注入替换
+    autostartInstall: (deps, a) => autostartInstall(deps, realAutostartSys(), { waitOrca: a.waitOrca }),
+    autostartUninstall: (deps) => autostartUninstall(deps, realAutostartSys()),
   }
   return auditedCommands(raw, CONSOLE_AUDIT, { prefix, actor: 'human' })
 }
