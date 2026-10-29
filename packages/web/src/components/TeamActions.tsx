@@ -40,7 +40,7 @@ export function useAction(onDone: () => void) {
 }
 
 /** 在途禁用显示「执行中…」；uncertain 时换成「按原样重试」的按钮渲染。 */
-function ActionButton(p: { label: string; kind?: string; busy: boolean; error: string | null; retry: { send: () => Promise<void> } | null; onSend: () => void }) {
+export function ActionButton(p: { label: string; kind?: string; busy: boolean; error: string | null; retry: { send: () => Promise<void> } | null; onSend: () => void }) {
   return (
     <>
       {p.error && <span class="error small">{p.error}</span>}

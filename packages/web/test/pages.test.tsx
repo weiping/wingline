@@ -9,7 +9,7 @@ import { TaskBoard } from '../src/pages/TaskBoard.js'
 import { TaskDetail } from '../src/pages/TaskDetail.js'
 import { Timeline } from '../src/pages/Timeline.js'
 import { StreamProvider } from '../src/stream.js'
-import { FakeEventSource, attentionOf, eventOf, mockApi, stubEventSource, teamOf } from './helpers.js'
+import { Fail, FakeEventSource, attentionOf, eventOf, mockApi, stubEventSource, teamOf } from './helpers.js'
 
 afterEach(() => {
   cleanup()
@@ -523,4 +523,124 @@ test('inbox: 调度员告警区提供「启动调度员」按钮', async () => {
   await findByText('调度员不在运行', { exact: false })
   fireEvent.click(getByText('启动调度员', { selector: 'button' }))
   await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/api/teams/duo/dispatcher/up')).toBe(true))
+})
+
+const shownTask = (over: Record<string, unknown> = {}) => ({
+  id: 't1', status: 'ready', title: 'Alpha', parentId: null, tags: [], kind: 'work', plan: null, claimedBy: null,
+  assigneeHandle: null, dispatchId: null, epoch: 1, gateFailures: 0, readySince: null, dispatchedAt: null, result: null,
+  outcome: null, reportedBy: null, closure: null, history: [], ...over,
+})
+
+const taskDetailRoutes = {
+  'GET /api/session': () => ({ csrfToken: 'tok', version: '1', teams: ['duo'] }),
+  'GET /api/teams/duo': () => teamOf(),
+  'GET /api/teams/duo/tasks/t1': () => shownTask(),
+}
+
+test('任务详情页有「以岗位身份执行」卡片与五个按钮', async () => {
+  stubEventSource()
+  mockApi(taskDetailRoutes)
+  const { getByText, findByText } = render(withStream('duo', <TaskDetail team="duo" id="t1" />))
+  await findByText('Alpha')
+  expect(getByText('以岗位身份执行')).toBeTruthy()
+  for (const label of ['认领任务', '放弃认领', '记录计划', '开始任务', '完成并校验']) {
+    expect(getByText(label, { selector: 'button' })).toBeTruthy()
+  }
+})
+
+test('「认领任务」以默认选中的牵头岗身份 POST claim', async () => {
+  stubEventSource()
+  const calls = mockApi({ ...taskDetailRoutes, 'POST /api/teams/duo/tasks/t1/claim': () => ({}) })
+  const { getByText, findByText } = render(withStream('duo', <TaskDetail team="duo" id="t1" />))
+  await findByText('Alpha')
+  fireEvent.click(getByText('认领任务', { selector: 'button' }))
+  await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/api/teams/duo/tasks/t1/claim')).toBe(true))
+  expect(calls.find((c) => c.method === 'POST' && c.path === '/api/teams/duo/tasks/t1/claim')!.body).toEqual({ as: 'builder@duo' })
+})
+
+test('切到其它岗位后「开始任务」以该岗位 POST start', async () => {
+  stubEventSource()
+  const calls = mockApi({ ...taskDetailRoutes, 'POST /api/teams/duo/tasks/t1/start': () => ({}) })
+  const { container, getByText, findByText } = render(withStream('duo', <TaskDetail team="duo" id="t1" />))
+  await findByText('Alpha')
+  fireEvent.change(container.querySelector('select')!, { target: { value: 'checker@duo' } })
+  fireEvent.click(getByText('开始任务', { selector: 'button' }))
+  await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/api/teams/duo/tasks/t1/start')).toBe(true))
+  expect(calls.find((c) => c.method === 'POST' && c.path === '/api/teams/duo/tasks/t1/start')!.body).toEqual({ as: 'checker@duo' })
+})
+
+test('「记录计划」弹窗提交 as 与计划内容', async () => {
+  stubEventSource()
+  const calls = mockApi({ ...taskDetailRoutes, 'POST /api/teams/duo/tasks/t1/plan': () => ({}) })
+  const { container, getByText, findByText } = render(withStream('duo', <TaskDetail team="duo" id="t1" />))
+  await findByText('Alpha')
+  fireEvent.click(getByText('记录计划', { selector: 'button' }))
+  fireEvent.input(container.querySelector('textarea')!, { target: { value: '先做 A' } })
+  fireEvent.click(getByText('确认', { selector: 'button' }))
+  await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/api/teams/duo/tasks/t1/plan')).toBe(true))
+  expect(calls.find((c) => c.method === 'POST' && c.path === '/api/teams/duo/tasks/t1/plan')!.body).toEqual({ as: 'builder@duo', text: '先做 A' })
+})
+
+test('「完成并校验」闸门失败时显示输出摘要并刷新任务详情', async () => {
+  stubEventSource()
+  let n = 0
+  const calls = mockApi({
+    ...taskDetailRoutes,
+    'GET /api/teams/duo/tasks/t1': () =>
+      shownTask(++n === 1 ? { status: 'dispatched', claimedBy: 'builder@duo' } : { status: 'blocked', claimedBy: 'builder@duo', gateFailures: 1 }),
+    'POST /api/teams/duo/tasks/t1/done': () => ({ outcome: 'gate_failed', gateOutputPath: '/home/x/.wingline/logs/duo/gate-t1-1-1.txt' }),
+  })
+  const { getByText, findByText } = render(withStream('duo', <TaskDetail team="duo" id="t1" />))
+  await findByText('Alpha')
+  fireEvent.click(getByText('完成并校验', { selector: 'button' }))
+  expect(await findByText(/闸门未通过/)).toBeTruthy()
+  expect(getByText(/gate-t1-1-1\.txt/)).toBeTruthy()
+  expect(await findByText('1 次')).toBeTruthy()
+  expect(calls.find((c) => c.method === 'POST' && c.path === '/api/teams/duo/tasks/t1/done')!.body).toEqual({ as: 'builder@duo' })
+})
+
+test('终态任务提供「重开并转人工」（reopen: true），且不渲染执行卡片', async () => {
+  stubEventSource()
+  const calls = mockApi({
+    ...taskDetailRoutes,
+    'GET /api/teams/duo/tasks/t1': () => shownTask({ status: 'completed', outcome: 'done', claimedBy: 'builder@duo' }),
+    'POST /api/teams/duo/tasks/t1/escalate': () => ({}),
+  })
+  const { container, getByText, findByText, queryByText } = render(withStream('duo', <TaskDetail team="duo" id="t1" />))
+  await findByText('Alpha')
+  expect(queryByText('认领任务')).toBeNull()
+  fireEvent.click(getByText('重开并转人工', { selector: 'button' }))
+  fireEvent.input(container.querySelector('textarea')!, { target: { value: '还要补一段' } })
+  fireEvent.click(getByText('确认', { selector: 'button' }))
+  await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/api/teams/duo/tasks/t1/escalate')).toBe(true))
+  expect(calls.find((c) => c.method === 'POST' && c.path === '/api/teams/duo/tasks/t1/escalate')!.body).toEqual({ reason: '还要补一段', reopen: true })
+})
+
+test('团队未启动时任务详情给中性提示，且不渲染执行卡片', async () => {
+  stubEventSource()
+  mockApi({
+    ...taskDetailRoutes,
+    'GET /api/teams/duo/tasks/t1': () => {
+      throw new Fail(400, { kind: 'input', code: 'run_not_ready', message: '团队 duo 还没有建立 Run' })
+    },
+  })
+  const { container, findByText, queryByText } = render(withStream('duo', <TaskDetail team="duo" id="t1" />))
+  expect(await findByText('团队尚未启动，先点击『启动团队』')).toBeTruthy()
+  expect(container.querySelector('.error')).toBeNull()
+  expect(queryByText('认领任务')).toBeNull()
+})
+
+test('团队未启动时任务看板给中性提示而不是错误块', async () => {
+  stubEventSource()
+  const notReady = () => {
+    throw new Fail(400, { kind: 'input', code: 'run_not_ready', message: '团队 duo 还没有建立 Run' })
+  }
+  mockApi({
+    'GET /api/session': () => ({ csrfToken: 'tok', version: '1', teams: ['duo'] }),
+    'GET /api/teams/duo/tasks': notReady,
+    'GET /api/teams/duo/tasks?stale=true': notReady,
+  })
+  const { container, findByText } = render(withStream('duo', <TaskBoard team="duo" />))
+  expect(await findByText('团队尚未启动，先点击『启动团队』')).toBeTruthy()
+  expect(container.querySelector('.error')).toBeNull()
 })

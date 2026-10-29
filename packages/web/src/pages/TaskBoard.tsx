@@ -1,6 +1,7 @@
+import type { ComponentChildren } from 'preact'
 import { useState } from 'preact/hooks'
 import type { StaleItem, TaskRow } from '@weiping/wingline-core'
-import { api } from '../api.js'
+import { ApiError, api } from '../api.js'
 import { useApi } from '../hooks.js'
 import { useStreamListener } from '../stream.js'
 import { ActionDialog } from '../components/ActionDialog.js'
@@ -16,6 +17,22 @@ const COLUMNS: Array<[TaskRow['status'], string]> = [
   ['completed', '完成'],
   ['failed', '失败'],
 ]
+
+/** 团队没有 Run 时后端回 run_not_ready：按中性提示处理，不走红色错误块（规格第 3.3.4 条）。 */
+const notReady = (e: Error | null): boolean => e !== null && e instanceof ApiError && e.code === 'run_not_ready'
+
+function NotReadyBoard() {
+  return (
+    <div class="page">
+      <header class="page-head">
+        <h1>任务看板</h1>
+      </header>
+      <p class="banner" role="status">
+        团队尚未启动，先点击『启动团队』
+      </p>
+    </div>
+  )
+}
 
 function TaskCard({ t, team, stuck }: { t: TaskRow; team: string; stuck?: StaleItem['reason'] }) {
   return (
@@ -39,23 +56,39 @@ function TaskCard({ t, team, stuck }: { t: TaskRow; team: string; stuck?: StaleI
   )
 }
 
-/** 任务看板：按状态分列；按标签 / 主人筛选；“只看卡住的”切到 stale 列表。 */
-export function TaskBoard({ team }: { team: string }) {
-  const enc = encodeURIComponent(team)
-  const [tag, setTag] = useState('')
-  const [owner, setOwner] = useState('')
-  const [stuck, setStuck] = useState(false)
-  const board = useApi<{ tasks: TaskRow[] }>(stuck ? null : `/api/teams/${enc}/tasks`)
-  // 分列卡片上的角标也要它，所以始终取；取不到时看板照常显示，只是没有角标
-  const stale = useApi<{ tasks: StaleItem[] }>(`/api/teams/${enc}/tasks?stale=true`)
-  useStreamListener({
-    snapshot: () => {
-      board.reload()
-      stale.reload()
-    },
-  })
+/** 筛选栏：标签 / 主人筛选、「只看卡住的」切换、新建任务。 */
+function BoardFilters(p: {
+  tag: string
+  owner: string
+  stuck: boolean
+  setTag: (v: string) => void
+  setOwner: (v: string) => void
+  setStuck: (v: boolean) => void
+  children?: ComponentChildren
+}) {
+  return (
+    <div class="filters">
+      <label class="field inline">
+        <span>标签</span>
+        <input value={p.tag} onInput={(e) => p.setTag((e.target as HTMLInputElement).value.trim())} />
+      </label>
+      <label class="field inline">
+        <span>主人（岗位名）</span>
+        <input value={p.owner} onInput={(e) => p.setOwner((e.target as HTMLInputElement).value.trim())} />
+      </label>
+      <label class="field inline check">
+        <input type="checkbox" checked={p.stuck} onChange={(e) => p.setStuck((e.target as HTMLInputElement).checked)} />
+        <span>只看卡住的</span>
+      </label>
+      {p.children}
+    </div>
+  )
+}
 
-  const create = (
+/** 新建任务：标题必填，可带岗位与标签。 */
+function CreateTaskDialog({ team, onDone }: { team: string; onDone: () => void }) {
+  const enc = encodeURIComponent(team)
+  return (
     <ActionDialog
       label="新建任务"
       title="新建任务"
@@ -74,29 +107,68 @@ export function TaskBoard({ team }: { team: string }) {
           ...(rr ? { retryRequest: rr } : {}),
         })
       }}
-      onDone={() => board.reload()}
+      onDone={onDone}
     />
   )
-  const bar = (
-    <div class="filters">
-      <label class="field inline">
-        <span>标签</span>
-        <input value={tag} onInput={(e) => setTag((e.target as HTMLInputElement).value.trim())} />
-      </label>
-      <label class="field inline">
-        <span>主人（岗位名）</span>
-        <input value={owner} onInput={(e) => setOwner((e.target as HTMLInputElement).value.trim())} />
-      </label>
-      <label class="field inline check">
-        <input type="checkbox" checked={stuck} onChange={(e) => setStuck((e.target as HTMLInputElement).checked)} />
-        <span>只看卡住的</span>
-      </label>
-      {create}
+}
+
+/** 「只看卡住的」列表。 */
+function StuckSection({ team, tasks }: { team: string; tasks: StaleItem[] }) {
+  return (
+    <Section title="卡住的任务" count={tasks.length}>
+      {tasks.map((s) => (
+        <div class="row" key={`${s.taskId}:${s.reason}`}>
+          <Link href={taskPath(team, s.taskId)}>{s.title}</Link> <Pill tone="warn">{STALE_REASON[s.reason]}</Pill>{' '}
+          <span class="muted small">主人 {s.owner ?? '—'}</span>
+        </div>
+      ))}
+    </Section>
+  )
+}
+
+/** 分列看板主体。 */
+function BoardColumns({ team, tasks, reasonOf }: { team: string; tasks: TaskRow[]; reasonOf: Map<string, StaleItem['reason']> }) {
+  return (
+    <div class="board">
+      {COLUMNS.map(([status, label]) => {
+        const items = tasks.filter((t) => t.status === status)
+        return (
+          <section class="col" key={status}>
+            <h2>
+              {label} <span class="count">{items.length}</span>
+            </h2>
+            {items.map((t) => (
+              <TaskCard key={t.id} t={t} team={team} stuck={reasonOf.get(t.id)} />
+            ))}
+          </section>
+        )
+      })}
     </div>
   )
+}
 
+/** 任务看板：按状态分列；按标签 / 主人筛选；“只看卡住的”切到 stale 列表。 */
+export function TaskBoard({ team }: { team: string }) {
+  const enc = encodeURIComponent(team)
+  const [tag, setTag] = useState('')
+  const [owner, setOwner] = useState('')
+  const [stuck, setStuck] = useState(false)
+  const board = useApi<{ tasks: TaskRow[] }>(stuck ? null : `/api/teams/${enc}/tasks`)
+  // 分列卡片上的角标也要它，所以始终取；取不到时看板照常显示，只是没有角标
+  const stale = useApi<{ tasks: StaleItem[] }>(`/api/teams/${enc}/tasks?stale=true`)
+  useStreamListener({
+    snapshot: () => {
+      board.reload()
+      stale.reload()
+    },
+  })
+  const bar = (
+    <BoardFilters tag={tag} owner={owner} stuck={stuck} setTag={setTag} setOwner={setOwner} setStuck={setStuck}>
+      <CreateTaskDialog team={team} onDone={() => board.reload()} />
+    </BoardFilters>
+  )
   if (stuck) {
-    if (stale.error) return <ErrorBox error={stale.error} />
+    if (stale.error) return notReady(stale.error) ? <NotReadyBoard /> : <ErrorBox error={stale.error} />
     if (!stale.data) return <Loading />
     return (
       <div class="page">
@@ -104,18 +176,11 @@ export function TaskBoard({ team }: { team: string }) {
           <h1>任务看板</h1>
         </header>
         {bar}
-        <Section title="卡住的任务" count={stale.data.tasks.length}>
-          {stale.data.tasks.map((s) => (
-            <div class="row" key={`${s.taskId}:${s.reason}`}>
-              <Link href={taskPath(team, s.taskId)}>{s.title}</Link> <Pill tone="warn">{STALE_REASON[s.reason]}</Pill>{' '}
-              <span class="muted small">主人 {s.owner ?? '—'}</span>
-            </div>
-          ))}
-        </Section>
+        <StuckSection team={team} tasks={stale.data.tasks} />
       </div>
     )
   }
-
+  if (notReady(board.error) || notReady(stale.error)) return <NotReadyBoard />
   if (board.error) return <ErrorBox error={board.error} />
   if (!board.data) return <Loading />
   const reasonOf = new Map<string, StaleItem['reason']>()
@@ -129,21 +194,7 @@ export function TaskBoard({ team }: { team: string }) {
         <h1>任务看板</h1>
       </header>
       {bar}
-      <div class="board">
-        {COLUMNS.map(([status, label]) => {
-          const items = visible.filter((t) => t.status === status)
-          return (
-            <section class="col" key={status}>
-              <h2>
-                {label} <span class="count">{items.length}</span>
-              </h2>
-              {items.map((t) => (
-                <TaskCard key={t.id} t={t} team={team} stuck={reasonOf.get(t.id)} />
-              ))}
-            </section>
-          )
-        })}
-      </div>
+      <BoardColumns team={team} tasks={visible} reasonOf={reasonOf} />
     </div>
   )
 }
