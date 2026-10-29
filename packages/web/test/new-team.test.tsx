@@ -3,6 +3,7 @@ import { afterEach, expect, test, vi } from 'vitest'
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/preact'
 import { NewTeamDialog, TEAM_TEMPLATES_UI } from '../src/components/NewTeamDialog.js'
 import { Layout } from '../src/components/Layout.js'
+import { App } from '../src/app.js'
 import { Fail, SESSION, mockApi } from './helpers.js'
 
 afterEach(() => {
@@ -147,29 +148,70 @@ test('点击取消按钮调用 onClose', () => {
   expect(onClose).toHaveBeenCalled()
 })
 
-test('Layout 侧栏包含「新建团队」按钮并能打开弹窗', () => {
-  const { getByRole, queryByRole } = render(
-    <Layout teams={['duo']} team="duo">
+test('模板卡片包含 aria-pressed 状态并使用 Pill 标记当前项', () => {
+  const { getByRole, getByText } = render(
+    <NewTeamDialog open onClose={() => {}} onCreated={() => {}} />,
+  )
+  const duoBtn = getByRole('button', { name: /双人协作/ })
+  expect(duoBtn.getAttribute('aria-pressed')).toBe('true')
+  expect(getByText('当前', { selector: '.pill' })).toBeTruthy()
+
+  const soloBtn = getByRole('button', { name: /单人团队/ })
+  expect(soloBtn.getAttribute('aria-pressed')).toBe('false')
+  fireEvent.click(soloBtn)
+  expect(soloBtn.getAttribute('aria-pressed')).toBe('true')
+})
+
+test('重开弹窗时清除上一轮残留报错（Important 2）', async () => {
+  mockApi({
+    'GET /api/session': () => SESSION,
+    'POST /api/teams': () => {
+      throw new Fail(400, { kind: 'input', code: 'team_exists', message: '团队已存在' })
+    },
+  })
+  const { getByRole, getByLabelText, findByRole, queryByRole, rerender } = render(
+    <NewTeamDialog open onClose={() => {}} onCreated={() => {}} />,
+  )
+  fireEvent.input(getByLabelText('团队名称'), { target: { value: 'dup-team' } })
+  fireEvent.input(getByLabelText('代码库目录'), { target: { value: '/tmp/repo' } })
+  fireEvent.click(getByRole('button', { name: '仅创建配置' }))
+
+  const alert = await findByRole('alert')
+  expect(alert.textContent).toContain('团队已存在')
+
+  // 关闭弹窗
+  rerender(<NewTeamDialog open={false} onClose={() => {}} onCreated={() => {}} />)
+  expect(queryByRole('dialog')).toBeNull()
+
+  // 再次打开弹窗：error 应当被清除
+  rerender(<NewTeamDialog open={true} onClose={() => {}} onCreated={() => {}} />)
+  expect(queryByRole('alert')).toBeNull()
+})
+
+test('Layout 侧栏包含「新建团队」按钮并触发 onOpenNewTeam', () => {
+  const onOpen = vi.fn()
+  const { getByRole } = render(
+    <Layout teams={['duo']} team="duo" onOpenNewTeam={onOpen}>
       <div>内容</div>
     </Layout>,
   )
-  expect(queryByRole('dialog')).toBeNull()
   const btn = getByRole('button', { name: '新建团队' })
   fireEvent.click(btn)
-  expect(getByRole('dialog')).toBeTruthy()
+  expect(onOpen).toHaveBeenCalledTimes(1)
 })
 
-test('Layout 无团队时依然显示「新建团队」按钮并能打开弹窗', () => {
-  const { getByRole, queryByRole, getByText } = render(
-    <Layout teams={[]} team={null}>
+test('Layout 无团队时依然显示「新建团队」按钮并触发 onOpenNewTeam', () => {
+  const onOpen = vi.fn()
+  const { getByRole, getByText } = render(
+    <Layout teams={[]} team={null} onOpenNewTeam={onOpen}>
       <div>内容</div>
     </Layout>,
   )
   expect(getByText('还没有团队')).toBeTruthy()
-  expect(queryByRole('dialog')).toBeNull()
   fireEvent.click(getByRole('button', { name: '新建团队' }))
-  expect(getByRole('dialog')).toBeTruthy()
+  expect(onOpen).toHaveBeenCalledTimes(1)
 })
+
 
 test('导入模式必填校验：未填 specPath 时报错', async () => {
   const calls = mockApi({ 'GET /api/session': () => SESSION })
@@ -213,4 +255,34 @@ test('styles.css 包含全局表单控件背景与 .btn.ghost 表面色规则', 
   expect(css).toContain('input:not([type="checkbox"]):not([type="radio"]), select, textarea')
   expect(css).toMatch(/\.btn\.ghost\s*\{[^}]*background:\s*var\(--surface\)/)
 })
+
+test('App 建队成功后调用 session.reload() 刷新会话（Important 3）', async () => {
+  let sessionCalls = 0
+  let teams: string[] = []
+  const calls = mockApi({
+    'GET /api/session': () => {
+      sessionCalls++
+      return { csrfToken: 'tok', version: '1', teams }
+    },
+    'POST /api/teams': () => {
+      teams = ['fresh-team']
+      return { team: 'fresh-team', specPath: '/x/team.yaml', created: true }
+    },
+  })
+  const { findAllByRole, getByLabelText, findByRole } = render(<App />)
+  await waitFor(() => expect(sessionCalls).toBeGreaterThanOrEqual(1))
+  const beforeCreate = sessionCalls
+  const buttons = await findAllByRole('button', { name: '新建团队' })
+  fireEvent.click(buttons[0]!)
+  fireEvent.input(getByLabelText('团队名称'), { target: { value: 'fresh-team' } })
+  fireEvent.input(getByLabelText('代码库目录'), { target: { value: '/tmp/repo' } })
+  fireEvent.click(await findByRole('button', { name: '仅创建配置' }))
+
+  await waitFor(() => {
+    expect(calls.some((c) => c.method === 'POST' && c.path === '/api/teams')).toBe(true)
+    expect(sessionCalls).toBeGreaterThan(beforeCreate)
+    expect(teams).toEqual(['fresh-team'])
+  })
+})
+
 

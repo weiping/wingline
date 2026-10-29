@@ -1,6 +1,7 @@
 import type { ComponentChildren } from 'preact'
-import { useState } from 'preact/hooks'
+import { useEffect, useState } from 'preact/hooks'
 import { api, errorText } from '../api.js'
+import { Pill } from './common.js'
 
 export const TEAM_TEMPLATES_UI: Array<{ id: 'duo' | 'solo' | 'trio'; label: string; summary: string }> = [
   { id: 'duo', label: '双人协作（推荐）', summary: 'builder 负责编码，checker 负责复核' },
@@ -21,11 +22,12 @@ function TemplateCards(props: {
             key={t.id}
             type="button"
             class={active ? 'template-card active' : 'template-card'}
+            aria-pressed={active}
             onClick={() => props.onSelect(t.id)}
           >
             <div class="template-card-head">
               <span class="template-card-title">{t.label}</span>
-              {active && <span class="tag">当前</span>}
+              {active && <Pill tone="neutral">当前</Pill>}
             </div>
             <p class="template-card-desc">{t.summary}</p>
           </button>
@@ -79,10 +81,7 @@ function TemplateFields(props: {
   )
 }
 
-function ImportFields(props: {
-  specPath: string
-  onChangeSpecPath: (v: string) => void
-}) {
+function ImportFields(props: { specPath: string; onChangeSpecPath: (v: string) => void }) {
   return (
     <label class="field">
       <span>配置文件路径（team.yaml） *</span>
@@ -93,6 +92,52 @@ function ImportFields(props: {
         onInput={(e) => props.onChangeSpecPath((e.target as HTMLInputElement).value)}
       />
     </label>
+  )
+}
+
+function ModeTabs(props: {
+  mode: 'template' | 'import'
+  onMode: (m: 'template' | 'import') => void
+}) {
+  return (
+    <div class="tabs">
+      <button
+        type="button"
+        class={props.mode === 'template' ? 'btn' : 'btn ghost'}
+        onClick={() => props.onMode('template')}
+      >
+        使用预设模板
+      </button>
+      <button
+        type="button"
+        class={props.mode === 'import' ? 'btn' : 'btn ghost'}
+        onClick={() => props.onMode('import')}
+      >
+        导入已有配置
+      </button>
+    </div>
+  )
+}
+
+function DialogFooter(props: {
+  mode: 'template' | 'import'
+  busy: boolean
+  submitting: 'create' | 'start' | null
+  onClose: () => void
+  onSubmit: (start: boolean) => void
+}) {
+  return (
+    <div class="dialog-actions">
+      <button type="button" class="btn ghost" disabled={props.busy} onClick={props.onClose}>
+        取消
+      </button>
+      <button type="button" class="btn ghost" disabled={props.busy} onClick={() => props.onSubmit(false)}>
+        {props.submitting === 'create' ? '执行中…' : props.mode === 'template' ? '仅创建配置' : '导入团队'}
+      </button>
+      <button type="button" class="btn" disabled={props.busy} onClick={() => props.onSubmit(true)}>
+        {props.submitting === 'start' ? '执行中…' : props.mode === 'template' ? '创建并启动' : '导入并启动'}
+      </button>
+    </div>
   )
 }
 
@@ -131,99 +176,154 @@ async function submitImport(
   onCreated(team, start)
 }
 
-export function NewTeamDialog(props: {
-  open: boolean
+function DialogShell(props: {
+  mode: 'template' | 'import'
+  onMode: (m: 'template' | 'import') => void
+  error: string | null
+  busy: boolean
+  submitting: 'create' | 'start' | null
   onClose: () => void
-  onCreated: (team: string, started: boolean) => void
-}): ComponentChildren {
-  if (!props.open) return null
+  onSubmit: (start: boolean) => void
+  children: ComponentChildren
+}) {
+  return (
+    <div class="dialog-backdrop">
+      <div class="dialog" role="dialog" aria-modal="true" aria-label="新建团队">
+        <h3>新建团队</h3>
+        <ModeTabs mode={props.mode} onMode={props.onMode} />
+        <form onSubmit={(e) => e.preventDefault()}>
+          {props.children}
+          {props.error && (
+            <p class="error" role="alert">
+              {props.error}
+            </p>
+          )}
+          <DialogFooter
+            mode={props.mode}
+            busy={props.busy}
+            submitting={props.submitting}
+            onClose={props.onClose}
+            onSubmit={props.onSubmit}
+          />
+        </form>
+      </div>
+    </div>
+  )
+}
+
+async function runSubmit(
+  mode: 'template' | 'import',
+  fields: { name: string; repo: string; template: 'duo' | 'solo' | 'trio'; dir: string; specPath: string },
+  start: boolean,
+  onCreated: (team: string, started: boolean) => void,
+) {
+  if (mode === 'template') {
+    await submitTemplate(
+      { name: fields.name, repo: fields.repo, template: fields.template, dir: fields.dir },
+      start,
+      onCreated,
+    )
+  } else {
+    await submitImport(fields.specPath, start, onCreated)
+  }
+}
+
+function FormPane(props: {
+  mode: 'template' | 'import'
+  template: 'duo' | 'solo' | 'trio'
+  name: string
+  repo: string
+  dir: string
+  specPath: string
+  setTemplate: (t: 'duo' | 'solo' | 'trio') => void
+  setName: (v: string) => void
+  setRepo: (v: string) => void
+  setDir: (v: string) => void
+  setSpecPath: (v: string) => void
+}) {
+  if (props.mode === 'template') {
+    return (
+      <TemplateFields
+        template={props.template}
+        name={props.name}
+        repo={props.repo}
+        dir={props.dir}
+        onSelectTemplate={props.setTemplate}
+        onChangeName={props.setName}
+        onChangeRepo={props.setRepo}
+        onChangeDir={props.setDir}
+      />
+    )
+  }
+  return <ImportFields specPath={props.specPath} onChangeSpecPath={props.setSpecPath} />
+}
+
+function useNewTeamDialog(open: boolean, onCreated: (team: string, started: boolean) => void) {
   const [mode, setMode] = useState<'template' | 'import'>('template')
   const [template, setTemplate] = useState<'duo' | 'solo' | 'trio'>('duo')
   const [name, setName] = useState('')
   const [repo, setRepo] = useState('')
   const [dir, setDir] = useState('')
   const [specPath, setSpecPath] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [submitting, setSubmitting] = useState<'create' | 'start' | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [status, setStatus] = useState<{ busy: boolean; submitting: 'create' | 'start' | null; error: string | null }>({
+    busy: false,
+    submitting: null,
+    error: null,
+  })
+
+  useEffect(() => {
+    if (open) setStatus((s) => ({ ...s, error: null }))
+  }, [open])
 
   const handleSubmit = async (start: boolean) => {
-    setBusy(true)
-    setSubmitting(start ? 'start' : 'create')
-    setError(null)
+    setStatus({ busy: true, submitting: start ? 'start' : 'create', error: null })
     try {
-      if (mode === 'template') {
-        await submitTemplate({ name, repo, template, dir }, start, props.onCreated)
-      } else {
-        await submitImport(specPath, start, props.onCreated)
-      }
+      await runSubmit(mode, { name, repo, template, dir, specPath }, start, onCreated)
     } catch (err) {
-      setError(errorText(err))
-    } finally {
-      setBusy(false)
-      setSubmitting(null)
+      setStatus({ busy: false, submitting: null, error: errorText(err) })
+      return
     }
+    setStatus({ busy: false, submitting: null, error: null })
   }
 
+  const pickMode = (m: 'template' | 'import') => {
+    setMode(m)
+    setStatus((s) => ({ ...s, error: null }))
+  }
+
+  return { mode, template, name, repo, dir, specPath, ...status, setTemplate, setName, setRepo, setDir, setSpecPath, pickMode, handleSubmit }
+}
+
+export function NewTeamDialog(props: {
+  open: boolean
+  onClose: () => void
+  onCreated: (team: string, started: boolean) => void
+}): ComponentChildren {
+  const s = useNewTeamDialog(props.open, props.onCreated)
+  if (!props.open) return null
   return (
-    <div class="dialog-backdrop">
-      <div class="dialog" role="dialog" aria-modal="true" aria-label="新建团队">
-        <h3>新建团队</h3>
-        <div class="tabs">
-          <button
-            type="button"
-            class={mode === 'template' ? 'btn' : 'btn ghost'}
-            onClick={() => { setMode('template'); setError(null) }}
-          >
-            使用预设模板
-          </button>
-          <button
-            type="button"
-            class={mode === 'import' ? 'btn' : 'btn ghost'}
-            onClick={() => { setMode('import'); setError(null) }}
-          >
-            导入已有配置
-          </button>
-        </div>
-        <form onSubmit={(e) => e.preventDefault()}>
-          {mode === 'template' ? (
-            <TemplateFields
-              template={template}
-              name={name}
-              repo={repo}
-              dir={dir}
-              onSelectTemplate={setTemplate}
-              onChangeName={setName}
-              onChangeRepo={setRepo}
-              onChangeDir={setDir}
-            />
-          ) : (
-            <ImportFields specPath={specPath} onChangeSpecPath={setSpecPath} />
-          )}
-          {error && <p class="error" role="alert">{error}</p>}
-          <div class="dialog-actions">
-            <button type="button" class="btn ghost" disabled={busy} onClick={props.onClose}>
-              取消
-            </button>
-            <button
-              type="button"
-              class="btn ghost"
-              disabled={busy}
-              onClick={() => void handleSubmit(false)}
-            >
-              {submitting === 'create' ? '执行中…' : mode === 'template' ? '仅创建配置' : '导入团队'}
-            </button>
-            <button
-              type="button"
-              class="btn"
-              disabled={busy}
-              onClick={() => void handleSubmit(true)}
-            >
-              {submitting === 'start' ? '执行中…' : mode === 'template' ? '创建并启动' : '导入并启动'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+    <DialogShell
+      mode={s.mode}
+      onMode={s.pickMode}
+      error={s.error}
+      busy={s.busy}
+      submitting={s.submitting}
+      onClose={props.onClose}
+      onSubmit={(start) => void s.handleSubmit(start)}
+    >
+      <FormPane
+        mode={s.mode}
+        template={s.template}
+        name={s.name}
+        repo={s.repo}
+        dir={s.dir}
+        specPath={s.specPath}
+        setTemplate={s.setTemplate}
+        setName={s.setName}
+        setRepo={s.setRepo}
+        setDir={s.setDir}
+        setSpecPath={s.setSpecPath}
+      />
+    </DialogShell>
   )
 }
