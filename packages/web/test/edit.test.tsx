@@ -35,18 +35,18 @@ function setIn(obj: any, path: Array<string | number>, value: unknown): any {
 interface Opts {
   running?: boolean
   draft?: { yaml: string; parsed: unknown; hash: string } | null
+  files?: Record<string, string>
   validate?: (body: any) => unknown
   save?: (body: any) => unknown
 }
 
-/** 假服务：set 改 parsed 与 yaml（仅支持 agent 字段）；直接给 yaml 时按 agent 行重新解析。 */
+/** 假服务：set 三形态（普通 set / add_post / remove_post）都套到 PARSED 上；yaml 只认 agent 行替换。 */
 function server(o: Opts = {}) {
   const defaultValidate = (body: any) => {
-    if (body.set) {
-      const parsed = setIn(PARSED, body.set.path, body.set.value)
-      const yaml = (body.yaml as string).replace(/agent: \w+/, `agent: ${body.set.value}`)
-      return { yaml, parsed, errors: [], preview: null }
-    }
+    const set = body.set
+    if (set?.op === 'add_post') return { yaml: body.yaml, parsed: { ...PARSED, posts: [...PARSED.posts, set.post] }, errors: [], preview: null }
+    if (set?.op === 'remove_post') return { yaml: body.yaml, parsed: { ...PARSED, posts: PARSED.posts.filter((_: any, i: number) => i !== set.index) }, errors: [], preview: null }
+    if (set?.path) return { yaml: (body.yaml as string).replace(/agent: \w+/, `agent: ${set.value}`), parsed: setIn(PARSED, set.path, set.value), errors: [], preview: null }
     const m = /agent: (\w+)/.exec(body.yaml)
     return { yaml: body.yaml, parsed: setIn(PARSED, ['posts', 0, 'agent'], m?.[1] ?? 'claude'), errors: [], preview: null }
   }
@@ -59,14 +59,19 @@ function server(o: Opts = {}) {
       hash: 'H1',
       draft: o.draft ?? null,
       running: o.running ?? true,
+      files: o.files ?? {},
     }),
     'POST /api/teams/duo/spec/validate': (c) => (o.validate ?? defaultValidate)(c.body),
     'POST /api/teams/duo/spec': (c) => (o.save ?? (() => ({ wrote: 'draft', path: '/t/duo/team.draft.yaml', hash: 'N1' })))(c.body),
     'POST /api/teams/duo/spec/discard-draft': () => ({ discarded: true }),
+    'POST /api/teams/duo/up': () => ({ run: null }),
+    'POST /api/teams/duo/down': () => ({ stopped: true }),
   })
   const validates = () => calls.filter((c: Call) => c.method === 'POST' && c.path === '/api/teams/duo/spec/validate')
   const saves = () => calls.filter((c: Call) => c.method === 'POST' && c.path === '/api/teams/duo/spec')
-  return { calls, validates, saves }
+  const ups = () => calls.filter((c: Call) => c.method === 'POST' && c.path === '/api/teams/duo/up')
+  const downs = () => calls.filter((c: Call) => c.method === 'POST' && c.path === '/api/teams/duo/down')
+  return { calls, validates, saves, ups, downs }
 }
 
 const agentInput = (c: Element) => c.querySelector('[data-path="posts.0.agent"]') as HTMLInputElement
@@ -276,7 +281,7 @@ test('running team without a draft saves with baseHash null and running true', a
   await waitFor(() => expect(s.validates()).toHaveLength(1))
   await clickWhenEnabled(getByText, '保存为草稿')
   await waitFor(() => expect(s.saves()).toHaveLength(1))
-  expect(s.saves()[0]!.body).toEqual({ yaml: expect.any(String), running: true, baseHash: null })
+  expect(s.saves()[0]!.body).toEqual({ yaml: expect.any(String), running: true, baseHash: null, files: {} })
 })
 
 test('a stopped team saves the spec itself with the loaded file hash', async () => {
@@ -287,7 +292,7 @@ test('a stopped team saves the spec itself with the loaded file hash', async () 
   await waitFor(() => expect(s.validates()).toHaveLength(1))
   await clickWhenEnabled(getByText, '保存')
   await waitFor(() => expect(s.saves()).toHaveLength(1))
-  expect(s.saves()[0]!.body).toEqual({ yaml: expect.any(String), running: false, baseHash: 'H1' })
+  expect(s.saves()[0]!.body).toEqual({ yaml: expect.any(String), running: false, baseHash: 'H1', files: {} })
   expect(await findByText(/已保存/)).toBeTruthy()
 })
 
@@ -339,4 +344,94 @@ test('the trusted-config notice is shown at the bottom', async () => {
   const { container, getByText } = render(<Edit team="duo" />)
   await loaded(container)
   expect(getByText(/视为可信配置/)).toBeTruthy()
+})
+
+test('新增角色岗位：弹窗选预设填标识，乐观出卡片并带出默认职责正文', async () => {
+  const s = server()
+  const { container, getByText, getByLabelText } = render(<Edit team="duo" />)
+  await loaded(container)
+  fireEvent.click(getByText('新增角色岗位'))
+  fireEvent.change(getByLabelText('角色预设'), { target: { value: 'builder' } })
+  fireEvent.input(getByLabelText('岗位标识'), { target: { value: 'reviewer' } })
+  fireEvent.click(getByText('新增'))
+  expect(getByText('岗位 reviewer')).toBeTruthy()
+  const brief = getByLabelText('岗位职责简报正文（reviewer）') as HTMLTextAreaElement
+  expect(brief.value).toContain('reviewer')
+  await waitFor(() => expect(s.validates()).toHaveLength(1))
+  expect(s.validates()[0]!.body.set).toEqual({
+    op: 'add_post',
+    post: { id: 'reviewer', agent: 'claude', worktree: 'current', brief: ['briefs/reviewer.md'] },
+  })
+  expect(s.validates()[0]!.body.files['briefs/reviewer.md']).toContain('reviewer')
+})
+
+test('删除岗位走 remove_post；只剩一个岗位时删除不可点', async () => {
+  const s = server()
+  const { container, getAllByText, queryByText } = render(<Edit team="duo" />)
+  await loaded(container)
+  fireEvent.click(getAllByText('删除岗位')[1]!)
+  expect(queryByText('岗位 checker')).toBeNull()
+  await waitFor(() => expect(s.validates()).toHaveLength(1))
+  expect(s.validates()[0]!.body.set).toEqual({ op: 'remove_post', index: 1 })
+  expect((getAllByText('删除岗位')[0] as HTMLButtonElement).disabled).toBe(true)
+})
+
+test('lead 是岗位下拉，切换发出 set lead', async () => {
+  const s = server()
+  const { container } = render(<Edit team="duo" />)
+  await loaded(container)
+  const sel = container.querySelector('[data-path="lead"]') as HTMLSelectElement
+  expect([...sel.options].map((o) => o.value)).toEqual(['builder', 'checker'])
+  fireEvent.change(sel, { target: { value: 'checker' } })
+  await waitFor(() => expect(s.validates()).toHaveLength(1))
+  expect(s.validates()[0]!.body.set).toEqual({ path: ['lead'], value: 'checker' })
+})
+
+test('运行中的团队保存时带 files，docsUpdated 后提示下次启动生效', async () => {
+  const s = server({
+    files: { 'NORMS.md': '# 规范', 'briefs/builder.md': '# builder' },
+    save: () => ({ wrote: 'draft', path: '/t/duo/team.draft.yaml', hash: 'N1', docsUpdated: ['NORMS.md'] }),
+  })
+  const { container, getByText, getByLabelText, findByText } = render(<Edit team="duo" />)
+  await loaded(container)
+  const norms = getByLabelText('团队规范正文') as HTMLTextAreaElement
+  expect(norms.value).toBe('# 规范')
+  fireEvent.input(norms, { target: { value: '# 新规范' } })
+  await clickWhenEnabled(getByText, '保存为草稿')
+  await waitFor(() => expect(s.saves()).toHaveLength(1))
+  expect(s.saves()[0]!.body.files).toEqual({ 'NORMS.md': '# 新规范', 'briefs/builder.md': '# builder' })
+  expect(await findByText(/下次启动或新开会话时生效/)).toBeTruthy()
+})
+
+test('已停止的团队「保存并启动」依次调 spec 与 up，成功后跳总览', async () => {
+  const s = server({
+    running: false,
+    files: { 'NORMS.md': '# 规范' },
+    save: () => ({ wrote: 'spec', path: '/t/duo/team.yaml', hash: 'N2', docsUpdated: ['NORMS.md'] }),
+  })
+  const { container, getByText } = render(<Edit team="duo" />)
+  await loaded(container)
+  await clickWhenEnabled(getByText, '保存并启动')
+  await waitFor(() => expect(s.ups()).toHaveLength(1))
+  const at = (path: string) => s.calls.findIndex((c: Call) => c.method === 'POST' && c.path === path)
+  expect(at('/api/teams/duo/spec')).toBeLessThan(at('/api/teams/duo/up'))
+  expect(s.saves()[0]!.body).toMatchObject({ running: false, files: { 'NORMS.md': '# 规范' } })
+  await waitFor(() => expect(location.pathname).toBe('/t/duo'))
+})
+
+test('运行中的团队「保存草稿并重启应用」依次 spec → down → up(draft)，勾选才关终端', async () => {
+  const s = server()
+  const { container, getByText } = render(<Edit team="duo" />)
+  await loaded(container)
+  await clickWhenEnabled(getByText, '保存草稿并重启应用')
+  fireEvent.click(getByText('同时关闭旧岗位终端'))
+  fireEvent.click(getByText('确认重启'))
+  await waitFor(() => expect(s.ups()).toHaveLength(1))
+  const at = (path: string) => s.calls.findIndex((c: Call) => c.method === 'POST' && c.path === path)
+  expect(at('/api/teams/duo/spec')).toBeLessThan(at('/api/teams/duo/down'))
+  expect(at('/api/teams/duo/down')).toBeLessThan(at('/api/teams/duo/up'))
+  expect(s.downs()[0]!.body).toEqual({ close: true })
+  expect(s.ups()[0]!.body).toEqual({ draft: true })
+  expect(s.saves()[0]!.body.running).toBe(true)
+  await waitFor(() => expect(location.pathname).toBe('/t/duo'))
 })
