@@ -169,12 +169,38 @@ interface SavePanelProps {
   reload: () => void
 }
 
-/** 保存（可带后续动作：保存并启动 / 保存后重启应用）；任一步失败都停在错误提示。 */
+/** 链路里的一步：rr 携带服务端给的 retryRequest 原样重发本请求。 */
+type Step = (rr?: string) => Promise<unknown>
+
+/** 依次执行；某步失败且错误带 retryRequest 时，把「失败请求原样重发 + 剩余步骤」记为按原样重试（不重跑整条链，spec 保存不在其中）。 */
+async function runSteps(steps: Step[], onFail: (err: unknown) => void, setRetry: (r: { send: () => Promise<void> } | null) => void): Promise<void> {
+  setRetry(null)
+  for (let i = 0; i < steps.length; i++) {
+    try {
+      await steps[i]!()
+    } catch (err) {
+      if (err instanceof ApiError && err.retryRequest) {
+        const rr = err.retryRequest
+        const rest = steps.slice(i)
+        setRetry({ send: () => runSteps([() => rest[0]!(rr), ...rest.slice(1)], onFail, setRetry) })
+      }
+      onFail(err)
+      return
+    }
+  }
+}
+
+/** 保存（可带 up/down 后续步骤）；任一步失败停在提示，uncertain 时提供单个请求的按原样重试。 */
 function useSave(p: SavePanelProps) {
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState<SaveResult | null>(null)
   const [fail, setFail] = useState<{ text: string; conflict: boolean } | null>(null)
-  const run = async (after?: () => Promise<void>) => {
+  const [retry, setRetry] = useState<{ send: () => Promise<void> } | null>(null)
+  const onFail = (err: unknown) => {
+    if (err instanceof ApiError && err.detail?.errors) p.setErrors(err.detail.errors)
+    setFail({ text: errorText(err), conflict: err instanceof ApiError && err.code === 'spec_conflict' })
+  }
+  const run = async (after?: Step[]) => {
     setSaving(true)
     setFail(null)
     try {
@@ -182,19 +208,28 @@ function useSave(p: SavePanelProps) {
       const res = await api.post<SaveResult>(`/api/teams/${encodeURIComponent(p.team)}/spec`, body)
       p.setBase((b) => (res.wrote === 'draft' ? { ...b, draftHash: res.hash, hasDraft: true } : { ...b, hash: res.hash }))
       setSaved(res)
-      if (after) await after()
+      if (after) await runSteps(after, onFail, setRetry)
     } catch (err) {
-      if (err instanceof ApiError && err.detail?.errors) p.setErrors(err.detail.errors)
-      setFail({ text: errorText(err), conflict: err instanceof ApiError && err.code === 'spec_conflict' })
+      onFail(err)
     } finally {
       setSaving(false)
     }
   }
-  return { saving, saved, fail, run }
+  const retrySend = async () => {
+    if (!retry) return
+    setSaving(true)
+    setFail(null)
+    try {
+      await retry.send()
+    } finally {
+      setSaving(false)
+    }
+  }
+  return { saving, saved, fail, retry, run, retrySend }
 }
 
-/** 运行中团队重启前的确认框：勾选「同时关闭旧岗位终端」才在 down 时带 close。 */
-function RestartDialog(props: { busy: boolean; error: string | null; onClose: () => void; onRun: (close: boolean) => void }) {
+/** 运行中团队重启前的确认框：勾选「同时关闭旧岗位终端」才在 down 时带 close；uncertain 失败换成「按原样重试」。 */
+function RestartDialog(props: { busy: boolean; error: string | null; onRetry?: () => void; onClose: () => void; onRun: (close: boolean) => void }) {
   const [close, setClose] = useState(false)
   return (
     <div class="dialog-backdrop">
@@ -213,9 +248,15 @@ function RestartDialog(props: { busy: boolean; error: string | null; onClose: ()
           <button type="button" class="btn ghost" disabled={props.busy} onClick={props.onClose}>
             取消
           </button>
-          <button type="button" class="btn" disabled={props.busy} onClick={() => props.onRun(close)}>
-            {props.busy ? '执行中…' : '确认重启'}
-          </button>
+          {props.onRetry ? (
+            <button type="button" class="btn" disabled={props.busy} onClick={props.onRetry}>
+              {props.busy ? '执行中…' : '按原样重试'}
+            </button>
+          ) : (
+            <button type="button" class="btn" disabled={props.busy} onClick={() => props.onRun(close)}>
+              {props.busy ? '执行中…' : '确认重启'}
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -260,15 +301,13 @@ function SavePanel(p: SavePanelProps) {
   const s = useSave(p)
   const [restart, setRestart] = useState(false)
   const enc = encodeURIComponent(p.team)
-  const startAfter = async () => {
-    await api.post(`/api/teams/${enc}/up`, {})
-    navigate(`/t/${enc}`)
-  }
-  const restartAfter = async (close: boolean) => {
-    await api.post(`/api/teams/${enc}/down`, close ? { close: true } : {})
-    await api.post(`/api/teams/${enc}/up`, { draft: true })
-    navigate(`/t/${enc}`)
-  }
+  const withRetry = (path: string, base: Record<string, unknown>): Step => (rr) => api.post(path, { ...base, ...(rr ? { retryRequest: rr } : {}) })
+  const startAfter: Step[] = [withRetry(`/api/teams/${enc}/up`, {}), async () => navigate(`/t/${enc}`)]
+  const restartAfter = (close: boolean): Step[] => [
+    withRetry(`/api/teams/${enc}/down`, close ? { close: true } : {}),
+    withRetry(`/api/teams/${enc}/up`, { draft: true }),
+    async () => navigate(`/t/${enc}`),
+  ]
   return (
     <div class="save-panel">
       <div class="dialog-actions">
@@ -285,8 +324,16 @@ function SavePanel(p: SavePanelProps) {
           </button>
         )}
       </div>
+      {s.retry && !restart && (
+        <button type="button" class="btn" disabled={s.saving} onClick={() => void s.retrySend()}>
+          {s.saving ? '执行中…' : '按原样重试'}
+        </button>
+      )}
       {restart && (
-        <RestartDialog busy={s.saving} error={s.fail?.text ?? null} onClose={() => setRestart(false)} onRun={(close) => void s.run(() => restartAfter(close))} />
+        <RestartDialog
+          busy={s.saving} error={s.fail?.text ?? null} onClose={() => setRestart(false)} onRun={(close) => void s.run(restartAfter(close))}
+          onRetry={s.retry ? () => void s.retrySend() : undefined}
+        />
       )}
       <SaveMessages spec={p.spec} base={p.base} saved={s.saved} fail={s.fail} reload={p.reload} />
     </div>

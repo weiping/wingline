@@ -38,6 +38,8 @@ interface Opts {
   files?: Record<string, string>
   validate?: (body: any) => unknown
   save?: (body: any) => unknown
+  up?: (body: any) => unknown
+  down?: (body: any) => unknown
 }
 
 /** 假服务：set 三形态（普通 set / add_post / remove_post）都套到 PARSED 上；yaml 只认 agent 行替换。 */
@@ -64,8 +66,8 @@ function server(o: Opts = {}) {
     'POST /api/teams/duo/spec/validate': (c) => (o.validate ?? defaultValidate)(c.body),
     'POST /api/teams/duo/spec': (c) => (o.save ?? (() => ({ wrote: 'draft', path: '/t/duo/team.draft.yaml', hash: 'N1' })))(c.body),
     'POST /api/teams/duo/spec/discard-draft': () => ({ discarded: true }),
-    'POST /api/teams/duo/up': () => ({ run: null }),
-    'POST /api/teams/duo/down': () => ({ stopped: true }),
+    'POST /api/teams/duo/up': (c) => (o.up ?? (() => ({ run: null })))(c.body),
+    'POST /api/teams/duo/down': (c) => (o.down ?? (() => ({ stopped: true })))(c.body),
   })
   const validates = () => calls.filter((c: Call) => c.method === 'POST' && c.path === '/api/teams/duo/spec/validate')
   const saves = () => calls.filter((c: Call) => c.method === 'POST' && c.path === '/api/teams/duo/spec')
@@ -433,5 +435,54 @@ test('运行中的团队「保存草稿并重启应用」依次 spec → down �
   expect(s.downs()[0]!.body).toEqual({ close: true })
   expect(s.ups()[0]!.body).toEqual({ draft: true })
   expect(s.saves()[0]!.body.running).toBe(true)
+  await waitFor(() => expect(location.pathname).toBe('/t/duo'))
+})
+
+test('重启链路 down 不确定失败时，「按原样重试」只重发该请求并续跑剩余步骤', async () => {
+  let downs = 0
+  const s = server({
+    down: () => {
+      downs += 1
+      if (downs === 1) throw new Fail(500, { kind: 'uncertain', code: 'down_uncertain', message: '停止结果不确定', retryRequest: 'rr-9' })
+      return { stopped: true }
+    },
+  })
+  const { container, getByText, getAllByText } = render(<Edit team="duo" />)
+  await loaded(container)
+  await clickWhenEnabled(getByText, '保存草稿并重启应用')
+  fireEvent.click(getByText('同时关闭旧岗位终端'))
+  fireEvent.click(getByText('确认重启'))
+  await waitFor(() => expect(s.downs()).toHaveLength(1))
+  expect(s.ups()).toHaveLength(0)
+  await waitFor(() => expect(getAllByText(/停止结果不确定/).length).toBeGreaterThan(0))
+  fireEvent.click(getByText('按原样重试'))
+  await waitFor(() => expect(s.downs()).toHaveLength(2))
+  expect(s.downs()[1]!.body).toEqual({ close: true, retryRequest: 'rr-9' })
+  await waitFor(() => expect(s.ups()).toHaveLength(1))
+  expect(s.ups()[0]!.body).toEqual({ draft: true })
+  expect(s.saves()).toHaveLength(1) // spec 保存不重跑
+  await waitFor(() => expect(location.pathname).toBe('/t/duo'))
+})
+
+test('保存并启动的 up 不确定失败时，重试按钮原样重发 up 且不重跑保存', async () => {
+  let ups = 0
+  const s = server({
+    running: false,
+    up: () => {
+      ups += 1
+      if (ups === 1) throw new Fail(500, { kind: 'uncertain', code: 'up_uncertain', message: '启动结果不确定', retryRequest: 'rr-7' })
+      return { run: null }
+    },
+    save: () => ({ wrote: 'spec', path: '/t/duo/team.yaml', hash: 'N2' }),
+  })
+  const { container, getByText } = render(<Edit team="duo" />)
+  await loaded(container)
+  await clickWhenEnabled(getByText, '保存并启动')
+  await waitFor(() => expect(s.ups()).toHaveLength(1))
+  await waitFor(() => expect(getByText(/启动结果不确定/)).toBeTruthy())
+  fireEvent.click(getByText('按原样重试'))
+  await waitFor(() => expect(s.ups()).toHaveLength(2))
+  expect(s.ups()[1]!.body).toEqual({ retryRequest: 'rr-7' })
+  expect(s.saves()).toHaveLength(1)
   await waitFor(() => expect(location.pathname).toBe('/t/duo'))
 })
