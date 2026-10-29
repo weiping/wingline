@@ -1,6 +1,7 @@
 import type { ComponentChildren } from 'preact'
 import { useEffect, useState } from 'preact/hooks'
 import { api, errorText } from '../api.js'
+import { runSteps, type Step } from './TeamActions.js'
 import { Pill } from './common.js'
 
 export const TEAM_TEMPLATES_UI: Array<{ id: 'duo' | 'solo' | 'trio'; label: string; summary: string }> = [
@@ -123,6 +124,8 @@ function DialogFooter(props: {
   mode: 'template' | 'import'
   busy: boolean
   submitting: 'create' | 'start' | null
+  retry: { send: () => Promise<void> } | null
+  onRetry: () => void
   onClose: () => void
   onSubmit: (start: boolean) => void
 }) {
@@ -131,49 +134,72 @@ function DialogFooter(props: {
       <button type="button" class="btn ghost" disabled={props.busy} onClick={props.onClose}>
         取消
       </button>
-      <button type="button" class="btn ghost" disabled={props.busy} onClick={() => props.onSubmit(false)}>
-        {props.submitting === 'create' ? '执行中…' : props.mode === 'template' ? '仅创建配置' : '导入团队'}
-      </button>
-      <button type="button" class="btn" disabled={props.busy} onClick={() => props.onSubmit(true)}>
-        {props.submitting === 'start' ? '执行中…' : props.mode === 'template' ? '创建并启动' : '导入并启动'}
-      </button>
+      {props.retry ? (
+        <button type="button" class="btn" disabled={props.busy} onClick={props.onRetry}>
+          {props.busy ? '执行中…' : '按原样重试'}
+        </button>
+      ) : (
+        <>
+          <button type="button" class="btn ghost" disabled={props.busy} onClick={() => props.onSubmit(false)}>
+            {props.submitting === 'create' ? '执行中…' : props.mode === 'template' ? '仅创建配置' : '导入团队'}
+          </button>
+          <button type="button" class="btn" disabled={props.busy} onClick={() => props.onSubmit(true)}>
+            {props.submitting === 'start' ? '执行中…' : props.mode === 'template' ? '创建并启动' : '导入并启动'}
+          </button>
+        </>
+      )}
     </div>
   )
 }
 
-async function submitTemplate(
+/** 模板模式的链路：建 team →（start 时）按创建返回的团队名 up → 通知；必填校验在构建时抛出。 */
+function templateSteps(
   state: { name: string; repo: string; template: 'duo' | 'solo' | 'trio'; dir: string },
   start: boolean,
   onCreated: (team: string, started: boolean) => void,
-) {
+): Step[] {
   const name = state.name.trim()
   const repo = state.repo.trim()
   if (!name || !repo) throw new Error('请填写必填项：团队名称与代码库目录')
-  const payload: { mode: 'template'; name: string; repo: string; template: string; dir?: string } = {
-    mode: 'template',
-    name,
-    repo,
-    template: state.template,
-  }
+  const payload: Record<string, unknown> = { mode: 'template', name, repo, template: state.template }
   if (state.dir.trim()) payload.dir = state.dir.trim()
-  const res = await api.post<{ team: string }>('/api/teams', payload)
-  const team = res?.team || name
-  if (start) await api.post(`/api/teams/${encodeURIComponent(team)}/up`, {})
-  onCreated(team, start)
+  let team = name // 创建成功后换成响应里的团队名，供后续步骤闭包使用
+  const up = async (rr?: string) => {
+    await api.post(`/api/teams/${encodeURIComponent(team)}/up`, rr ? { retryRequest: rr } : {})
+  }
+  return [
+    async (rr) => {
+      const res = await api.post<{ team: string }>('/api/teams', { ...payload, ...(rr ? { retryRequest: rr } : {}) })
+      team = res?.team || name
+    },
+    ...(start ? [up] : []),
+    async () => onCreated(team, start),
+  ]
 }
 
-async function submitImport(
-  specPath: string,
-  start: boolean,
-  onCreated: (team: string, started: boolean) => void,
-) {
+/** 导入模式的链路：建 team（团队名必须来自响应）→（start 时）up → 通知。 */
+function importSteps(specPath: string, start: boolean, onCreated: (team: string, started: boolean) => void): Step[] {
   const trimmed = specPath.trim()
   if (!trimmed) throw new Error('请填写必填项：配置文件路径')
-  const res = await api.post<{ team: string }>('/api/teams', { mode: 'import', specPath: trimmed })
-  const team = res?.team
-  if (!team) throw new Error('后端未返回团队名称')
-  if (start) await api.post(`/api/teams/${encodeURIComponent(team)}/up`, {})
-  onCreated(team, start)
+  let team = ''
+  const need = () => {
+    if (!team) throw new Error('后端未返回团队名称')
+  }
+  const up = async (rr?: string) => {
+    need()
+    await api.post(`/api/teams/${encodeURIComponent(team)}/up`, rr ? { retryRequest: rr } : {})
+  }
+  return [
+    async (rr) => {
+      const res = await api.post<{ team: string }>('/api/teams', { mode: 'import', specPath: trimmed, ...(rr ? { retryRequest: rr } : {}) })
+      team = res?.team ?? ''
+    },
+    ...(start ? [up] : []),
+    async () => {
+      need()
+      onCreated(team, start)
+    },
+  ]
 }
 
 function DialogShell(props: {
@@ -182,6 +208,8 @@ function DialogShell(props: {
   error: string | null
   busy: boolean
   submitting: 'create' | 'start' | null
+  retry: { send: () => Promise<void> } | null
+  onRetry: () => void
   onClose: () => void
   onSubmit: (start: boolean) => void
   children: ComponentChildren
@@ -202,6 +230,8 @@ function DialogShell(props: {
             mode={props.mode}
             busy={props.busy}
             submitting={props.submitting}
+            retry={props.retry}
+            onRetry={props.onRetry}
             onClose={props.onClose}
             onSubmit={props.onSubmit}
           />
@@ -209,23 +239,6 @@ function DialogShell(props: {
       </div>
     </div>
   )
-}
-
-async function runSubmit(
-  mode: 'template' | 'import',
-  fields: { name: string; repo: string; template: 'duo' | 'solo' | 'trio'; dir: string; specPath: string },
-  start: boolean,
-  onCreated: (team: string, started: boolean) => void,
-) {
-  if (mode === 'template') {
-    await submitTemplate(
-      { name: fields.name, repo: fields.repo, template: fields.template, dir: fields.dir },
-      start,
-      onCreated,
-    )
-  } else {
-    await submitImport(fields.specPath, start, onCreated)
-  }
 }
 
 function FormPane(props: {
@@ -270,28 +283,43 @@ function useNewTeamDialog(open: boolean, onCreated: (team: string, started: bool
     submitting: null,
     error: null,
   })
+  const [retry, setRetry] = useState<{ send: () => Promise<void> } | null>(null)
 
   useEffect(() => {
-    if (open) setStatus((s) => ({ ...s, error: null }))
+    if (open) {
+      setStatus((s) => ({ ...s, error: null }))
+      setRetry(null)
+    }
   }, [open])
 
+  const onFail = (err: unknown) => setStatus({ busy: false, submitting: null, error: errorText(err) })
+  const run = async (go: () => Promise<void>) => {
+    setStatus((s) => ({ ...s, busy: true, error: null }))
+    await go()
+    setStatus((s) => (s.error ? s : { busy: false, submitting: null, error: null })) // 失败时保留 onFail 写入的报错
+  }
   const handleSubmit = async (start: boolean) => {
-    setStatus({ busy: true, submitting: start ? 'start' : 'create', error: null })
+    let steps: Step[]
     try {
-      await runSubmit(mode, { name, repo, template, dir, specPath }, start, onCreated)
+      steps = mode === 'template' ? templateSteps({ name, repo, template, dir }, start, onCreated) : importSteps(specPath, start, onCreated)
     } catch (err) {
-      setStatus({ busy: false, submitting: null, error: errorText(err) })
+      setStatus({ busy: false, submitting: null, error: errorText(err) }) // 本地必填校验，还没发请求
       return
     }
-    setStatus({ busy: false, submitting: null, error: null })
+    setStatus({ busy: true, submitting: start ? 'start' : 'create', error: null })
+    await run(() => runSteps(steps, onFail, setRetry))
   }
-
+  const retrySend = () => (retry ? run(retry.send) : undefined)
   const pickMode = (m: 'template' | 'import') => {
     setMode(m)
     setStatus((s) => ({ ...s, error: null }))
+    setRetry(null) // 换模式后旧链路作废，不再提供按原样重试
   }
 
-  return { mode, template, name, repo, dir, specPath, ...status, setTemplate, setName, setRepo, setDir, setSpecPath, pickMode, handleSubmit }
+  return {
+    mode, template, name, repo, dir, specPath, ...status, retry, retrySend,
+    setTemplate, setName, setRepo, setDir, setSpecPath, pickMode, handleSubmit,
+  }
 }
 
 export function NewTeamDialog(props: {
@@ -308,6 +336,8 @@ export function NewTeamDialog(props: {
       error={s.error}
       busy={s.busy}
       submitting={s.submitting}
+      retry={s.retry}
+      onRetry={() => void s.retrySend()}
       onClose={props.onClose}
       onSubmit={(start) => void s.handleSubmit(start)}
     >

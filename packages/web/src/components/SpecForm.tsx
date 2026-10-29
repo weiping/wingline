@@ -205,9 +205,23 @@ interface Docs {
   canRemove: boolean
 }
 
+/** 岗位字段的中文标签（规范 3.4.5）；未知键退回键名本身。 */
+const POST_LABEL: Record<string, string> = {
+  id: '岗位标识 id',
+  agent: '代理 agent',
+  model: '模型 model',
+  launch: '启动命令 launch',
+  environment: '远端环境 environment',
+  worktree: '工作区 worktree',
+  brief: '简报文件 brief',
+  tags: '标签 tags',
+  self_claim: '自主认领 self_claim',
+  plan_first: '先写计划 plan_first',
+}
+
 function PostFields({ i, post, c, docs }: { i: number; post: any; c: Omit<FieldBase, 'path' | 'label' | 'value'>; docs: Docs }) {
   const at = (name: string): SpecPath => ['posts', i, name]
-  const f = (name: string) => ({ ...c, path: at(name), label: name, value: post?.[name] })
+  const f = (name: string) => ({ ...c, path: at(name), label: POST_LABEL[name] ?? name, value: post?.[name] })
   const id = String(post?.id ?? i)
   const briefRel = (Array.isArray(post?.brief) ? String(post.brief[0] ?? '') : '') || `briefs/${id}.md`
   const onBriefFiles = (next: Record<string, string>) => {

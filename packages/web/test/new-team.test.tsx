@@ -248,6 +248,42 @@ test('创建并启动时若 up 失败，显示错误并不调用 onCreated', asy
   expect(onCreated).not.toHaveBeenCalled()
 })
 
+test('创建并启动：up 不确定失败后弹「按原样重试」，重发 up 带 retryRequest 且不重跑创建', async () => {
+  let ups = 0
+  const calls = mockApi({
+    'GET /api/session': () => SESSION,
+    'POST /api/teams': () => ({ team: 'retry-team', specPath: '/x/team.yaml', created: true }),
+    'POST /api/teams/retry-team/up': () => {
+      ups += 1
+      if (ups === 1) throw new Fail(504, { kind: 'uncertain', code: 'up_uncertain', message: '启动结果不确定', retryRequest: 'rr-3' })
+      return { run: null }
+    },
+  })
+  const onCreated = vi.fn()
+  const { getByRole, getByLabelText } = render(
+    <NewTeamDialog open onClose={() => {}} onCreated={onCreated} />,
+  )
+  fireEvent.input(getByLabelText('团队名称'), { target: { value: 'retry-team' } })
+  fireEvent.input(getByLabelText('代码库目录'), { target: { value: '/tmp/repo' } })
+  fireEvent.click(getByRole('button', { name: '创建并启动' }))
+
+  await waitFor(() => expect(calls.filter((c) => c.method === 'POST' && c.path === '/api/teams/retry-team/up')).toHaveLength(1))
+  expect(onCreated).not.toHaveBeenCalled()
+  const retryBtn = await waitFor(() => {
+    const el = getByRole('button', { name: '按原样重试' }) as HTMLButtonElement
+    expect(el.disabled).toBe(false)
+    return el
+  })
+  fireEvent.click(retryBtn)
+
+  await waitFor(() => expect(calls.filter((c) => c.method === 'POST' && c.path === '/api/teams/retry-team/up')).toHaveLength(2))
+  const upCalls = calls.filter((c) => c.method === 'POST' && c.path === '/api/teams/retry-team/up')
+  expect(upCalls[0]!.body).toEqual({})
+  expect(upCalls[1]!.body).toEqual({ retryRequest: 'rr-3' })
+  expect(calls.filter((c) => c.method === 'POST' && c.path === '/api/teams')).toHaveLength(1) // 创建不重跑
+  await waitFor(() => expect(onCreated).toHaveBeenCalledWith('retry-team', true))
+})
+
 test('styles.css 包含全局表单控件背景与 .btn.ghost 表面色规则', async () => {
   const fs = await import('node:fs')
   const path = await import('node:path')

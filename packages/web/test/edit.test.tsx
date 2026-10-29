@@ -402,7 +402,17 @@ test('运行中的团队保存时带 files，docsUpdated 后提示下次启动�
   await clickWhenEnabled(getByText, '保存为草稿')
   await waitFor(() => expect(s.saves()).toHaveLength(1))
   expect(s.saves()[0]!.body.files).toEqual({ 'NORMS.md': '# 新规范', 'briefs/builder.md': '# builder' })
-  expect(await findByText(/下次启动或新开会话时生效/)).toBeTruthy()
+  expect(await findByText(/team_spec_changed/)).toBeTruthy()
+  expect(getByText(/恢复会话同样需要先重启团队/)).toBeTruthy()
+})
+
+test('岗位字段配中文标签（规范 3.4.5：岗位标识 id、代理 agent、启动命令 launch 等）', async () => {
+  server()
+  const { container, getAllByText } = render(<Edit team="duo" />)
+  await loaded(container)
+  for (const t of ['岗位标识 id', '代理 agent', '模型 model', '启动命令 launch', '远端环境 environment', '工作区 worktree', '简报文件 brief', '标签 tags', '自主认领 self_claim', '先写计划 plan_first']) {
+    expect(getAllByText(t).length).toBeGreaterThanOrEqual(2) // builder 与 checker 两张岗位卡都有
+  }
 })
 
 test('已停止的团队「保存并启动」依次调 spec 与 up，成功后跳总览', async () => {

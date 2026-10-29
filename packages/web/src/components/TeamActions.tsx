@@ -57,6 +57,27 @@ export function ActionButton(p: { label: string; kind?: string; busy: boolean; e
   )
 }
 
+/** 链路里的一步：rr 携带服务端给的 retryRequest 原样重发本请求。 */
+export type Step = (rr?: string) => Promise<unknown>
+
+/** 依次执行；某步失败且错误带 retryRequest 时，把「失败请求原样重发 + 剩余步骤」记为按原样重试（不重跑整条链）。 */
+export async function runSteps(steps: Step[], onFail: (err: unknown) => void, setRetry: (r: { send: () => Promise<void> } | null) => void): Promise<void> {
+  setRetry(null)
+  for (let i = 0; i < steps.length; i++) {
+    try {
+      await steps[i]!()
+    } catch (err) {
+      if (err instanceof ApiError && err.retryRequest) {
+        const rr = err.retryRequest
+        const rest = steps.slice(i)
+        setRetry({ send: () => runSteps([() => rest[0]!(rr), ...rest.slice(1)], onFail, setRetry) })
+      }
+      onFail(err)
+      return
+    }
+  }
+}
+
 /** 一键按钮（无确认框）：POST path，失败与 uncertain 的处理与 ActionDialog 一致。 */
 export function DirectAction(props: { label: string; kind?: string; path: string; body?: () => Record<string, unknown>; onDone: () => void }) {
   const act = useAction(props.onDone)

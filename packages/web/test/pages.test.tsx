@@ -599,6 +599,23 @@ test('「完成并校验」闸门失败时显示输出摘要并刷新任务详�
   expect(calls.find((c) => c.method === 'POST' && c.path === '/api/teams/duo/tasks/t1/done')!.body).toEqual({ as: 'builder@duo' })
 })
 
+test('「完成并校验」再次执行成功后清除上一轮的闸门失败横幅', async () => {
+  stubEventSource()
+  let n = 0
+  mockApi({
+    ...taskDetailRoutes,
+    'GET /api/teams/duo/tasks/t1': () => shownTask({ status: 'dispatched', claimedBy: 'builder@duo' }),
+    'POST /api/teams/duo/tasks/t1/done': () =>
+      ++n === 1 ? { outcome: 'gate_failed', gateOutputPath: '/home/x/.wingline/logs/duo/gate-t1-1-1.txt' } : { outcome: 'done' },
+  })
+  const { getByText, findByText, queryByText } = render(withStream('duo', <TaskDetail team="duo" id="t1" />))
+  await findByText('Alpha')
+  fireEvent.click(getByText('完成并校验', { selector: 'button' }))
+  expect(await findByText(/闸门未通过/)).toBeTruthy()
+  fireEvent.click(getByText('完成并校验', { selector: 'button' }))
+  await waitFor(() => expect(queryByText(/闸门未通过/)).toBeNull())
+})
+
 test('终态任务提供「重开并转人工」（reopen: true），且不渲染执行卡片', async () => {
   stubEventSource()
   const calls = mockApi({

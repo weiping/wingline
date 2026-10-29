@@ -6,6 +6,7 @@ import { navigate } from '../router.js'
 import { ActionDialog } from '../components/ActionDialog.js'
 import { SpecForm, formHasField, type FormError, type SpecEditOp, type SpecPath } from '../components/SpecForm.js'
 import { SpecPreview } from '../components/SpecPreview.js'
+import { runSteps, type Step } from '../components/TeamActions.js'
 import { ErrorBox, Loading } from '../components/common.js'
 
 interface SpecForEdit {
@@ -169,27 +170,6 @@ interface SavePanelProps {
   reload: () => void
 }
 
-/** 链路里的一步：rr 携带服务端给的 retryRequest 原样重发本请求。 */
-type Step = (rr?: string) => Promise<unknown>
-
-/** 依次执行；某步失败且错误带 retryRequest 时，把「失败请求原样重发 + 剩余步骤」记为按原样重试（不重跑整条链，spec 保存不在其中）。 */
-async function runSteps(steps: Step[], onFail: (err: unknown) => void, setRetry: (r: { send: () => Promise<void> } | null) => void): Promise<void> {
-  setRetry(null)
-  for (let i = 0; i < steps.length; i++) {
-    try {
-      await steps[i]!()
-    } catch (err) {
-      if (err instanceof ApiError && err.retryRequest) {
-        const rr = err.retryRequest
-        const rest = steps.slice(i)
-        setRetry({ send: () => runSteps([() => rest[0]!(rr), ...rest.slice(1)], onFail, setRetry) })
-      }
-      onFail(err)
-      return
-    }
-  }
-}
-
 /** 保存（可带 up/down 后续步骤）；任一步失败停在提示，uncertain 时提供单个请求的按原样重试。 */
 function useSave(p: SavePanelProps) {
   const [saving, setSaving] = useState(false)
@@ -275,7 +255,7 @@ function SaveMessages(p: { spec: SpecForEdit; base: Base; saved: SaveResult | nu
       )}
       {p.spec.running && p.saved?.docsUpdated?.length ? (
         <p class="banner" role="status">
-          规范与职责文档已更新，将在下次启动或新开会话时生效；恢复会话前需要重启团队。
+          规范与职责文档已更新：在重启团队（down 后 up）之前，任务操作（认领/开始/完成等）会报 team_spec_changed 暂停，恢复会话同样需要先重启团队。
         </p>
       ) : null}
       {p.saved?.wrote === 'spec' && p.base.hasDraft && (

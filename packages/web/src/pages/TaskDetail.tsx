@@ -130,6 +130,7 @@ function DoneButton({ base, as, reload }: { base: string; as: string; reload: ()
   const [failed, setFailed] = useState<DoneResult | null>(null)
   const send = (rr?: string) =>
     act.run(async () => {
+      setFailed(null) // 先清上一轮的闸门失败横幅，新一轮结果不该残留旧提示
       const res = await api.post<DoneResult>(`${base}/done`, { as, ...(rr ? { retryRequest: rr } : {}) })
       if (res.outcome === 'gate_failed' || res.outcome === 'escalated') setFailed(res)
     })
