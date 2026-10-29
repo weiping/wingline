@@ -48,7 +48,7 @@ function modeOf(file: string): number | null {
  * 先写同目录临时文件再改名，避免留下半截文件。改名会换掉文件本身，所以：
  * 符号链接要写到它指向的真实文件上（链接保持链接），已有文件的权限位要带过去。
  */
-function writeAtomic(link: string, text: string): void {
+export function writeAtomic(link: string, text: string): void {
   const file = realTarget(link)
   const tmp = path.join(path.dirname(file), `.${path.basename(file)}.${process.pid}.tmp`)
   try {
@@ -68,6 +68,16 @@ export function assertSpecSize(text: string): void {
   }
 }
 
+/** 保存前的冲突检查：目标文件当前内容既不等于新内容、也不等于加载时的 baseHash 时抛 spec_conflict。 */
+export function checkSaveConflict(a: { specPath: string; text: string; baseHash: string | null; running: boolean }): { target: string; hash: string; skip: boolean } {
+  const target = a.running ? draftPathOf(a.specPath) : a.specPath
+  const hash = textHash(a.text)
+  const current = fileHash(target)
+  if (current === hash) return { target, hash, skip: true }
+  if (current !== a.baseHash) throw new WinglineError('input', 'spec_conflict', `${path.basename(target)} 在加载后被改动过，请重新加载`)
+  return { target, hash, skip: false }
+}
+
 /** 保存规格：团队运行中写草稿，否则写正式规格。`running` 与注册表是否一致由调用方检查。 */
 export function saveSpec(a: { specPath: string; text: string; baseHash: string | null; running: boolean }): {
   wrote: 'draft' | 'spec'
@@ -79,13 +89,9 @@ export function saveSpec(a: { specPath: string; text: string; baseHash: string |
   if (errors.length > 0) {
     throw new WinglineError('input', 'spec_invalid', errors[0]!.message, { detail: { errors } })
   }
-  const target = a.running ? draftPathOf(a.specPath) : a.specPath
-  const result = { wrote: a.running ? ('draft' as const) : ('spec' as const), path: target, hash: textHash(a.text) }
-  const current = fileHash(target)
-  if (current === result.hash) return result
-  if (current !== a.baseHash) {
-    throw new WinglineError('input', 'spec_conflict', `${path.basename(target)} 在加载后被改动过，请重新加载`)
-  }
+  const { target, hash, skip } = checkSaveConflict(a)
+  const result = { wrote: a.running ? ('draft' as const) : ('spec' as const), path: target, hash }
+  if (skip) return result
   writeAtomic(target, a.text)
   return result
 }

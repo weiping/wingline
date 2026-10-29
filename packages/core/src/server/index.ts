@@ -83,11 +83,11 @@ function respondError(res: http.ServerResponse, err: unknown, warn: (msg: string
 
 const BODY_LIMIT = 64 * 1024
 /**
- * 规格的 yaml 字段上限是 48 KB（按 UTF-8 字节），但 JSON 里换行等要转义，最坏每字节变 2 到 6 字节，
- * 所以保存 / 校验规格的请求体不能套 64 KB 的通用上限，否则 40 KB 出头的 yaml 会先撞 413。
- * 超过 48 KB 的 yaml 由 spec_too_large 拒绝；这里的上限只防止读入无限大的请求体。
+ * 规格编辑接口的请求体：规格 48 KB + 若干份 64 KB 以内的 .md 文档，JSON 转义后最坏再放大几倍，
+ * 所以不能套 64 KB 的通用上限。超过各自上限由 spec_too_large / doc_too_large 拒绝；
+ * 这里的 512 KB 只防止读入无限大的请求体。
  */
-const SPEC_BODY_LIMIT = 48 * 1024 * 6 + 4096
+const SPEC_BODY_LIMIT = 512 * 1024
 const SPEC_BODY_ROUTE = /^\/api\/teams\/[^/]+\/spec(?:\/validate)?$/
 
 const bodyLimitFor = (pathname: string) => (SPEC_BODY_ROUTE.test(pathname) ? SPEC_BODY_LIMIT : BODY_LIMIT)

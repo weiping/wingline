@@ -129,13 +129,13 @@ export const WRITE_ROUTES: WriteRouteSpec[] = [
   {
     pattern: '/api/teams/:team/spec',
     check: ['team'],
-    fields: ['yaml', 'baseHash', 'running', 'retryRequest'],
+    fields: ['yaml', 'baseHash', 'running', 'files', 'retryRequest'],
     call: async (cmds, ctx) => {
-      const { yaml, baseHash, running } = ctx.body
+      const { yaml, baseHash, running, files } = ctx.body
       checkParam('yaml', yaml)
       if (baseHash !== null) checkParam('baseHash', baseHash)
       if (typeof running !== 'boolean') throw new WinglineError('input', 'invalid_param', '参数 running 不合法')
-      return cmds.saveSpecCmd(ctx.deps, { team: ctx.params.team!, yaml, baseHash, running })
+      return cmds.saveSpecCmd(ctx.deps, { team: ctx.params.team!, yaml, baseHash, running, files })
     },
   },
   {

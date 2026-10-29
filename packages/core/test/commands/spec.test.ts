@@ -1,14 +1,16 @@
 import fs from 'node:fs'
+import path from 'node:path'
 import { expect, test } from 'vitest'
 import { discardDraftCmd, readSpecForEdit, saveSpecCmd, validateSpecEdit } from '../../src/commands/spec.js'
 import { draftPathOf, fileHash, textHash } from '../../src/spec/draft.js'
 import { DUO_YAML } from '../spec/helpers.js'
 import { FakeOrca, seedRunningTeam } from './fake-client.js'
+import { restore } from '../../src/commands/restore/index.js'
 
 const EDITED = DUO_YAML.replace('model: opus', 'model: sonnet')
 
 function seed(status: 'up' | 'stopped' = 'up') {
-  const { deps, registry } = seedRunningTeam(new FakeOrca())
+  const { deps, registry } = seedRunningTeam(new FakeOrca(), { files: { 'NORMS.md': '# duo 团队规范\n' } })
   const specPath = registry.getTeam('duo')!.specPath
   if (status === 'stopped') registry.setTeamStatus('duo', 'stopped')
   return { deps, registry, specPath }
@@ -93,4 +95,41 @@ test('discardDraftCmd removes the draft and reports whether it existed', async (
   expect(await discardDraftCmd(deps, { team: 'duo' })).toEqual({ discarded: false })
   fs.writeFileSync(draftPathOf(specPath), EDITED)
   expect(await discardDraftCmd(deps, { team: 'duo' })).toEqual({ discarded: true })
+})
+
+test('readSpecForEdit 带上规范与各岗位简报的正文', () => {
+  const { deps } = seed()
+  const r = readSpecForEdit(deps, 'duo')
+  expect(Object.keys(r.files).sort()).toEqual(['NORMS.md', 'briefs/builder.md', 'briefs/checker.md'])
+  expect(r.files['NORMS.md']).toContain('# duo 团队规范')
+})
+
+test('validateSpecEdit 用 files 里的虚拟文件通过校验（新岗位的简报还没落盘）', () => {
+  const { deps } = seed()
+  const yaml = DUO_YAML.replace('  - id: checker', '  - id: reviewer\n    agent: claude\n    model: opus\n    worktree: current\n    brief: [briefs/reviewer.md]\n  - id: checker')
+  const r = validateSpecEdit(deps, { team: 'duo', yaml, files: { 'briefs/reviewer.md': '# reviewer\n' } })
+  expect(r.errors).toEqual([])
+})
+
+test('没有虚拟文件时同一个 yaml 报 file_missing', () => {
+  const { deps } = seed()
+  const yaml = DUO_YAML.replace('  - id: checker', '  - id: reviewer\n    agent: claude\n    model: opus\n    worktree: current\n    brief: [briefs/reviewer.md]\n  - id: checker')
+  expect(validateSpecEdit(deps, { team: 'duo', yaml }).errors[0]).toMatchObject({ code: 'file_missing' })
+})
+
+test('saveSpecCmd 把 files 里的正文写到磁盘，并拒绝未被规格引用的文档', async () => {
+  // brief 原文是 seed()；running: false 要求团队已停止，否则会先撞上运行状态守卫
+  const { deps, specPath } = seed('stopped')
+  const dir = path.dirname(specPath)
+  const r = await saveSpecCmd(deps, { team: 'duo', yaml: DUO_YAML, baseHash: null, running: false, files: { 'NORMS.md': '# 新规范\n' } })
+  expect(r.docsUpdated).toEqual(['NORMS.md'])
+  expect(fs.readFileSync(path.join(dir, 'NORMS.md'), 'utf8')).toBe('# 新规范\n')
+  await expect(saveSpecCmd(deps, { team: 'duo', yaml: DUO_YAML, baseHash: null, running: false, files: { 'secret.md': 'x' } }))
+    .rejects.toMatchObject({ code: 'doc_not_referenced' })
+})
+
+test('运行中团队保存文档：注册表里的规格哈希变旧，restore 随后报 team_spec_changed', async () => {
+  const { deps } = seed()
+  await saveSpecCmd(deps, { team: 'duo', yaml: DUO_YAML, baseHash: null, running: true, files: { 'NORMS.md': '# 改过的规范\n' } })
+  await expect(restore(deps, { team: 'duo' })).rejects.toMatchObject({ code: 'team_spec_changed' })
 })

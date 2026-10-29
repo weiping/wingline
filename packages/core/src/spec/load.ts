@@ -229,9 +229,10 @@ function launchOf(p: RawTeam['posts'][number], i: number, at: Located): string {
   return at.fail('launch_required', ['posts', i, 'model'], `agent ${p.agent} 指定了 model，请用 launch 指定完整启动命令`)
 }
 
-function resolveFile(dir: string, rel: string, at: Located, p: Path): string {
+function resolveFile(dir: string, rel: string, at: Located, p: Path, virtualFiles?: ReadonlySet<string>): string {
   const abs = path.resolve(dir, toPosix(rel))
-  if (!fs.existsSync(abs)) at.fail('file_missing', p, `找不到文件 ${rel}（解析为 ${abs}）`)
+  // 编辑器里新引用的文档还没落盘：以虚拟文件表的存在性为准（rel 按 YAML 原样归一到 / 后比较）
+  if (!fs.existsSync(abs) && !virtualFiles?.has(toPosix(rel))) at.fail('file_missing', p, `找不到文件 ${rel}（解析为 ${abs}）`)
   return abs
 }
 
@@ -241,7 +242,7 @@ export type SpecError = { path: Array<string | number>; code: string; message: s
 export function validateSpecText(
   text: string,
   specPath: string,
-  o: { platform?: NodeJS.Platform } = {},
+  o: { platform?: NodeJS.Platform; virtualFiles?: ReadonlySet<string> } = {},
 ): { spec: TeamSpec | null; parsed: unknown | null; errors: SpecError[] } {
   const abs = path.resolve(specPath)
   const toError = (e: unknown): SpecError => {
@@ -256,7 +257,7 @@ export function validateSpecText(
     return { spec: null, parsed: null, errors: [toError(e)] }
   }
   try {
-    return { spec: specFromRaw(parsed.raw, parsed.at, abs, o.platform ?? process.platform), parsed: parsed.raw, errors: [] }
+    return { spec: specFromRaw(parsed.raw, parsed.at, abs, o.platform ?? process.platform, o.virtualFiles), parsed: parsed.raw, errors: [] }
   } catch (e) {
     return { spec: null, parsed: parsed.raw, errors: [toError(e)] }
   }
@@ -274,7 +275,7 @@ export function loadTeamSpec(specPath: string, o: { platform?: NodeJS.Platform }
   return specFromRaw(raw, at, abs, o.platform ?? process.platform)
 }
 
-function specFromRaw(raw: unknown, at: Located, abs: string, platform: NodeJS.Platform): TeamSpec {
+function specFromRaw(raw: unknown, at: Located, abs: string, platform: NodeJS.Platform, virtualFiles?: ReadonlySet<string>): TeamSpec {
   const dir = path.dirname(abs)
   const team = validate(raw, at)
   crossCheck(team, at)
@@ -282,7 +283,7 @@ function specFromRaw(raw: unknown, at: Located, abs: string, platform: NodeJS.Pl
     version: 1,
     name: team.name,
     repo: team.repo,
-    normsPath: resolveFile(dir, team.norms, at, ['norms']),
+    normsPath: resolveFile(dir, team.norms, at, ['norms'], virtualFiles),
     lead: team.lead,
     posts: team.posts.map((p, i) => ({
       id: p.id,
@@ -291,7 +292,7 @@ function specFromRaw(raw: unknown, at: Located, abs: string, platform: NodeJS.Pl
       launch: launchOf(p, i, at),
       ...environmentOf(p, i, at),
       worktree: p.worktree,
-      briefPaths: p.brief.map((b, j) => resolveFile(dir, b, at, ['posts', i, 'brief', j])),
+      briefPaths: p.brief.map((b, j) => resolveFile(dir, b, at, ['posts', i, 'brief', j], virtualFiles)),
       selfClaim: p.self_claim,
       tags: p.tags,
       planFirst: p.plan_first,
