@@ -11,3 +11,4 @@ playwright-report/
 
 # 误落在本仓库工作区的其它项目的产物（信息图），不归 wingline 管
 generated-images/
+.worktrees
