@@ -27,7 +27,7 @@ export type AuditTable<C> = { [K in keyof C]?: AuditEntry<Parameters<Extract<C[K
 export const WRITE_COMMANDS: readonly string[] = [
   'up', 'down', 'restore', 'send', 'createTask', 'claimTask', 'releaseTask', 'reassignTask', 'startTask', 'planTask',
   'doneTask', 'escalateTask', 'resolveGate', 'recoverTask', 'dispatcherUp', 'dispatcherDown', 'freezePostCmd',
-  'unfreezePostCmd', 'hushCmd', 'unhushCmd', 'dispatcherReply',
+  'unfreezePostCmd', 'hushCmd', 'unhushCmd', 'dispatcherReply', 'init',
 ]
 
 /** 换行与控制字符换成空格（一一对应，长度不变），超长截断并标明原长。 */

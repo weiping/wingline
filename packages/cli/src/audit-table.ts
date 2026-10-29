@@ -19,6 +19,11 @@ const id = (a: { id: string }) => a.id
  * `auditedCommands` 截到 60 字，规格文件、webhook 地址、会话标记都不进摘要。
  */
 export const AUDIT: AuditTable<Commands> = {
+  init: {
+    command: 'init',
+    team: (_a, ctx) => (ctx.result as { team?: string } | undefined)?.team ?? '-',
+    summary: (a, ctx) => ({ mode: a.mode, template: a.template, created: (ctx.result as { created?: boolean } | undefined)?.created }),
+  },
   up: {
     command: 'up',
     team: byResult,

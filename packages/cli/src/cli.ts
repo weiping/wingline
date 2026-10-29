@@ -6,9 +6,9 @@ import type { Writable } from 'node:stream'
 import { Command, CommanderError, InvalidArgumentError, Option } from 'commander'
 import {
   READ_ONLY_CALLS, Registry, type CallLogOptions, WinglineError, attention, auditedCommands, claimTask, createCallLog, createOrcaClient, createOrcaRunner, createTask, doneTask, down, escalateTask, exitCodeOf,
-  followTimeline, listStale, listTasks, parseDuration, planTask, ps, readTimeline, reassignTask, recoverTask, releaseTask, resolveGate, resolveOrcaExecutable, restore, restoreAll, restoreAllExitCode, restoreExitCode, send, showTask, startTask,
+  followTimeline, initTeamCmd, listStale, listTasks, parseDuration, planTask, ps, readTimeline, reassignTask, recoverTask, releaseTask, resolveGate, resolveOrcaExecutable, restore, restoreAll, restoreAllExitCode, restoreExitCode, send, showTask, startTask,
   autostartInstall, autostartStatusOf, autostartUninstall, type AutostartSys, up, winglineHome, dispatcherUp, dispatcherDown, dispatcherStatus, dispatcherReply, freezePostCmd, unfreezePostCmd, hushCmd, unhushCmd, runDispatcherLoop, type CommandDeps,
-  type TimelineEvent, type TimelineSource,
+  type TeamTemplateId, type TimelineEvent, type TimelineSource,
 } from '@weiping/wingline-core'
 import { consoleCmd, renderConsole, renderReady } from './console.js'
 import { tuiCmd } from './tui/command.js'
@@ -17,7 +17,7 @@ import { AUDIT } from './audit-table.js'
 import verified from './verified.json' with { type: 'json' }
 import {
   errorDoc, renderAttention, renderDispatcherDown, renderDispatcherStatus, renderDispatcherUp, renderUnfreeze, renderCreate, renderDone, renderDown, renderError, renderEscalate, renderList, renderLog, renderPs,
-  renderReassign, renderRecover, renderResolve, renderRestore, renderRestoreAll, renderAutostartInstall, renderAutostartStatus, renderAutostartUninstall, logPrinter,
+  renderReassign, renderRecover, renderResolve, renderRestore, renderRestoreAll, renderAutostartInstall, renderAutostartStatus, renderAutostartUninstall, logPrinter, renderInit,
   renderSend, renderShow, renderStale, renderStart, renderUp,
 } from './output.js'
 
@@ -30,6 +30,7 @@ export interface RunIO {
 }
 
 export interface Commands {
+  init: typeof initTeamCmd
   up: typeof up
   ps: typeof ps
   send: typeof send
@@ -65,6 +66,7 @@ export interface Commands {
 }
 
 const rawCommands: Commands = {
+  init: initTeamCmd,
   up, ps, send, down, restore, log: readTimeline, followLog: followTimeline, createTask, listTasks, listStale, showTask, claimTask, releaseTask, reassignTask, startTask, planTask, doneTask,
   escalateTask, resolveGate, recoverTask, dispatcherUp, dispatcherDown, runDispatcherLoop, dispatcherStatus, freezePostCmd, unfreezePostCmd,
   hushCmd, unhushCmd, dispatcherReply, attention,
@@ -249,6 +251,22 @@ function registerTaskCommands(program: Command, commands: Commands, execute: Exe
 }
 
 function registerBaseCommands(program: Command, commands: Commands, execute: Execute, io: RunIO): void {
+  program.command('init [name]').description('用预设模板生成团队配置（或导入已有 team.yaml）')
+    .option('--template <id>', '预设模板：duo / solo / trio（默认 duo）')
+    .option('--repo <path>', '代码库目录')
+    .option('--dir <dir>', '配置存放目录（默认 <数据目录>/teams/<name>）')
+    .option('--import <team.yaml>', '导入已有的 team.yaml')
+    .option('--json', '输出 JSON')
+    .action((name: string | undefined, o: { template?: string; repo?: string; dir?: string; import?: string; json?: boolean }) =>
+      execute(!!o.json, async (d) => {
+        if (o.import) {
+          if (name) throw new WinglineError('input', 'init_args_invalid', '--import 与团队名不能同时给')
+          return commands.init(d, { mode: 'import', specPath: o.import })
+        }
+        if (!name) throw new WinglineError('input', 'init_args_invalid', '需要给出团队名')
+        if (!o.repo) throw new WinglineError('input', 'init_args_invalid', '需要给出 --repo 代码库目录')
+        return commands.init(d, { mode: 'template', name, repo: o.repo, template: o.template as TeamTemplateId | undefined, dir: o.dir })
+      }, renderInit))
   program.command('up <team.yaml>').description('拉起团队的全部岗位').option('--json', '输出 JSON')
     .option('--adopt-run <id>', '找回指定的 Run').option('--new-run', '丢弃旧 Run，新建一个')
     .option('--draft', '先把同目录的 team.draft.yaml 应用为正式规格（旧规格备份为 .bak）')

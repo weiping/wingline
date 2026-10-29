@@ -1,5 +1,5 @@
 import {
-  WinglineError, type DoneResult, type DownResult, type PsRow, type RestoreAllResult, type RestorePost, type RestoreResult, type SendResultRow, type ShownTask, type StaleItem,
+  WinglineError, type DoneResult, type DownResult, type InitTeamResult, type PsRow, type RestoreAllResult, type RestorePost, type RestoreResult, type SendResultRow, type ShownTask, type StaleItem,
   type TaskRow, type TimelineEvent, type UpResult,
   type AttentionReport, type DispatcherHealth, type DispatcherStatus, type createTask, type escalateTask, type reassignTask, type recoverTask, type resolveGate, type startTask,
 } from '@weiping/wingline-core'
@@ -80,6 +80,10 @@ export function renderSend(r: SendResultRow): string {
 export function renderDown(r: DownResult): string {
   const lines = r.posts.map((p) => `${p.address}  ${DOWN_LABEL[p.outcome]}${p.reason ? `  ${p.reason}` : ''}`)
   return `团队 ${r.team}\n${lines.join('\n')}\n`
+}
+
+export function renderInit(r: InitTeamResult): string {
+  return `已生成团队 ${r.team} 的配置：${r.specPath}（用 wl up ${r.specPath} 启动）\n`
 }
 
 export interface ErrorDoc {
