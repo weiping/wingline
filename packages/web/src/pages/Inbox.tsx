@@ -4,12 +4,36 @@ import { useApi } from '../hooks.js'
 import { useStreamListener } from '../stream.js'
 import { ActionDialog } from '../components/ActionDialog.js'
 import { CommandHint } from '../components/CommandHint.js'
+import { DirectAction, DispatcherActions } from '../components/TeamActions.js'
 import { Link } from '../components/Link.js'
 import { ErrorBox, Loading, Pill, Section, postOf } from '../components/common.js'
 import { STALE_REASON } from '../labels.js'
 import { taskPath } from '../router.js'
 
 const Empty = () => <p class="muted small">暂无</p>
+
+/** 卡住任务的一键操作：owner_idle / done_unfinished 以任务主人调任务流；dead_assignee 走确认框；其余给命令。 */
+function StaleTaskAction({ team, s, reload }: { team: string; s: StaleItem; reload: () => void }) {
+  const base = `/api/teams/${encodeURIComponent(team)}/tasks`
+  const owner = s.owner ? postOf(s.owner) : null
+  const simple = (label: string, action: string) => (
+    <DirectAction label={label} kind="btn ghost" path={`${base}/${encodeURIComponent(s.taskId)}/${action}`} body={() => ({ as: owner })} onDone={reload} />
+  )
+  if (s.reason === 'dead_assignee') {
+    return (
+      <ActionDialog
+        label="恢复派发"
+        title="恢复派发"
+        submitLabel="恢复"
+        onSubmit={(_v, rr) => api.post(`${base}/${encodeURIComponent(s.taskId)}/recover`, rr ? { retryRequest: rr } : {})}
+        onDone={reload}
+      />
+    )
+  }
+  if (s.reason === 'owner_idle' && owner) return simple('开始任务', 'start')
+  if (s.reason === 'done_unfinished' && owner) return simple('完成并校验', 'done')
+  return <CommandHint command={s.command} />
+}
 
 /** 收件箱：提问、卡住的任务、冻结岗位、巡查信号。没有写接口的条目只给出可复制的命令。 */
 export function Inbox({ team }: { team: string }) {
@@ -20,7 +44,6 @@ export function Inbox({ team }: { team: string }) {
   if (!attn.data) return <Loading />
   const a = attn.data
   const reload = () => attn.reload()
-  const tasks = `/api/teams/${enc}/tasks`
   const gates = a.stale.filter((s) => s.reason === 'blocked_waiting')
   const hung = a.stale.filter((s) => s.reason !== 'blocked_waiting')
 
@@ -39,7 +62,7 @@ export function Inbox({ team }: { team: string }) {
       {a.dispatcher.state !== 'running' && (
         <Section title="调度员">
           <p class="error">调度员不在运行，提问转达与巡查暂停。</p>
-          <CommandHint command={`wl dispatcher up ${team}`} />
+          <DispatcherActions team={team} state={a.dispatcher.state} onChanged={reload} />
         </Section>
       )}
 
@@ -130,17 +153,7 @@ export function Inbox({ team }: { team: string }) {
                 <Link href={taskPath(team, s.taskId)}>{s.title}</Link> <Pill tone="warn">{STALE_REASON[s.reason]}</Pill>{' '}
                 <span class="muted small">主人 {s.owner ? postOf(s.owner) : '—'}</span>
               </div>
-              {s.reason === 'dead_assignee' ? (
-                <ActionDialog
-                  label="恢复派发"
-                  title="恢复派发"
-                  submitLabel="恢复"
-                  onSubmit={(_v, rr) => api.post(`${tasks}/${encodeURIComponent(s.taskId)}/recover`, rr ? { retryRequest: rr } : {})}
-                  onDone={reload}
-                />
-              ) : (
-                <CommandHint command={s.command} />
-              )}
+              <StaleTaskAction team={team} s={s} reload={reload} />
             </div>
           ))
         )}

@@ -98,6 +98,9 @@ export const attentionOf = (over: Record<string, unknown> = {}) => ({
 export const teamOf = (over: Record<string, unknown> = {}) => ({
   team: 'duo',
   runId: 'run-1',
+  status: 'up',
+  specPath: '/t/team.yaml',
+  hasDraft: false,
   dispatcher: {
     team: 'duo',
     health: { state: 'running', ageMs: 1000 },

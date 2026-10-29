@@ -1,21 +1,27 @@
 import type { AttentionReport, DispatcherStatus, PsRow, TimelineEvent } from '@weiping/wingline-core'
 import { useApi } from '../hooks.js'
 import { useStreamListener } from '../stream.js'
-import { CommandHint } from '../components/CommandHint.js'
 import { EventRow } from '../components/EventRow.js'
 import { PostCard } from '../components/PostCard.js'
-import { ErrorBox, Loading, Pill, Section, postOf } from '../components/common.js'
+import { DispatcherActions, TeamActions } from '../components/TeamActions.js'
+import { ErrorBox, Loading, Pill, Section } from '../components/common.js'
 
 export interface TeamView {
   team: string
   runId: string | null
-  dispatcher: DispatcherStatus
+  status: 'up' | 'stopped'
+  specPath: string
+  hasDraft: boolean
+  neverStarted?: boolean
+  orcaUnavailable?: string
+  /** neverStarted 时后端只给精简 4 键（无 lastCheck / lastScan / warnings）。 */
+  dispatcher: Pick<DispatcherStatus, 'frozen' | 'hushed' | 'attentionItems'> & { health: DispatcherStatus['health'] } & Partial<DispatcherStatus>
   posts: PsRow[]
 }
 
 const DISPATCHER = { running: ['运行中', 'ok'], stale: ['失联', 'bad'], stopped: ['已停止', 'warn'], never: ['未启动', 'neutral'] } as const
 
-function DispatcherCard({ d, team }: { d: DispatcherStatus; team: string }) {
+function DispatcherCard({ d, team, neverStarted, onChanged }: { d: TeamView['dispatcher']; team: string; neverStarted?: boolean; onChanged: () => void }) {
   const [label, tone] = DISPATCHER[d.health.state]
   const age = d.health.ageMs
   return (
@@ -26,7 +32,7 @@ function DispatcherCard({ d, team }: { d: DispatcherStatus; team: string }) {
       <p class="muted small">
         心跳 {age !== undefined ? `${Math.round(age / 1000)} 秒前` : '—'} · 冻结 {d.frozen} · 静音 {d.hushed} · 待办 {d.attentionItems}
       </p>
-      {d.health.state !== 'running' && <CommandHint note="在终端里启动调度员：" command={`wl dispatcher up ${team}`} />}
+      <DispatcherActions team={team} state={d.health.state} neverStarted={neverStarted} onChanged={onChanged} />
     </section>
   )
 }
@@ -48,6 +54,29 @@ function RecentEvents({ team }: { team: string }) {
   )
 }
 
+/** 页头：团队名 + Run + 生命周期按钮组；Orca 不可达与从未启动用普通提示条（非红色错误块）。 */
+function OverviewHead({ team, v, onChanged }: { team: string; v: TeamView; onChanged: () => void }) {
+  return (
+    <>
+      <header class="page-head">
+        <h1>{team}</h1>
+        <span class="muted small">Run {v.runId ?? '—'}</span>
+        <TeamActions team={team} view={v} onChanged={onChanged} />
+      </header>
+      {v.orcaUnavailable && (
+        <p class="banner" role="status">
+          Orca 未运行或不可达，岗位状态暂不可用
+        </p>
+      )}
+      {v.neverStarted && (
+        <p class="banner" role="status">
+          该团队还没有启动过，先点「启动团队」
+        </p>
+      )}
+    </>
+  )
+}
+
 /** 总览：调度员、岗位卡（冻结 / 巡查标记来自收件箱数据）、最近 20 条事件。 */
 export function Overview({ team }: { team: string }) {
   const enc = encodeURIComponent(team)
@@ -65,18 +94,19 @@ export function Overview({ team }: { team: string }) {
   const signal = new Map<string, number>()
   for (const s of attn.data?.signals ?? []) signal.set(s.post, Math.max(s.level, signal.get(s.post) ?? 0))
   const v = view.data
+  const onChanged = () => {
+    view.reload()
+    attn.reload()
+  }
   return (
     <div class="page">
-      <header class="page-head">
-        <h1>{team}</h1>
-        <span class="muted small">Run {v.runId ?? '—'}</span>
-      </header>
+      <OverviewHead team={team} v={v} onChanged={onChanged} />
       {(attn.data?.warnings ?? []).map((w) => (
         <p class="banner" role="status" key={w}>
           {w}
         </p>
       ))}
-      <DispatcherCard d={v.dispatcher} team={team} />
+      <DispatcherCard d={v.dispatcher} team={team} neverStarted={v.neverStarted} onChanged={onChanged} />
       <Section title="岗位" count={v.posts.length}>
         <div class="cards">
           {v.posts.map((p) => (
@@ -97,4 +127,3 @@ export function Overview({ team }: { team: string }) {
     </div>
   )
 }
-
