@@ -1,6 +1,6 @@
 import fs from 'node:fs'
 import { expect, test } from 'vitest'
-import { Router } from '../../src/server/http.js'
+import { Router, statusOf } from '../../src/server/http.js'
 import { draftPathOf, fileHash } from '../../src/spec/draft.js'
 import { DUO_YAML } from '../spec/helpers.js'
 import {
@@ -44,6 +44,16 @@ function sampleRequest(pattern: string): { path: string; body: Record<string, un
       return { path: '/api/teams/duo/spec', body: { yaml: 'version: 1\n', baseHash: null, running: true } }
     case '/api/teams/:team/spec/discard-draft':
       return { path: '/api/teams/duo/spec/discard-draft', body: {} }
+    case '/api/teams/:team/up':
+      return { path: '/api/teams/duo/up', body: { draft: true } }
+    case '/api/teams/:team/down':
+      return { path: '/api/teams/duo/down', body: { close: true } }
+    case '/api/teams/:team/restore':
+      return { path: '/api/teams/duo/restore', body: {} }
+    case '/api/teams/:team/dispatcher/up':
+      return { path: '/api/teams/duo/dispatcher/up', body: {} }
+    case '/api/teams/:team/dispatcher/down':
+      return { path: '/api/teams/duo/dispatcher/down', body: { close: true } }
     default:
       throw new Error(`unknown pattern ${pattern}`)
   }
@@ -69,6 +79,11 @@ function makeRecordingCmds() {
     dispatcherReply: record('dispatcherReply', {}) as any,
     saveSpecCmd: record('saveSpecCmd', { wrote: 'draft', path: '/t/team.draft.yaml', hash: 'h' }) as any,
     discardDraftCmd: record('discardDraftCmd', { discarded: false }) as any,
+    up: record('up', { team: 'duo', posts: [], run: {} }) as any,
+    down: record('down', { team: 'duo', posts: [] }) as any,
+    restore: record('restore', { team: 'duo', dryRun: false, posts: [], dispatcher: {}, tasks: [] }) as any,
+    dispatcherUp: record('dispatcherUp', { address: 'dispatcher@duo', outcome: 'started' }) as any,
+    dispatcherDown: record('dispatcherDown', { address: 'dispatcher@duo', outcome: 'noop' }) as any,
   }
   const audited = auditedCommands(raw, CONSOLE_AUDIT, { prefix: 'console:', actor: 'human' })
   return { cmds: audited, calls, raw }
@@ -373,7 +388,7 @@ test('gates resolve 的 reassign=123（非字符串） → 400 invalid_param', a
   })
 })
 
-test('retryRequest 下传契约：仅 send、createTask、escalateTask 下传，其余 10 条不向下传', async () => {
+test('retryRequest 下传契约：仅 send、createTask、escalateTask 下传，其余 15 条不向下传', async () => {
   const o = new FakeOrca()
   const { deps } = seedRunningTeam(o)
   deps.registry.insertTaskExt({ taskId: 'task-1', team: 'duo', tags: [], kind: 'work' })
@@ -408,6 +423,48 @@ test('retryRequest 下传契约：仅 send、createTask、escalateTask 下传，
   expect(calls.dispatcherReply!.at(-1)?.retryRequest).toBeUndefined()
   expect(calls.saveSpecCmd!.at(-1)?.retryRequest).toBeUndefined()
   expect(calls.discardDraftCmd!.at(-1)?.retryRequest).toBeUndefined()
+  expect(calls.up!.at(-1)?.retryRequest).toBeUndefined()
+  expect(calls.down!.at(-1)?.retryRequest).toBeUndefined()
+  expect(calls.restore!.at(-1)?.retryRequest).toBeUndefined()
+  expect(calls.dispatcherUp!.at(-1)?.retryRequest).toBeUndefined()
+  expect(calls.dispatcherDown!.at(-1)?.retryRequest).toBeUndefined()
+})
+
+test.each([
+  ['/api/teams/:team/up', '/api/teams/duo/up', { draft: true }, 'up', { team: 'duo', draft: true, newRun: undefined, adoptRun: undefined }],
+  ['/api/teams/:team/down', '/api/teams/duo/down', { close: true }, 'down', { team: 'duo', close: true }],
+  ['/api/teams/:team/restore', '/api/teams/duo/restore', { dryRun: true, noTasks: true, sessions: { builder: 's-1' } }, 'restore', { team: 'duo', dryRun: true, noTasks: true, sessions: { builder: 's-1' } }],
+  ['/api/teams/:team/dispatcher/up', '/api/teams/duo/dispatcher/up', {}, 'dispatcherUp', { team: 'duo' }],
+  ['/api/teams/:team/dispatcher/down', '/api/teams/duo/dispatcher/down', {}, 'dispatcherDown', { team: 'duo', close: true }],
+])('写路由 %s 调到了对应的 core 命令', async (_pattern, path, body, name, expected) => {
+  const o = new FakeOrca()
+  const { deps } = seedRunningTeam(o)
+  const d = { ...deps, orca: cachedOrca(o) }
+  const { cmds, calls } = makeRecordingCmds()
+  const r = new Router()
+  registerWriteRoutes(r, cmds)
+
+  const route = r.match('POST', path)!
+  const res = await route.h({ deps: d, params: route.params, query: new URLSearchParams(), body })
+  expect(res).toBeDefined()
+  expect(calls[name]!.at(-1)).toEqual(expected)
+})
+
+test('未启动的团队启动调度员时给出可读提示，而不是 500', async () => {
+  const o = new FakeOrca()
+  const { deps } = seedRunningTeam(o)
+  deps.registry.setRunId('duo', null)
+  const d = { ...deps, orca: cachedOrca(o) }
+  const r = new Router()
+  registerWriteRoutes(r, consoleCommands())
+
+  const route = r.match('POST', '/api/teams/duo/dispatcher/up')!
+  const err = await route.h({ deps: d, params: route.params, query: new URLSearchParams(), body: {} }).then(
+    () => undefined,
+    (e) => e,
+  )
+  expect(err).toMatchObject({ kind: 'input', code: 'run_not_ready' })
+  expect(statusOf(err)).toBe(400)
 })
 
 function realSpecHarness(over: { running?: boolean } = {}) {

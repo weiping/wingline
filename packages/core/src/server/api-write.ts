@@ -1,6 +1,6 @@
 import type { HandlerContext, Router } from './http.js'
 import { checkParam } from './http.js'
-import { postAddress } from '../commands/deps.js'
+import { postAddress, type CommandDeps } from '../commands/deps.js'
 import { WinglineError } from '../errors.js'
 import { auditedCommands, type AuditCtx, type AuditTable } from '../audit.js'
 import { send } from '../commands/send.js'
@@ -8,8 +8,19 @@ import { createTask } from '../commands/task/create.js'
 import { escalateTask, recoverTask, resolveGate } from '../commands/task/escalate.js'
 import { reassignTask } from '../commands/task/claim.js'
 import { freezePostCmd, hushCmd, unfreezePostCmd, unhushCmd } from '../commands/dispatcher/controls.js'
+import { dispatcherDown, dispatcherUp } from '../commands/dispatcher/lifecycle.js'
 import { dispatcherReply } from '../commands/dispatcher/inbox.js'
 import { discardDraftCmd, saveSpecCmd } from '../commands/spec.js'
+import { down } from '../commands/down.js'
+import { restore } from '../commands/restore/index.js'
+import { up, type UpResult } from '../commands/up.js'
+import type { DownResult } from '../commands/down.js'
+import type { RestoreResult } from '../commands/restore/index.js'
+
+/** 控制台口径的参数：带 team 名（审计表靠它取团队），开关在路由层已归一成 boolean。 */
+export interface ConsoleUpArgs { team: string; draft?: boolean; newRun?: boolean; adoptRun?: string }
+export interface ConsoleDownArgs { team: string; close?: boolean }
+export interface ConsoleRestoreArgs { team: string; dryRun?: boolean; noTasks?: boolean; sessions?: Record<string, string> }
 
 export interface WriteCommands {
   send: typeof send
@@ -25,6 +36,11 @@ export interface WriteCommands {
   dispatcherReply: typeof dispatcherReply
   saveSpecCmd: typeof saveSpecCmd
   discardDraftCmd: typeof discardDraftCmd
+  up: (deps: CommandDeps, a: ConsoleUpArgs) => Promise<UpResult>
+  down: (deps: CommandDeps, a: ConsoleDownArgs) => Promise<DownResult>
+  restore: (deps: CommandDeps, a: ConsoleRestoreArgs) => Promise<RestoreResult>
+  dispatcherUp: (deps: CommandDeps, a: { team: string }) => Promise<{ address: string; outcome: 'already_running' | 'started'; handle?: string }>
+  dispatcherDown: (deps: CommandDeps, a: { team: string; close?: boolean }) => Promise<{ address: string; outcome: 'noop' | 'closed' | 'already_gone' }>
 }
 
 export interface WriteRouteSpec {
@@ -144,6 +160,36 @@ export const WRITE_ROUTES: WriteRouteSpec[] = [
     fields: ['retryRequest'],
     call: async (cmds, ctx) => cmds.discardDraftCmd(ctx.deps, { team: ctx.params.team! }),
   },
+  {
+    pattern: '/api/teams/:team/up',
+    check: ['team'],
+    fields: ['draft', 'newRun', 'adoptRun', 'retryRequest'],
+    call: async (cmds, ctx) => cmds.up(ctx.deps, { team: ctx.params.team!, draft: ctx.body.draft, newRun: ctx.body.newRun, adoptRun: ctx.body.adoptRun }),
+  },
+  {
+    pattern: '/api/teams/:team/down',
+    check: ['team'],
+    fields: ['close', 'retryRequest'],
+    call: async (cmds, ctx) => cmds.down(ctx.deps, { team: ctx.params.team!, close: !!ctx.body.close }),
+  },
+  {
+    pattern: '/api/teams/:team/restore',
+    check: ['team'],
+    fields: ['dryRun', 'noTasks', 'sessions', 'retryRequest'],
+    call: async (cmds, ctx) => cmds.restore(ctx.deps, { team: ctx.params.team!, dryRun: !!ctx.body.dryRun, noTasks: !!ctx.body.noTasks, sessions: ctx.body.sessions }),
+  },
+  {
+    pattern: '/api/teams/:team/dispatcher/up',
+    check: ['team'],
+    fields: ['retryRequest'],
+    call: async (cmds, ctx) => cmds.dispatcherUp(ctx.deps, { team: ctx.params.team! }),
+  },
+  {
+    pattern: '/api/teams/:team/dispatcher/down',
+    check: ['team'],
+    fields: ['close', 'retryRequest'],
+    call: async (cmds, ctx) => cmds.dispatcherDown(ctx.deps, { team: ctx.params.team!, close: ctx.body.close ?? true }),
+  },
 ]
 
 const ofAddress = (a: { address: string }) => a.address.split('@')[1] ?? '-'
@@ -230,6 +276,31 @@ export const CONSOLE_AUDIT: AuditTable<WriteCommands> = {
     team: (a) => a.team,
     summary: (_a, ctx) => ({ discarded: (ctx.result as { discarded?: boolean } | undefined)?.discarded }),
   },
+  up: {
+    command: 'up',
+    team: (a) => a.team,
+    summary: (a) => ({ draft: a.draft, newRun: a.newRun, adoptRun: a.adoptRun }),
+  },
+  down: {
+    command: 'down',
+    team: (a) => a.team,
+    summary: (a) => ({ close: a.close }),
+  },
+  restore: {
+    command: 'restore',
+    team: (a) => a.team,
+    skip: (a) => !!a.dryRun,
+    summary: (a) => ({ dryRun: a.dryRun, noTasks: a.noTasks, session: Object.keys(a.sessions ?? {}) }),
+  },
+  dispatcherUp: {
+    command: 'dispatcher up',
+    team: (a) => a.team,
+  },
+  dispatcherDown: {
+    command: 'dispatcher down',
+    team: (a) => a.team,
+    summary: (a) => ({ close: a.close }),
+  },
 }
 
 /** 控制台用 `console:`，TUI 用 `tui:`；两者共用同一张审计表，执行者都是 human。 */
@@ -248,6 +319,16 @@ export function auditedWriteCommands(prefix: 'console:' | 'tui:'): WriteCommands
     dispatcherReply,
     saveSpecCmd,
     discardDraftCmd,
+    // core 的 up 吃 specPath，控制台给的是 team 名：包装层先查注册表换算
+    up: async (deps, a) => {
+      const row = deps.registry.getTeam(a.team)
+      if (!row) throw new WinglineError('input', 'team_unknown', `团队 ${a.team} 未登记`)
+      return up(deps, { specPath: row.specPath, draft: a.draft, newRun: a.newRun, adoptRun: a.adoptRun })
+    },
+    down: (deps, a) => down(deps, { team: a.team, close: !!a.close }),
+    restore: (deps, a) => restore(deps, { team: a.team, dryRun: !!a.dryRun, noTasks: !!a.noTasks, sessions: a.sessions }),
+    dispatcherUp: (deps, a) => dispatcherUp(deps, { team: a.team }),
+    dispatcherDown: (deps, a) => dispatcherDown(deps, { team: a.team, close: a.close ?? true }),
   }
   return auditedCommands(raw, CONSOLE_AUDIT, { prefix, actor: 'human' })
 }
