@@ -17,65 +17,40 @@ import { cachedOrca } from '../../src/view/snapshot.js'
 import { FakeOrca, seedRunningTeam } from '../commands/fake-client.js'
 import { WinglineError } from '../../src/errors.js'
 
-/** 无路径参数的写路由样例：单列一张表，sampleRequest 的 switch 不再逐条膨胀。 */
-const PARAMLESS_ROUTE_SAMPLES: Record<string, { path: string; body: Record<string, unknown> }> = {
+/** 全部写路由的样例请求（唯一真相源）：加路由只补一行表项，sampleRequest 保持一行查表。 */
+const ROUTE_SAMPLES: Record<string, { path: string; body: Record<string, unknown> }> = {
+  '/api/teams/:team/send': { path: '/api/teams/duo/send', body: { post: 'builder', message: 'hello from console' } },
+  '/api/teams/:team/tasks': { path: '/api/teams/duo/tasks', body: { title: 'sample task' } },
+  '/api/teams/:team/tasks/:id/escalate': { path: '/api/teams/duo/tasks/task-1/escalate', body: { reason: 'need help' } },
+  '/api/teams/:team/tasks/:id/reassign': { path: '/api/teams/duo/tasks/task-1/reassign', body: { to: 'builder' } },
+  '/api/teams/:team/tasks/:id/recover': { path: '/api/teams/duo/tasks/task-1/recover', body: {} },
+  '/api/teams/:team/tasks/:id/claim': { path: '/api/teams/duo/tasks/task-1/claim', body: { as: 'builder@duo' } },
+  '/api/teams/:team/tasks/:id/release': { path: '/api/teams/duo/tasks/task-1/release', body: { as: 'builder@duo' } },
+  '/api/teams/:team/tasks/:id/plan': { path: '/api/teams/duo/tasks/task-1/plan', body: { as: 'builder@duo', text: '先读代码再改' } },
+  '/api/teams/:team/tasks/:id/start': { path: '/api/teams/duo/tasks/task-1/start', body: { as: 'builder@duo' } },
+  '/api/teams/:team/tasks/:id/done': { path: '/api/teams/duo/tasks/task-1/done', body: { as: 'builder@duo' } },
+  '/api/teams/:team/gates/:gateId/resolve': { path: '/api/teams/duo/gates/gate-1/resolve', body: { resolution: 'proceed' } },
+  '/api/teams/:team/posts/:post/freeze': { path: '/api/teams/duo/posts/builder/freeze', body: { reason: 'maintenance' } },
+  '/api/teams/:team/posts/:post/unfreeze': { path: '/api/teams/duo/posts/builder/unfreeze', body: {} },
+  '/api/teams/:team/posts/:post/hush': { path: '/api/teams/duo/posts/builder/hush', body: { forMs: 60000 } },
+  '/api/teams/:team/posts/:post/unhush': { path: '/api/teams/duo/posts/builder/unhush', body: {} },
+  '/api/teams/:team/questions/:messageId/reply': { path: '/api/teams/duo/questions/msg-1/reply', body: { body: 'answer' } },
+  '/api/teams/:team/spec': { path: '/api/teams/duo/spec', body: { yaml: 'version: 1\n', baseHash: null, running: true } },
+  '/api/teams/:team/spec/discard-draft': { path: '/api/teams/duo/spec/discard-draft', body: {} },
+  '/api/teams/:team/up': { path: '/api/teams/duo/up', body: { draft: true } },
+  '/api/teams/:team/down': { path: '/api/teams/duo/down', body: { close: true } },
+  '/api/teams/:team/restore': { path: '/api/teams/duo/restore', body: {} },
+  '/api/teams/:team/dispatcher/up': { path: '/api/teams/duo/dispatcher/up', body: {} },
+  '/api/teams/:team/dispatcher/down': { path: '/api/teams/duo/dispatcher/down', body: { close: true } },
   '/api/teams': { path: '/api/teams', body: { mode: 'template', name: 'my-team', repo: '/tmp/repo', template: 'duo' } },
   '/api/autostart/install': { path: '/api/autostart/install', body: { waitOrca: '15m' } },
   '/api/autostart/uninstall': { path: '/api/autostart/uninstall', body: {} },
 }
 
 function sampleRequest(pattern: string): { path: string; body: Record<string, unknown> } {
-  if (PARAMLESS_ROUTE_SAMPLES[pattern]) return PARAMLESS_ROUTE_SAMPLES[pattern]
-  switch (pattern) {
-    case '/api/teams/:team/send':
-      return { path: '/api/teams/duo/send', body: { post: 'builder', message: 'hello from console' } }
-    case '/api/teams/:team/tasks':
-      return { path: '/api/teams/duo/tasks', body: { title: 'sample task' } }
-    case '/api/teams/:team/tasks/:id/escalate':
-      return { path: '/api/teams/duo/tasks/task-1/escalate', body: { reason: 'need help' } }
-    case '/api/teams/:team/tasks/:id/reassign':
-      return { path: '/api/teams/duo/tasks/task-1/reassign', body: { to: 'builder' } }
-    case '/api/teams/:team/tasks/:id/recover':
-      return { path: '/api/teams/duo/tasks/task-1/recover', body: {} }
-    case '/api/teams/:team/tasks/:id/claim':
-      return { path: '/api/teams/duo/tasks/task-1/claim', body: { as: 'builder@duo' } }
-    case '/api/teams/:team/tasks/:id/release':
-      return { path: '/api/teams/duo/tasks/task-1/release', body: { as: 'builder@duo' } }
-    case '/api/teams/:team/tasks/:id/plan':
-      return { path: '/api/teams/duo/tasks/task-1/plan', body: { as: 'builder@duo', text: '先读代码再改' } }
-    case '/api/teams/:team/tasks/:id/start':
-      return { path: '/api/teams/duo/tasks/task-1/start', body: { as: 'builder@duo' } }
-    case '/api/teams/:team/tasks/:id/done':
-      return { path: '/api/teams/duo/tasks/task-1/done', body: { as: 'builder@duo' } }
-    case '/api/teams/:team/gates/:gateId/resolve':
-      return { path: '/api/teams/duo/gates/gate-1/resolve', body: { resolution: 'proceed' } }
-    case '/api/teams/:team/posts/:post/freeze':
-      return { path: '/api/teams/duo/posts/builder/freeze', body: { reason: 'maintenance' } }
-    case '/api/teams/:team/posts/:post/unfreeze':
-      return { path: '/api/teams/duo/posts/builder/unfreeze', body: {} }
-    case '/api/teams/:team/posts/:post/hush':
-      return { path: '/api/teams/duo/posts/builder/hush', body: { forMs: 60000 } }
-    case '/api/teams/:team/posts/:post/unhush':
-      return { path: '/api/teams/duo/posts/builder/unhush', body: {} }
-    case '/api/teams/:team/questions/:messageId/reply':
-      return { path: '/api/teams/duo/questions/msg-1/reply', body: { body: 'answer' } }
-    case '/api/teams/:team/spec':
-      return { path: '/api/teams/duo/spec', body: { yaml: 'version: 1\n', baseHash: null, running: true } }
-    case '/api/teams/:team/spec/discard-draft':
-      return { path: '/api/teams/duo/spec/discard-draft', body: {} }
-    case '/api/teams/:team/up':
-      return { path: '/api/teams/duo/up', body: { draft: true } }
-    case '/api/teams/:team/down':
-      return { path: '/api/teams/duo/down', body: { close: true } }
-    case '/api/teams/:team/restore':
-      return { path: '/api/teams/duo/restore', body: {} }
-    case '/api/teams/:team/dispatcher/up':
-      return { path: '/api/teams/duo/dispatcher/up', body: {} }
-    case '/api/teams/:team/dispatcher/down':
-      return { path: '/api/teams/duo/dispatcher/down', body: { close: true } }
-    default:
-      throw new Error(`unknown pattern ${pattern}`)
-  }
+  const sample = ROUTE_SAMPLES[pattern]
+  if (!sample) throw new Error(`unknown pattern ${pattern}`)
+  return sample
 }
 
 function makeRecordingCmds() {
