@@ -1,4 +1,4 @@
-import { Document, Scalar, isMap, isScalar, isSeq, parseDocument, type Node, type Pair, type YAMLMap } from 'yaml'
+import { Document, Scalar, isMap, isScalar, isSeq, parseDocument, type Node, type Pair, type YAMLMap, type YAMLSeq } from 'yaml'
 import { WinglineError } from '../errors.js'
 
 type Path = Array<string | number>
@@ -189,4 +189,138 @@ function fillEmptySections(doc: Doc, path: Path): void {
     node.comment = undefined
     doc.setIn(path.slice(0, i), empty)
   }
+}
+
+type SpecPost = { id: string; agent: string; model?: string; launch?: string; worktree?: string; brief?: string[] }
+
+export type SpecEditOp =
+  | { op?: 'set'; path: Path; value: unknown }
+  | { op: 'add_post'; post: SpecPost }
+  | { op: 'remove_post'; index: number }
+
+/** 解析规格文本；语法错误按输入错误报告（与 setField 同一口径）。 */
+function specDoc(text: string): Doc {
+  const doc = parseDocument(text)
+  const err = doc.errors[0]
+  if (err) throw new WinglineError('input', 'spec_invalid', `YAML 有语法错误：${err.message}`)
+  return doc
+}
+
+/** 岗位增删都靠按行定位：posts 必须是块序列（不能是 flow 或缺失）。 */
+function postsSeq(doc: Doc): YAMLSeq {
+  const posts = doc.get('posts', true)
+  if (!isSeq(posts) || posts.flow) throw new WinglineError('input', 'spec_invalid', 'posts 必须是块序列')
+  return posts
+}
+
+/** 新岗位的节点：brief 保持模板的 flow 写法，undefined 与空数组字段不写入。 */
+function postNode(doc: Doc, post: SpecPost): Node {
+  const filled = Object.fromEntries(Object.entries(post).filter(([, v]) => v !== undefined && !(Array.isArray(v) && v.length === 0)))
+  const node = doc.createNode(filled)
+  const brief = isMap(node) ? node.get('brief', true) : null
+  if (isSeq(brief)) brief.flow = true
+  return node
+}
+
+/** 在 posts 末尾按最后一项的既有缩进追加新岗位；插入点之后一个字节不动。定位不了缩进时返回 null。 */
+function appendPost(text: string, posts: YAMLSeq, node: Node): string | null {
+  const map = blockMap(posts.items[posts.items.length - 1])
+  const keyStart = map ? (map.items[0]!.key as Node | null)?.range?.[0] : undefined
+  if (!map || keyStart === undefined) return null
+  const lineBegin = lineStart(text, keyStart)
+  const indent = /^(\s*)- /.exec(text.slice(lineBegin, keyStart))
+  if (!indent) return null
+  const eol = text.includes('\r\n') ? '\r\n' : '\n'
+  const pad = ' '.repeat(indent[1]!.length)
+  const body = new Document(node).toString(RENDER).trimEnd().split('\n')
+    .map((l, i) => (i === 0 ? `${pad}- ${l}` : `${pad}  ${l}`)).join(eol)
+  // 插在最后一项（含它的行尾注释）那行结束之后，原有的空行与注释留在新岗位后面
+  const at = pairEnd(text, map.items[map.items.length - 1]!)
+  return text.slice(0, at) + body + eol + text.slice(at)
+}
+
+function addPost(text: string, post: SpecPost): string {
+  const doc = specDoc(text)
+  const posts = postsSeq(doc)
+  if (posts.items.some((it) => isMap(it) && it.get('id') === post.id)) {
+    throw new WinglineError('input', 'spec_invalid', `岗位 id 重复：${post.id}`)
+  }
+  const node = postNode(doc, post)
+  const out = appendPost(text, posts, node)
+  if (out !== null) return out
+  posts.add(node) // 最后一项不是块映射、算不出缩进：整篇交给 Document API，宁可重排不写坏
+  return doc.toString()
+}
+
+/** 整段删除 posts 的第 index 个元素：从它首键所在行的行首删到内容结束（含换行）。 */
+function deleteSeqItem(text: string, posts: YAMLSeq, index: number): string | null {
+  const map = blockMap(posts.items[index])
+  const keyStart = map ? (map.items[0]!.key as Node | null)?.range?.[0] : undefined
+  if (!map || keyStart === undefined) return null
+  const lineBegin = lineStart(text, keyStart)
+  if (!/^\s*-\s+$/.test(text.slice(lineBegin, keyStart))) return null
+  return text.slice(0, lineBegin) + text.slice(pairEnd(text, map.items[map.items.length - 1]!))
+}
+
+/** 删除一个键；父映射会因此变空时连父键一起删，一次删到能按行手术的层级，少触发 Document API 整篇重排。 */
+function pruneExisting(text: string, path: Path): string {
+  const doc = parseDocument(text)
+  if (!doc.hasIn(path)) return text
+  let cut = path
+  for (let i = path.length - 1; i > 0; i--) {
+    const parent = doc.getIn(path.slice(0, i), true)
+    if (!isMap(parent) || parent.items.length !== 1) break
+    cut = path.slice(0, i)
+  }
+  return setField(text, cut, null)
+}
+
+/** 从其余岗位的 links.*.(reviewed_by|hands_to|consults) 数组里剔除被删 id；剔空的数组连键清掉。 */
+function stripPostRefs(text: string, doc: Doc, removedId: string): string {
+  const links = doc.get('links', true)
+  let out = text
+  if (!isMap(links) || links.flow) return out
+  for (const pair of links.items) {
+    const postId = keyText(pair)
+    const rels = isMap(pair.value) && !pair.value.flow ? pair.value : null
+    if (!postId || postId === removedId || !rels) continue
+    for (const rel of rels.items) {
+      const name = keyText(rel)
+      if (!name || !['reviewed_by', 'hands_to', 'consults'].includes(name) || !isSeq(rel.value)) continue
+      const kept = rel.value.items.filter((n) => !(isScalar(n) && n.value === removedId)).map((n) => (n as Scalar).value)
+      if (kept.length === rel.value.items.length) continue
+      out = kept.length > 0 ? setField(out, ['links', postId, name], kept) : pruneExisting(out, ['links', postId, name])
+    }
+  }
+  return out
+}
+
+function removePost(text: string, index: number): string {
+  const doc = specDoc(text)
+  const posts = postsSeq(doc)
+  if (posts.items.length <= 1) throw new WinglineError('input', 'spec_invalid', '团队至少保留一个岗位')
+  if (!Number.isInteger(index) || !posts.items[index]) throw new WinglineError('input', 'spec_invalid', `岗位下标不合法：${index}`)
+  const removedId = isMap(posts.items[index]) ? posts.items[index]!.get('id') : undefined
+  const firstLeft = posts.items[index === 0 ? 1 : 0]!
+  const nextLead = isMap(firstLeft) ? firstLeft.get('id') : undefined
+  const cut = deleteSeqItem(text, posts, index)
+  let out = cut
+  if (out === null) {
+    doc.deleteIn(['posts', index]) // 被删项不是块映射、行定位不了：整篇交给 Document API，宁可重排不写坏
+    out = doc.toString()
+  }
+  if (typeof removedId === 'string') {
+    out = pruneExisting(out, ['links', removedId])
+    out = pruneExisting(out, ['gates', removedId])
+    out = stripPostRefs(out, doc, removedId)
+  }
+  if (typeof nextLead === 'string' && doc.get('lead') === removedId) out = setField(out, ['lead'], nextLead)
+  return out
+}
+
+/** 把团队编辑页的一处规格修改写回 YAML：op 缺省是 set（等价 setField），add_post / remove_post 增删岗位。 */
+export function applySpecOp(text: string, op: SpecEditOp): string {
+  if (op.op === 'add_post') return addPost(text, op.post)
+  if (op.op === 'remove_post') return removePost(text, op.index)
+  return setField(text, op.path, op.value)
 }
