@@ -1,10 +1,12 @@
 import type { ComponentChildren } from 'preact'
+import { useState } from 'preact/hooks'
 import { isUnauthenticated } from './api.js'
 import { useApi } from './hooks.js'
 import { Layout, StreamBanner, TopBar } from './components/Layout.js'
 import { ErrorBox, Loading } from './components/common.js'
 import { Toaster } from './components/Toast.js'
 import { Link } from './components/Link.js'
+import { NewTeamDialog } from './components/NewTeamDialog.js'
 import { Edit } from './pages/Edit.js'
 import { Inbox } from './pages/Inbox.js'
 import { Overview } from './pages/Overview.js'
@@ -13,7 +15,7 @@ import { Settings } from './pages/Settings.js'
 import { TaskBoard } from './pages/TaskBoard.js'
 import { TaskDetail } from './pages/TaskDetail.js'
 import { Timeline } from './pages/Timeline.js'
-import { type Route, teamPath, useRoute } from './router.js'
+import { type Route, navigate, teamPath, useRoute } from './router.js'
 import { StreamProvider } from './stream.js'
 
 interface Session {
@@ -34,11 +36,25 @@ function Expired() {
 }
 
 function Home({ teams }: { teams: string[] }) {
+  const [openNew, setOpenNew] = useState(false)
   if (teams.length === 0) {
     return (
-      <p class="muted">
-        还没有团队。先在终端运行 <code>wl up &lt;team.yaml&gt;</code>。
-      </p>
+      <section>
+        <p class="muted">
+          还没有团队。先在终端运行 <code>wl up &lt;team.yaml&gt;</code>。
+        </p>
+        <button type="button" class="btn" onClick={() => setOpenNew(true)}>
+          新建团队
+        </button>
+        <NewTeamDialog
+          open={openNew}
+          onClose={() => setOpenNew(false)}
+          onCreated={(t, started) => {
+            setOpenNew(false)
+            navigate(started ? teamPath(t) : teamPath(t, '/edit'))
+          }}
+        />
+      </section>
     )
   }
   return (

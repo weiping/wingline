@@ -1,8 +1,10 @@
 import type { ComponentChildren } from 'preact'
+import { useState } from 'preact/hooks'
 import { navigate, teamPath } from '../router.js'
 import { useStream } from '../stream.js'
 import { Link } from './Link.js'
 import { Pill } from './common.js'
+import { NewTeamDialog } from './NewTeamDialog.js'
 
 export interface NavTarget {
   label: string
@@ -20,6 +22,7 @@ const STATE_TEXT = { live: ['实时', 'ok'], reconnecting: ['重连中', 'warn']
 
 /** 外框：左侧团队切换与导航，顶部连接状态与待办角标。团队页才会在 StreamProvider 内渲染顶栏。 */
 export function Layout(props: { teams: string[]; team: string | null; children: ComponentChildren }) {
+  const [openNew, setOpenNew] = useState(false)
   return (
     <div class="shell">
       <aside class="side">
@@ -41,6 +44,17 @@ export function Layout(props: { teams: string[]; team: string | null; children: 
         ) : (
           <p class="muted small">还没有团队</p>
         )}
+        <button type="button" class="btn" onClick={() => setOpenNew(true)}>
+          新建团队
+        </button>
+        <NewTeamDialog
+          open={openNew}
+          onClose={() => setOpenNew(false)}
+          onCreated={(t, started) => {
+            setOpenNew(false)
+            navigate(started ? teamPath(t) : teamPath(t, '/edit'))
+          }}
+        />
         {props.team && (
           <nav>
             {NAV.map((n) => (
