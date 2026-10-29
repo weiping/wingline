@@ -5,9 +5,9 @@ import { logTask } from './log.js'
 import { preflightTask } from './preflight.js'
 import { findTask } from './query.js'
 
-export async function planTask(deps: CommandDeps, a: { id: string; text: string }): Promise<void> {
+export async function planTask(deps: CommandDeps, a: { id: string; text: string; as?: string }): Promise<void> {
   const { team } = await preflightTask(deps, a.id)
-  const actor = await resolveActor(deps)
+  const actor = await resolveActor(deps, a.as)
   await deps.registry.withTeamLock(team.name, async () => {
     const task = await findTask(deps, team.name, a.id)
     if (task.status === 'completed' || task.status === 'failed') {

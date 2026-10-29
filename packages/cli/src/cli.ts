@@ -1,12 +1,10 @@
-import { spawn } from 'node:child_process'
 import fs from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 import type { Writable } from 'node:stream'
 import { Command, CommanderError, InvalidArgumentError, Option } from 'commander'
 import {
   READ_ONLY_CALLS, Registry, type CallLogOptions, WinglineError, attention, auditedCommands, claimTask, createCallLog, createOrcaClient, createOrcaRunner, createTask, doneTask, down, escalateTask, exitCodeOf,
-  followTimeline, initTeamCmd, listStale, listTasks, parseDuration, planTask, ps, readTimeline, reassignTask, recoverTask, releaseTask, resolveGate, resolveOrcaExecutable, restore, restoreAll, restoreAllExitCode, restoreExitCode, send, showTask, startTask,
+  followTimeline, initTeamCmd, listStale, listTasks, parseDuration, planTask, ps, readTimeline, realAutostartSys as coreRealAutostartSys, reassignTask, recoverTask, releaseTask, resolveGate, resolveOrcaExecutable, restore, restoreAll, restoreAllExitCode, restoreExitCode, send, showTask, startTask,
   autostartInstall, autostartStatusOf, autostartUninstall, type AutostartSys, up, winglineHome, dispatcherUp, dispatcherDown, dispatcherStatus, dispatcherReply, freezePostCmd, unfreezePostCmd, hushCmd, unhushCmd, runDispatcherLoop, type CommandDeps,
   type TeamTemplateId, type TimelineEvent, type TimelineSource,
 } from '@weiping/wingline-core'
@@ -339,22 +337,8 @@ function registerBaseCommands(program: Command, commands: Commands, execute: Exe
     })
 }
 
-/** 真实宿主：系统命令以参数数组启动（不经 shell），入口脚本取符号链接解析后的真实路径。 */
-export function realAutostartSys(): AutostartSys {
-  const exec: AutostartSys['exec'] = (file, args) => new Promise((resolve, reject) => {
-    const child = spawn(file, args, { shell: false })
-    let stdout = ''
-    let stderr = ''
-    child.stdout.on('data', (d) => { stdout += String(d) })
-    child.stderr.on('data', (d) => { stderr += String(d) })
-    child.on('error', reject)
-    child.on('close', (code) => resolve({ code: code ?? 1, stdout, stderr }))
-  })
-  const entry = process.argv[1] ?? ''
-  let script = path.resolve(entry)
-  try { script = fs.realpathSync(entry) } catch { /* 保持 resolve 的结果 */ }
-  return { platform: process.platform, homeDir: os.homedir(), uid: process.getuid?.(), user: os.userInfo().username, node: process.execPath, script, exec, fs }
-}
+/** 保留这个导出名，既有测试从这里导入。 */
+export const realAutostartSys: typeof coreRealAutostartSys = coreRealAutostartSys
 
 function registerAutostartCommands(program: Command, execute: Execute, sys: () => AutostartSys): void {
   const auto = program.command('autostart').description('登录后自动执行 wl restore --all（macOS launchd、Linux systemd 用户服务）')
