@@ -2,7 +2,10 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { expect, test } from 'vitest'
 import { requestId } from '../../src/commands/deps.js'
+import { down } from '../../src/commands/down.js'
+import { saveSpecCmd } from '../../src/commands/spec.js'
 import { gateCwd } from '../../src/commands/task/gate-exec.js'
+import { taskPreflight } from '../../src/commands/task/preflight.js'
 import { up } from '../../src/commands/up.js'
 import { renderBriefing } from '../../src/brief/render.js'
 import { draftPathOf } from '../../src/spec/draft.js'
@@ -581,4 +584,15 @@ test('up --draft without a draft fails with draft_not_found (input error) before
   const err = await up(deps, { specPath: duo(), draft: true }).catch((e) => e)
   expect(err).toMatchObject({ kind: 'input', code: 'draft_not_found' })
   expect(o.calls).toEqual([])
+})
+test('运行中团队保存文档后：down → up --draft 应用草稿并重算规格哈希，taskPreflight 重新放行', async () => {
+  const o = new FakeOrca(); const { deps, registry } = mkDeps(o); const p = duo()
+  await up(deps, { specPath: p })
+  const oldHash = registry.getTeam('duo')!.specHash
+  await saveSpecCmd(deps, { team: 'duo', yaml: DUO_YAML, baseHash: null, running: true, files: { 'NORMS.md': '# 改过的规范\n' } })
+  await expect(taskPreflight(deps, 'duo')).rejects.toMatchObject({ code: 'team_spec_changed' })
+  await down(deps, { team: 'duo', close: false })
+  await up(deps, { specPath: p, draft: true })
+  expect(registry.getTeam('duo')!.specHash).not.toBe(oldHash)
+  await expect(taskPreflight(deps, 'duo')).resolves.toMatchObject({ team: expect.objectContaining({ name: 'duo', status: 'up' }) })
 })

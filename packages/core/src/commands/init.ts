@@ -83,8 +83,8 @@ function initFromTemplate(deps: CommandDeps, a: InitTeamArgs): InitTeamResult {
     throw new WinglineError('input', 'team_name_invalid', '团队名只能用小写字母、数字与连字符')
   }
   const rawRepo = a.repo?.trim() ?? ''
-  if (!rawRepo) {
-    throw new WinglineError('input', 'invalid_param', '缺少代码库目录')
+  if (!rawRepo || /[\x00-\x1f\x7f]/.test(a.repo ?? '')) {
+    throw new WinglineError('input', 'invalid_param', rawRepo ? '代码库目录不能包含控制字符' : '缺少代码库目录')
   }
   const tplId = a.template ?? 'duo'
   const tpl = (TEAM_TEMPLATES as Record<string, TeamTemplate | undefined>)[tplId]

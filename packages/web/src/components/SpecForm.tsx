@@ -1,3 +1,4 @@
+import type { SpecEditOp } from '@weiping/wingline-core'
 import { useEffect, useState } from 'preact/hooks'
 
 export type SpecPath = Array<string | number>
@@ -7,12 +8,6 @@ export interface FormError {
   message: string
   line: number | null
 }
-
-/** 与后端 parseSet 一致的三形态：普通 set / 新增岗位 / 删除岗位。 */
-export type SpecEditOp =
-  | { path: SpecPath; value: unknown }
-  | { op: 'add_post'; post: { id: string; agent: string; brief?: string[]; model?: string; launch?: string; worktree?: string } }
-  | { op: 'remove_post'; index: number }
 
 interface FormProps {
   /** YAML 解析后的原始对象（没填的字段不在里面）；前端不自己解析 YAML。 */

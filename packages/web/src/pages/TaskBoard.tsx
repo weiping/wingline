@@ -1,7 +1,7 @@
 import type { ComponentChildren } from 'preact'
 import { useState } from 'preact/hooks'
 import type { StaleItem, TaskRow } from '@weiping/wingline-core'
-import { ApiError, api } from '../api.js'
+import { api, notReady } from '../api.js'
 import { useApi } from '../hooks.js'
 import { useStreamListener } from '../stream.js'
 import { ActionDialog } from '../components/ActionDialog.js'
@@ -17,9 +17,6 @@ const COLUMNS: Array<[TaskRow['status'], string]> = [
   ['completed', '完成'],
   ['failed', '失败'],
 ]
-
-/** 团队没有 Run 时后端回 run_not_ready：按中性提示处理，不走红色错误块（规格第 3.3.4 条）。 */
-const notReady = (e: Error | null): boolean => e !== null && e instanceof ApiError && e.code === 'run_not_ready'
 
 function NotReadyBoard() {
   return (

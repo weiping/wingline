@@ -1,6 +1,6 @@
 import { useState } from 'preact/hooks'
 import type { DoneResult, PsRow, ShownTask } from '@weiping/wingline-core'
-import { ApiError, api } from '../api.js'
+import { api, notReady } from '../api.js'
 import { useApi } from '../hooks.js'
 import { useStreamListener } from '../stream.js'
 import { ActionDialog } from '../components/ActionDialog.js'
@@ -11,9 +11,6 @@ import { ErrorBox, Loading, Pill, Section, clock, postOf } from '../components/c
 import { taskPath } from '../router.js'
 
 const TERMINAL = new Set(['completed', 'failed'])
-
-/** 团队没有 Run 时后端回 run_not_ready：按中性提示处理，不走红色错误块（规格第 3.3.4 条）。 */
-const notReady = (e: Error | null): boolean => e !== null && e instanceof ApiError && e.code === 'run_not_ready'
 
 /** 事实区：状态相关的只读字段。 */
 function TaskFacts({ t, team }: { t: ShownTask; team: string }) {

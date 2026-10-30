@@ -127,6 +127,16 @@ test('saveSpecCmd 把 files 里的正文写到磁盘，并拒绝未被规格引�
   expect(fs.readFileSync(path.join(dir, 'NORMS.md'), 'utf8')).toBe('# 新规范\n')
   await expect(saveSpecCmd(deps, { team: 'duo', yaml: DUO_YAML, baseHash: null, running: false, files: { 'secret.md': 'x' } }))
     .rejects.toMatchObject({ code: 'doc_not_referenced' })
+  await expect(
+    saveSpecCmd(deps, {
+      team: 'duo',
+      yaml: DUO_YAML,
+      baseHash: null,
+      running: false,
+      files: { 'NORMS.md': '# 不会落盘\n', 'briefs/builder.md': 'x'.repeat(65 * 1024) },
+    }),
+  ).rejects.toMatchObject({ code: 'doc_too_large' })
+  expect(fs.readFileSync(path.join(dir, 'NORMS.md'), 'utf8')).toBe('# 新规范\n')
 })
 
 test('运行中团队保存文档：注册表里的规格哈希变旧，restore 随后报 team_spec_changed', async () => {

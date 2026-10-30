@@ -98,7 +98,7 @@ export function renderTeamYaml(t: TeamTemplate, a: { name: string; repo: string 
   const lines = [
     'version: 1',
     `name: ${a.name}`,
-    `repo: ${repo}`,
+    `repo: ${JSON.stringify(repo)}`,
     'norms: NORMS.md',
     `lead: ${t.lead}`,
     'posts:',

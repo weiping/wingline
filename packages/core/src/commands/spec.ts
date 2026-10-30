@@ -3,7 +3,7 @@ import path from 'node:path'
 import { WinglineError } from '../errors.js'
 import type { TeamRow } from '../registry/registry.js'
 import { assertSpecSize, checkSaveConflict, discardDraft, draftPathOf, fileHash, saveSpec } from '../spec/draft.js'
-import { docRelsOf, readDocText, resolveDocPath, writeDocAtomic } from '../spec/doc.js'
+import { DOC_LIMIT_BYTES, docRelsOf, readDocText, resolveDocPath, writeDocAtomic } from '../spec/doc.js'
 import { applySpecOp, type SpecEditOp } from '../spec/edit.js'
 import { loadTeamSpec, validateSpecText, type SpecError, type TeamSpec } from '../spec/load.js'
 import { planSpecChange, type SpecPlan } from '../spec/plan-change.js'
@@ -122,8 +122,11 @@ function writeDocs(specPath: string, yaml: string, files: Record<string, string>
   if (errors.length > 0) throw new WinglineError('input', 'spec_invalid', errors[0]!.message, { detail: { errors } })
   checkSaveConflict({ specPath, text: yaml, baseHash: a.baseHash, running: a.running })
   const referenced = new Set(docRelsOf(parsed))
-  for (const rel of Object.keys(files)) {
+  for (const [rel, content] of Object.entries(files)) {
     if (!referenced.has(rel)) throw new WinglineError('input', 'doc_not_referenced', `文档 ${rel} 没有被团队规格引用`)
+    if (Buffer.byteLength(content, 'utf8') > DOC_LIMIT_BYTES) {
+      throw new WinglineError('input', 'doc_too_large', `文档 ${path.basename(rel)} 超过 ${DOC_LIMIT_BYTES / 1024} KB 上限`)
+    }
   }
   const dir = path.dirname(specPath)
   const docsUpdated: string[] = []
