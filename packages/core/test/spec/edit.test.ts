@@ -3,8 +3,9 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { expect, test } from 'vitest'
 import { parse } from 'yaml'
-import { setField } from '../../src/spec/edit.js'
+import { applySpecOp, setField } from '../../src/spec/edit.js'
 import { validateSpecText } from '../../src/spec/load.js'
+import { DUO_YAML } from './helpers.js'
 
 const SRC = '# 团队\nversion: 1\nname: duo   # 名字\n\nposts:\n  - id: builder  # 牵头\n    agent: claude\n'
 
@@ -181,4 +182,47 @@ test('edits that the text paths cannot place safely still work through the Docum
 
 test('setField on text with a syntax error throws spec_invalid', () => {
   expect(() => setField('a: [unclosed\n', ['a'], 1)).toThrow(expect.objectContaining({ kind: 'input', code: 'spec_invalid' }))
+})
+
+test('add_post 追加岗位且不动其它行的字节', () => {
+  const yaml = ['version: 1', 'name: duo', 'repo: path:/tmp/r', 'norms: NORMS.md', 'lead: builder',
+    'posts:', '  - id: builder', '    agent: claude', '    worktree: current', '    brief: [briefs/builder.md]',
+    '', '# 末尾注释', ''].join('\n')
+  const out = applySpecOp(yaml, { op: 'add_post', post: { id: 'reviewer', agent: 'claude', model: 'opus', worktree: 'current', brief: ['briefs/reviewer.md'] } })
+  expect(out).toContain('# 末尾注释')
+  expect(out).toContain('  - id: reviewer')
+  expect(out).toContain('    brief: [briefs/reviewer.md]')
+  expect(out.indexOf('- id: reviewer')).toBeGreaterThan(out.indexOf('- id: builder'))
+  // 原有那一行逐字节不变
+  expect(out).toContain('  - id: builder\n    agent: claude\n    worktree: current\n    brief: [briefs/builder.md]')
+})
+
+test('add_post 遇到重复 id 报错', () => {
+  expect(() => applySpecOp(DUO_YAML, { op: 'add_post', post: { id: 'builder', agent: 'claude' } }))
+    .toThrow(expect.objectContaining({ code: 'spec_invalid' }))
+})
+
+test('remove_post 删除岗位，并清掉 links/gates 与他人 links 里的引用', () => {
+  const yaml = ['version: 1', 'name: duo', 'repo: path:/tmp/r', 'norms: NORMS.md', 'lead: builder',
+    'posts:', '  - id: builder', '    agent: claude', '    worktree: current',
+    '  - id: checker', '    agent: codex', '    worktree: current',
+    'links:', '  builder:', '    reviewed_by: [checker]', ''].join('\n')
+  const out = applySpecOp(yaml, { op: 'remove_post', index: 1 })
+  expect(out).not.toContain('id: checker')
+  expect(out).not.toContain('reviewed_by')
+  expect(out).toContain('  - id: builder')
+})
+
+test('remove_post 不能删掉最后一个岗位；删掉 lead 时 lead 改为剩下的第一个', () => {
+  const solo = ['version: 1', 'name: solo', 'repo: path:/tmp/r', 'norms: NORMS.md', 'lead: builder',
+    'posts:', '  - id: builder', '    agent: claude', '    worktree: current', ''].join('\n')
+  expect(() => applySpecOp(solo, { op: 'remove_post', index: 0 })).toThrow(expect.objectContaining({ code: 'spec_invalid' }))
+  const two = ['version: 1', 'name: duo', 'repo: path:/tmp/r', 'norms: NORMS.md', 'lead: checker',
+    'posts:', '  - id: builder', '    agent: claude', '    worktree: current',
+    '  - id: checker', '    agent: codex', '    worktree: current', ''].join('\n')
+  expect(applySpecOp(two, { op: 'remove_post', index: 1 })).toContain('lead: builder')
+})
+
+test('op 缺省就是 set，等价于 setField', () => {
+  expect(applySpecOp(DUO_YAML, { path: ['lead'], value: 'checker' })).toBe(setField(DUO_YAML, ['lead'], 'checker'))
 })

@@ -426,11 +426,11 @@ export async function bypassReport(o: FakeOrca, taskId: string, outcome: 'succee
   await o.workerDone({ taskId, dispatchId: t.dispatchId!, outcome, subject: 'bypass', run: 'run-1', from: t.assigneeHandle! })
 }
 
-/** 登记一个运行中的 duo 团队：真实 spec 哈希、协调者、Run 与终端。 */
-export function seedRunningTeam(o: FakeOrca, over: Partial<CommandDeps> & { yaml?: string } = {}) {
-  const { yaml, ...depsOver } = over
+/** 登记一个运行中的 duo 团队：真实 spec 哈希、协调者、Run 与终端；files 可覆盖引用文档的默认内容。 */
+export function seedRunningTeam(o: FakeOrca, over: Partial<CommandDeps> & { yaml?: string; files?: Record<string, string> } = {}) {
+  const { yaml, files, ...depsOver } = over
   const made = mkDeps(o, depsOver)
-  const specPath = mkTeam(yaml ?? DUO_YAML)
+  const specPath = mkTeam(yaml ?? DUO_YAML, files ? { files } : {})
   made.registry.upsertTeam({
     name: 'duo', specPath, specHash: specHash(loadTeamSpec(specPath)), runId: 'run-1', coordinatorHandle: 'coord-1', status: 'up',
   })

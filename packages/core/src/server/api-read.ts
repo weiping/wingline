@@ -1,3 +1,4 @@
+import fs from 'node:fs'
 import type { HandlerContext, Router } from './http.js'
 import { checkParam } from './http.js'
 import { WinglineError } from '../errors.js'
@@ -10,7 +11,8 @@ import { listStale, type TaskRow } from '../commands/task/query.js'
 import { readTimeline } from '../commands/log.js'
 import { postAddress } from '../commands/deps.js'
 import { plainText } from '../view/plain-text.js'
-import type { FrozenRow, PatrolStateRow } from '../registry/registry.js'
+import { draftPathOf } from '../spec/draft.js'
+import type { FrozenRow, PatrolStateRow, PostRow, TeamRow } from '../registry/registry.js'
 import type { TimelineEvent } from '../commands/log.js'
 
 export interface PostDetail {
@@ -26,47 +28,59 @@ export interface PostDetail {
   preview: string[]
 }
 
-async function teamSummary(ctx: HandlerContext, name: string) {
-  const posts = await ps(ctx.deps, { team: name })
-  const disp = dispatcherHealth(ctx.deps, name).state
-  const att = await attention(ctx.deps, name)
-  return {
-    name,
-    postsCount: posts.length,
-    dispatcher: disp,
-    attentionCount: pendingCount(att),
+/** 总览摘要：未启动团队（runId === null）不碰 Orca——ps() 的 preflight 会抛错，直接给注册表口径（spec 3.3.4）。 */
+async function teamSummary(ctx: HandlerContext, row: TeamRow) {
+  const base = { name: row.name, status: row.status, hasDraft: fs.existsSync(draftPathOf(row.specPath)) }
+  const dispatcher = dispatcherHealth(ctx.deps, row.name).state
+  if (row.runId === null) {
+    return { ...base, postsCount: ctx.deps.registry.listPosts(row.name).length, dispatcher, attentionCount: 0 }
   }
+  const posts = await ps(ctx.deps, { team: row.name })
+  const att = await attention(ctx.deps, row.name)
+  return { ...base, postsCount: posts.length, dispatcher, attentionCount: pendingCount(att) }
+}
+
+/** 未启动 / Orca 不可达时的离线岗位：全部字段来自注册表，handle 一律为 null（spec 3.3.4）。 */
+function offlinePosts(posts: PostRow[]): Array<PsRow & { sessionId: string | null }> {
+  return posts.map((p) => ({
+    address: p.address, agent: p.agent, status: 'offline', handle: null, worktree: p.worktree, isLead: p.isLead, sessionId: p.sessionId,
+  }))
 }
 
 function registerTeamRoutes(r: Router): void {
   // GET /api/teams
   r.get('/api/teams', async (ctx: HandlerContext) => {
-    const teams = ctx.deps.registry.listTeams().map((t) => t.name)
-    const result = await Promise.all(teams.map((name) => teamSummary(ctx, name)))
-    return { teams: result }
+    const rows = ctx.deps.registry.listTeams()
+    return { teams: await Promise.all(rows.map((row) => teamSummary(ctx, row))) }
   })
 
   // GET /api/teams/:team
   r.get('/api/teams/:team', async (ctx: HandlerContext) => {
     const team = ctx.params.team!
     checkParam('team', team)
-    const posts = await ps(ctx.deps, { team })
-    const disp = await dispatcherStatus(ctx.deps, team)
-    const runId = ctx.deps.registry.getTeam(team)?.runId ?? null
-    // 移除 sessionMarker，只留 sessionId
-    const cleanPosts = posts.map((p) => {
-      const row = ctx.deps.registry.getPost(p.address)
+    const { registry } = ctx.deps
+    const row = registry.getTeam(team)
+    if (!row) throw new WinglineError('input', 'team_unknown', `没有团队 ${team}`, { hint: '先执行 wl up <team.yaml>' })
+    const base = { team, runId: row.runId, status: row.status, specPath: row.specPath, hasDraft: fs.existsSync(draftPathOf(row.specPath)) }
+    // 从未启动：不调 ps()/dispatcherStatus()，Orca 一次都不碰（spec 3.3.4）
+    if (row.runId === null) {
       return {
-        ...p,
-        sessionId: row?.sessionId ?? null,
+        ...base, neverStarted: true,
+        dispatcher: { health: { state: 'never' }, frozen: 0, hushed: 0, attentionItems: 0 },
+        posts: offlinePosts(registry.listPosts(team)),
       }
-    })
-    return {
-      team,
-      runId,
-      dispatcher: disp,
-      posts: cleanPosts,
     }
+    let posts: Array<PsRow & { sessionId: string | null }>
+    let orcaUnavailable: string | undefined
+    try {
+      posts = (await ps(ctx.deps, { team })).map((p) => ({ ...p, sessionId: registry.getPost(p.address)?.sessionId ?? null }))
+    } catch (err) {
+      // Orca 不可达：降级为离线岗位列表并附原因，其余照常返回
+      if (!(err instanceof WinglineError) || err.kind !== 'orca') throw err
+      orcaUnavailable = err.message
+      posts = offlinePosts(registry.listPosts(team))
+    }
+    return { ...base, ...(orcaUnavailable !== undefined ? { orcaUnavailable } : {}), dispatcher: await dispatcherStatus(ctx.deps, team), posts }
   })
 
   // GET /api/teams/:team/attention

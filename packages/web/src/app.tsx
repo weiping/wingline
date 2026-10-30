@@ -1,10 +1,12 @@
 import type { ComponentChildren } from 'preact'
+import { useState } from 'preact/hooks'
 import { isUnauthenticated } from './api.js'
 import { useApi } from './hooks.js'
 import { Layout, StreamBanner, TopBar } from './components/Layout.js'
 import { ErrorBox, Loading } from './components/common.js'
 import { Toaster } from './components/Toast.js'
 import { Link } from './components/Link.js'
+import { NewTeamDialog } from './components/NewTeamDialog.js'
 import { Edit } from './pages/Edit.js'
 import { Inbox } from './pages/Inbox.js'
 import { Overview } from './pages/Overview.js'
@@ -13,7 +15,7 @@ import { Settings } from './pages/Settings.js'
 import { TaskBoard } from './pages/TaskBoard.js'
 import { TaskDetail } from './pages/TaskDetail.js'
 import { Timeline } from './pages/Timeline.js'
-import { type Route, teamPath, useRoute } from './router.js'
+import { type Route, navigate, teamPath, useRoute } from './router.js'
 import { StreamProvider } from './stream.js'
 
 interface Session {
@@ -33,19 +35,24 @@ function Expired() {
   )
 }
 
-function Home({ teams }: { teams: string[] }) {
-  if (teams.length === 0) {
+function Home(props: { teams: string[]; onOpenNewTeam: () => void }) {
+  if (props.teams.length === 0) {
     return (
-      <p class="muted">
-        还没有团队。先在终端运行 <code>wl up &lt;team.yaml&gt;</code>。
-      </p>
+      <section>
+        <p class="muted">
+          还没有团队。先在终端运行 <code>wl up &lt;team.yaml&gt;</code>。
+        </p>
+        <button type="button" class="btn" onClick={props.onOpenNewTeam}>
+          新建团队
+        </button>
+      </section>
     )
   }
   return (
     <section>
       <h1>团队</h1>
       <ul class="team-list">
-        {teams.map((t) => (
+        {props.teams.map((t) => (
           <li key={t}>
             <Link href={teamPath(t)}>{t}</Link>
           </li>
@@ -76,36 +83,39 @@ function Page({ route, team }: { route: Route; team: string }): ComponentChildre
   }
 }
 
-function Routed({ route, teams }: { route: Route; teams: string[] }) {
-  if (route.name === 'home') {
+function Routed(props: {
+  route: Route
+  teams: string[]
+  onOpenNewTeam: () => void
+}) {
+  if (props.route.name === 'home') {
     return (
-      <Layout teams={teams} team={null}>
-        <Home teams={teams} />
+      <Layout teams={props.teams} team={null} onOpenNewTeam={props.onOpenNewTeam}>
+        <Home teams={props.teams} onOpenNewTeam={props.onOpenNewTeam} />
       </Layout>
     )
   }
-  if (route.name === 'settings') {
+  if (props.route.name === 'settings') {
     return (
-      <Layout teams={teams} team={null}>
+      <Layout teams={props.teams} team={null} onOpenNewTeam={props.onOpenNewTeam}>
         <Settings />
       </Layout>
     )
   }
-  if (route.name === 'notfound') {
+  if (props.route.name === 'notfound') {
     return (
-      <Layout teams={teams} team={null}>
+      <Layout teams={props.teams} team={null} onOpenNewTeam={props.onOpenNewTeam}>
         <p class="muted">页面不存在。</p>
       </Layout>
     )
   }
-  const team = 'team' in route ? route.team : ''
+  const team = 'team' in props.route ? props.route.team : ''
   return (
-    <Layout teams={teams} team={team}>
-      {/* key 随团队切换重建连接 */}
+    <Layout teams={props.teams} team={team} onOpenNewTeam={props.onOpenNewTeam}>
       <StreamProvider key={team} team={team}>
         <TopBar />
         <StreamBanner />
-        <Page route={route} team={team} />
+        <Page route={props.route} team={team} />
       </StreamProvider>
     </Layout>
   )
@@ -114,14 +124,30 @@ function Routed({ route, teams }: { route: Route; teams: string[] }) {
 export function App() {
   const route = useRoute()
   const session = useApi<Session>('/api/session')
+  const [newTeamOpen, setNewTeamOpen] = useState(false)
+
+  const onTeamCreated = (t: string, started: boolean) => {
+    setNewTeamOpen(false)
+    session.reload()
+    navigate(started ? teamPath(t) : teamPath(t, '/edit'))
+  }
+
   let body: ComponentChildren
   if (isUnauthenticated(session.error)) body = <Expired />
   else if (session.error) body = <ErrorBox error={session.error} />
   else if (!session.data) body = <Loading />
-  else body = <Routed route={route} teams={session.data.teams} />
+  else {
+    body = (
+      <Routed route={route} teams={session.data.teams} onOpenNewTeam={() => setNewTeamOpen(true)} />
+    )
+  }
+
   return (
     <>
       {body}
+      {session.data && (
+        <NewTeamDialog open={newTeamOpen} onClose={() => setNewTeamOpen(false)} onCreated={onTeamCreated} />
+      )}
       <Toaster />
     </>
   )

@@ -5,6 +5,8 @@ import type { ConsoleFile } from '../server/control.js'
 import { draftPathOf } from '../spec/draft.js'
 import type { CommandDeps } from './deps.js'
 import { dispatcherHealth, type DispatcherHealth } from './dispatcher/lifecycle.js'
+import { autostartStatusOf, type AutostartStatus, type AutostartSys } from './autostart/index.js'
+import { realAutostartSys } from './autostart/sys.js'
 import { inRange } from './version-range.js'
 
 export interface AboutItem {
@@ -13,6 +15,10 @@ export interface AboutItem {
   source: 'env' | 'default' | 'registry' | 'file' | 'orca'
   note?: string
 }
+
+export type AboutAutostart =
+  | ({ supported: true } & AutostartStatus & { platform: string; user?: string; logPath: string })
+  | { supported: false; reason: string }
 
 export interface AboutTeam {
   name: string
@@ -73,11 +79,20 @@ function consoleItems(f: ConsoleFile | null): AboutItem[] {
   ]
 }
 
+/** 开机自启状态：取不到（平台不支持 / 权限不足）时显式说原因，不抛错。 */
+async function autostartItem(deps: CommandDeps, sys: AutostartSys): Promise<AboutAutostart> {
+  try {
+    return { supported: true, ...(await autostartStatusOf(deps, sys)) }
+  } catch (err) {
+    return { supported: false, reason: err instanceof Error ? err.message : String(err) }
+  }
+}
+
 /** 控制台“关于与诊断”页的数据：只读，取不到的项目显式标 null，不影响其余各项。 */
 export async function about(
   deps: CommandDeps,
-  o: { version: string; consoleFile: ConsoleFile | null; env?: NodeJS.ProcessEnv },
-): Promise<{ items: AboutItem[]; teams: AboutTeam[] }> {
+  o: { version: string; consoleFile: ConsoleFile | null; env?: NodeJS.ProcessEnv; autostartSys?: AutostartSys },
+): Promise<{ items: AboutItem[]; teams: AboutTeam[]; autostart: AboutAutostart }> {
   const env = o.env ?? deps.env
   const orca = await orcaVersion(deps)
   const items: AboutItem[] = [
@@ -99,5 +114,5 @@ export async function about(
     draft: fs.existsSync(draftPathOf(t.specPath)),
     dispatcher: dispatcherHealth(deps, t.name).state,
   }))
-  return { items, teams }
+  return { items, teams, autostart: await autostartItem(deps, o.autostartSys ?? realAutostartSys()) }
 }

@@ -18,44 +18,62 @@ export const NAV: NavTarget[] = [
 
 const STATE_TEXT = { live: ['实时', 'ok'], reconnecting: ['重连中', 'warn'], closed: ['已断开', 'bad'] } as const
 
+function LayoutSide(props: {
+  teams: string[]
+  team: string | null
+  onOpenNewTeam: () => void
+}) {
+  return (
+    <aside class="side">
+      <div class="brand">雁阵</div>
+      {props.teams.length > 0 ? (
+        <select
+          class="team-switch"
+          aria-label="团队"
+          value={props.team ?? ''}
+          onChange={(e) => navigate(teamPath((e.target as HTMLSelectElement).value))}
+        >
+          {!props.team && <option value="" />}
+          {props.teams.map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
+          ))}
+        </select>
+      ) : (
+        <p class="muted small">还没有团队</p>
+      )}
+      <button type="button" class="btn" onClick={props.onOpenNewTeam}>
+        新建团队
+      </button>
+      {props.team && (
+        <nav>
+          {NAV.map((n) => (
+            <Link key={n.sub} href={teamPath(props.team!, n.sub)} class="nav-link">
+              {n.label}
+            </Link>
+          ))}
+        </nav>
+      )}
+      <nav class="side-foot">
+        <Link href="/settings" class="nav-link">
+          关于
+        </Link>
+      </nav>
+    </aside>
+  )
+}
+
 /** 外框：左侧团队切换与导航，顶部连接状态与待办角标。团队页才会在 StreamProvider 内渲染顶栏。 */
-export function Layout(props: { teams: string[]; team: string | null; children: ComponentChildren }) {
+export function Layout(props: {
+  teams: string[]
+  team: string | null
+  onOpenNewTeam: () => void
+  children: ComponentChildren
+}) {
   return (
     <div class="shell">
-      <aside class="side">
-        <div class="brand">雁阵</div>
-        {props.teams.length > 0 ? (
-          <select
-            class="team-switch"
-            aria-label="团队"
-            value={props.team ?? ''}
-            onChange={(e) => navigate(teamPath((e.target as HTMLSelectElement).value))}
-          >
-            {!props.team && <option value="" />}
-            {props.teams.map((t) => (
-              <option key={t} value={t}>
-                {t}
-              </option>
-            ))}
-          </select>
-        ) : (
-          <p class="muted small">还没有团队</p>
-        )}
-        {props.team && (
-          <nav>
-            {NAV.map((n) => (
-              <Link key={n.sub} href={teamPath(props.team!, n.sub)} class="nav-link">
-                {n.label}
-              </Link>
-            ))}
-          </nav>
-        )}
-        <nav class="side-foot">
-          <Link href="/settings" class="nav-link">
-            关于
-          </Link>
-        </nav>
-      </aside>
+      <LayoutSide teams={props.teams} team={props.team} onOpenNewTeam={props.onOpenNewTeam} />
       <div class="main">{props.children}</div>
     </div>
   )

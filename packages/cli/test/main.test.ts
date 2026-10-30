@@ -18,6 +18,7 @@ function io() {
 let closed = 0
 const makeDeps = () => ({ registry: { close: () => { closed++ } } }) as unknown as CommandDeps
 const cmds = (over: Partial<Commands> = {}): Commands => ({
+  init: async (_d, a) => ({ team: a.name ?? '-', specPath: `/h/teams/${a.name ?? '-'}/team.yaml`, created: true }),
   up: async () => ({ team: 'duo', posts: [{ address: 'builder@duo', outcome: 'launched' }] }),
   ps: async () => [{ address: 'builder@duo', agent: 'claude', status: 'live', handle: 'h1', worktree: 'current', isLead: true }],
   send: async (_d, a) => ({ address: a.address, outcome: 'delivered', handle: 'h1' }),
@@ -845,4 +846,50 @@ test('wl log --follow --json streams NDJSON, exits 0 on SIGINT and drops its lis
   expect(process.listenerCount('SIGINT')).toBe(before)
   const lines = h.out().trimEnd().split('\n')
   expect(lines.map((l) => JSON.parse(l).id)).toEqual(['command:1', 'command:2'])
+})
+
+// —— wl init（3E-2）——
+
+test('wl init 用模板生成团队并打印生成目录', async () => {
+  const h = io()
+  const code = await run(['init', 'my-team', '--repo', '/tmp/repo', '--template', 'solo', '--json'], h.io, cmds(), makeDeps)
+  expect(code).toBe(0)
+  const out = JSON.parse(h.out())
+  expect(out.ok).toBe(true)
+  expect(out.result.team).toBe('my-team')
+  expect(out.result.created).toBe(true)
+})
+
+test('wl init passes name/repo/template/dir through in template mode', async () => {
+  let seen: unknown
+  await exec(['init', 'duo', '--repo', '/tmp/repo', '--dir', '/tmp/d'], cmds({
+    init: async (_d, a) => { seen = a; return { team: 'duo', specPath: '/tmp/d/team.yaml', created: true } },
+  }))
+  expect(seen).toEqual({ mode: 'template', name: 'duo', repo: '/tmp/repo', template: undefined, dir: '/tmp/d' })
+})
+
+test('wl init --import passes the spec path and rejects a team name alongside', async () => {
+  let seen: unknown
+  await exec(['init', '--import', '/tmp/t/team.yaml'], cmds({
+    init: async (_d, a) => { seen = a; return { team: 'duo', specPath: '/tmp/t/team.yaml', created: true } },
+  }))
+  expect(seen).toEqual({ mode: 'import', specPath: '/tmp/t/team.yaml' })
+  expect((await exec(['init', 'duo', '--import', '/tmp/t/team.yaml', '--json'], cmds())).code).toBe(1)
+})
+
+test('wl init requires a team name and --repo in template mode (exit 1, init not called)', async () => {
+  let called = 0
+  const c = cmds({ init: async () => { called++; return { team: 'x', specPath: 'p', created: true } } })
+  expect((await exec(['init'], c)).code).toBe(1)
+  expect((await exec(['init', 'duo'], c)).code).toBe(1)
+  expect(called).toBe(0)
+})
+
+test('wl init human output names the spec path and the follow-up wl up command', async () => {
+  const r = await exec(['init', 'duo', '--repo', '/tmp/repo'], cmds({
+    init: async () => ({ team: 'duo', specPath: '/h/teams/duo/team.yaml', created: true }),
+  }))
+  expect(r.out).toContain('已生成团队 duo')
+  expect(r.out).toContain('/h/teams/duo/team.yaml')
+  expect(r.out).toContain('wl up /h/teams/duo/team.yaml')
 })

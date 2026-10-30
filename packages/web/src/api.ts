@@ -88,3 +88,6 @@ export function errorText(err: unknown): string {
 }
 
 export const isUnauthenticated = (err: unknown): boolean => err instanceof ApiError && err.code === 'unauthenticated'
+
+/** 团队没有 Run 时后端回 run_not_ready：按中性提示处理，不走红色错误块（规格第 3.3.4 条）。 */
+export const notReady = (e: Error | null): boolean => e !== null && e instanceof ApiError && e.code === 'run_not_ready'

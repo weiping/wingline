@@ -49,7 +49,8 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; }
 .shell { display: grid; grid-template-columns: 210px 1fr; min-height: 100vh; }
 .side { border-right: 1px solid var(--line); padding: 20px 16px; display: flex; flex-direction: column; gap: var(--gap); }
 .brand { font-weight: 700; font-size: 1.1rem; letter-spacing: 0.08em; color: var(--accent); }
-.team-switch, .field input, .field select, .field textarea { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; width: 100%; }
+input:not([type="checkbox"]):not([type="radio"]), select, textarea { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+.team-switch, .field input, .field select, .field textarea { width: 100%; }
 .field textarea { min-height: 84px; resize: vertical; }
 .nav-link { display: block; padding: 6px 8px; border-radius: 6px; color: var(--ink); }
 .nav-link:hover { background: var(--line); text-decoration: none; }
@@ -77,7 +78,7 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; }
 
 .btn { font: inherit; font-size: 0.9em; padding: 5px 12px; border-radius: 6px; border: 1px solid var(--accent); background: var(--accent); color: var(--surface); cursor: pointer; }
 .btn:disabled { opacity: 0.55; cursor: default; }
-.btn.ghost { background: transparent; color: var(--ink); border-color: var(--line); }
+.btn.ghost { background: var(--surface); color: var(--ink); border-color: var(--line); }
 .btn.danger { background: var(--bad); border-color: var(--bad); }
 .btn.small { padding: 2px 8px; font-size: 0.8em; }
 
@@ -85,6 +86,12 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; }
 .dialog { background: var(--surface); color: var(--ink); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px; width: min(440px, 92vw); }
 .dialog form { display: flex; flex-direction: column; gap: 10px; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.template-cards { display: flex; flex-direction: column; gap: 8px; }
+.template-card { padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); cursor: pointer; text-align: left; font: inherit; }
+.template-card.active { border-color: var(--accent); }
+.template-card-head { display: flex; justify-content: space-between; align-items: center; }
+.template-card-title { font-weight: 600; font-size: 0.9em; }
+.template-card-desc { font-size: 0.8em; color: var(--muted); margin: 4px 0 0; }
 .field { display: flex; flex-direction: column; gap: 4px; font-size: 0.9em; }
 .field.inline { flex-direction: row; align-items: center; gap: 6px; }
 .field.inline input, .field.inline select { width: auto; min-width: 160px; }
@@ -121,6 +128,8 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; }
 .spec-form { display: flex; flex-direction: column; gap: var(--gap); }
 .spec-form fieldset { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px var(--gap); margin: 0; }
 .spec-form legend { font-weight: 650; padding: 0 6px; }
+.spec-form .doc-field { grid-column: 1 / -1; }
+.spec-form .post-head { grid-column: 1 / -1; display: flex; justify-content: flex-end; }
 .field label { display: flex; flex-direction: column; gap: 4px; }
 .field.check label { flex-direction: row; align-items: center; gap: 8px; }
 .field.check input { width: auto; }

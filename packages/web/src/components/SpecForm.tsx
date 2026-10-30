@@ -1,3 +1,4 @@
+import type { SpecEditOp } from '@weiping/wingline-core'
 import { useEffect, useState } from 'preact/hooks'
 
 export type SpecPath = Array<string | number>
@@ -15,6 +16,10 @@ interface FormProps {
   disabled: boolean
   /** 一处修改；value 为 null 表示删除该字段。 */
   onSet: (path: SpecPath, value: unknown) => void
+  /** 规范 / 简报正文（相对路径 → 内容），由编辑页持有并随保存请求带回。 */
+  files?: Record<string, string>
+  onFiles?: (files: Record<string, string>) => void
+  onOp?: (op: SpecEditOp) => void
 }
 
 const key = (p: SpecPath) => p.join('.')
@@ -144,12 +149,89 @@ const BUDGETS: Array<[string, number]> = [
   ['gate_timeout_seconds', 600],
 ]
 
-function PostFields({ i, post, c }: { i: number; post: any; c: Omit<FieldBase, 'path' | 'label' | 'value'> }) {
+/** 规范 / 简报的 Markdown 正文：绑 files[rel]，改动时把整份 files 交给上层。 */
+function DocArea(p: {
+  label: string
+  aria: string
+  rel: string
+  text: string
+  disabled: boolean
+  files?: Record<string, string>
+  onFiles?: FormProps['onFiles']
+}) {
+  return (
+    <label class="field doc-field">
+      <span>
+        {p.label}（<code>{p.rel}</code>）
+      </span>
+      <textarea
+        aria-label={p.aria}
+        rows={5}
+        spellcheck={false}
+        value={p.text}
+        disabled={p.disabled || !p.onFiles}
+        onInput={(e) => p.onFiles?.({ ...(p.files ?? {}), [p.rel]: (e.target as HTMLTextAreaElement).value })}
+      />
+    </label>
+  )
+}
+
+/** lead 下拉：选项是当前岗位 id；值不在岗位里（规格坏了）退化成文本输入。 */
+function LeadField(p: { c: Omit<FieldBase, 'path' | 'label' | 'value'>; value: unknown; ids: string[] }) {
+  const val = typeof p.value === 'string' ? p.value : ''
+  if (val && !p.ids.includes(val)) return <TextField {...p.c} path={['lead']} label="lead（牵头岗）" value={p.value} required />
+  return (
+    <Frame {...p.c} path={['lead']} label="lead（牵头岗）" value={val} required>
+      <select data-path="lead" value={val} disabled={p.c.disabled} onChange={(e) => p.c.onSet(['lead'], (e.target as HTMLSelectElement).value)}>
+        {p.ids.map((id) => (
+          <option key={id} value={id}>
+            {id}
+          </option>
+        ))}
+      </select>
+    </Frame>
+  )
+}
+
+interface Docs {
+  files?: Record<string, string>
+  onFiles?: FormProps['onFiles']
+  onOp?: FormProps['onOp']
+  canRemove: boolean
+}
+
+/** 岗位字段的中文标签（规范 3.4.5）；未知键退回键名本身。 */
+const POST_LABEL: Record<string, string> = {
+  id: '岗位标识 id',
+  agent: '代理 agent',
+  model: '模型 model',
+  launch: '启动命令 launch',
+  environment: '远端环境 environment',
+  worktree: '工作区 worktree',
+  brief: '简报文件 brief',
+  tags: '标签 tags',
+  self_claim: '自主认领 self_claim',
+  plan_first: '先写计划 plan_first',
+}
+
+function PostFields({ i, post, c, docs }: { i: number; post: any; c: Omit<FieldBase, 'path' | 'label' | 'value'>; docs: Docs }) {
   const at = (name: string): SpecPath => ['posts', i, name]
-  const f = (name: string) => ({ ...c, path: at(name), label: name, value: post?.[name] })
+  const f = (name: string) => ({ ...c, path: at(name), label: POST_LABEL[name] ?? name, value: post?.[name] })
+  const id = String(post?.id ?? i)
+  const briefRel = (Array.isArray(post?.brief) ? String(post.brief[0] ?? '') : '') || `briefs/${id}.md`
+  const onBriefFiles = (next: Record<string, string>) => {
+    // 该岗位还没有 brief 引用：先把 briefs/<id>.md 写进规格，再收正文
+    if (!(Array.isArray(post?.brief) && post.brief[0])) docs.onOp?.({ path: at('brief'), value: [briefRel] })
+    docs.onFiles?.(next)
+  }
   return (
     <fieldset class="card">
-      <legend>岗位 {String(post?.id ?? i)}</legend>
+      <legend>岗位 {id}</legend>
+      <div class="post-head">
+        <button type="button" class="btn danger small" disabled={c.disabled || !docs.onOp || !docs.canRemove} onClick={() => docs.onOp?.({ op: 'remove_post', index: i })}>
+          删除岗位
+        </button>
+      </div>
       <TextField {...f('id')} required />
       <TextField {...f('agent')} required />
       <TextField {...f('model')} />
@@ -160,7 +242,90 @@ function PostFields({ i, post, c }: { i: number; post: any; c: Omit<FieldBase, '
       <ListField {...f('tags')} />
       <BoolField {...f('self_claim')} fallback={false} />
       <BoolField {...f('plan_first')} fallback={false} />
+      <DocArea label="岗位职责简报正文" aria={`岗位职责简报正文（${id}）`} rel={briefRel} text={docs.files?.[briefRel] ?? ''} disabled={c.disabled} files={docs.files} onFiles={onBriefFiles} />
     </fieldset>
+  )
+}
+
+const POST_PRESETS = {
+  builder: { label: '实现岗', agent: 'claude', duties: ['按任务简报完成实现与自测', '提交前验证改动可运行', '遇到阻塞及时向牵头岗汇报'] },
+  checker: { label: '审查岗', agent: 'codex', duties: ['复核其他岗位的产出', '指出问题并给出可执行的修改建议'] },
+  planner: { label: '规划岗', agent: 'claude', duties: ['把团队目标拆解成任务简报', '跟踪进度，必要时调整计划'] },
+  custom: { label: '自定义', agent: '', duties: ['（在此填写该岗位的职责）'] },
+} as const
+type PresetKey = keyof typeof POST_PRESETS
+
+/** 弹窗字段：角色预设（自定义时露出代理输入）+ 岗位标识。 */
+function AddPostFields(p: {
+  preset: PresetKey
+  id: string
+  agent: string
+  setPreset: (k: PresetKey) => void
+  setId: (v: string) => void
+  setAgent: (v: string) => void
+}) {
+  return (
+    <>
+      <label class="field">
+        <span>角色预设</span>
+        <select aria-label="角色预设" value={p.preset} onChange={(e) => p.setPreset((e.target as HTMLSelectElement).value as PresetKey)}>
+          {(Object.keys(POST_PRESETS) as PresetKey[]).map((k) => (
+            <option key={k} value={k}>
+              {POST_PRESETS[k].label}
+            </option>
+          ))}
+        </select>
+      </label>
+      {p.preset === 'custom' && (
+        <label class="field">
+          <span>代理 agent</span>
+          <input aria-label="代理 agent" placeholder="如 claude、codex" value={p.agent} onInput={(e) => p.setAgent((e.target as HTMLInputElement).value)} />
+        </label>
+      )}
+      <label class="field">
+        <span>岗位标识</span>
+        <input aria-label="岗位标识" placeholder="小写字母、数字、连字符" value={p.id} onInput={(e) => p.setId((e.target as HTMLInputElement).value)} />
+      </label>
+    </>
+  )
+}
+
+/** 新增岗位弹窗：选角色预设 + 填岗位标识（自定义时再填代理）；预设不带 model（部分代理后端不接受，留给岗位卡里补）。 */
+function AddPostDialog(props: { onAdd: (post: { id: string; agent: string; worktree: string; brief: string[] }, briefText: string) => void; onClose: () => void }) {
+  const [preset, setPreset] = useState<PresetKey>('builder')
+  const [id, setId] = useState('')
+  const [agent, setAgent] = useState('')
+  const [err, setErr] = useState<string | null>(null)
+  const submit = () => {
+    const pid = id.trim()
+    const ag = preset === 'custom' ? agent.trim() : POST_PRESETS[preset].agent
+    if (!pid || !ag) {
+      setErr('请填写岗位标识与代理 agent')
+      return
+    }
+    const p = POST_PRESETS[preset]
+    props.onAdd({ id: pid, agent: ag, worktree: 'current', brief: [`briefs/${pid}.md`] }, `# ${pid}（${p.label}）\n\n职责：\n${p.duties.map((d) => `- ${d}`).join('\n')}\n`)
+  }
+  return (
+    <div class="dialog-backdrop">
+      <div class="dialog" role="dialog" aria-modal="true" aria-label="新增角色岗位">
+        <h3>新增角色岗位</h3>
+        <AddPostFields preset={preset} id={id} agent={agent} setPreset={setPreset} setId={setId} setAgent={setAgent} />
+        {err && (
+          <p class="error" role="alert">
+            {err}
+          </p>
+        )}
+        <div class="dialog-actions">
+          <button type="button" class="btn ghost" onClick={props.onClose}>
+            取消
+          </button>
+          <button type="button" class="btn" onClick={submit}>
+            新增
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -180,35 +345,50 @@ function LinkFields({ ids, c, parsed }: { ids: string[]; c: Omit<FieldBase, 'pat
   )
 }
 
-/** 表单覆盖岗位、lead、links、gates、budgets.task 与 patrol；新增 / 删除岗位与 notify 请在 YAML 视图里改。 */
-export function SpecForm({ parsed, errors, disabled, onSet }: FormProps) {
-  const c = { errors, disabled, onSet }
-  const posts: any[] = Array.isArray(parsed?.posts) ? parsed.posts : []
-  const ids = posts.map((p) => String(p?.id ?? '')).filter(Boolean)
+/** 表单覆盖岗位、lead、links、gates、budgets.task 与 patrol；岗位增删与规范 / 简报正文由上层通过 onOp / onFiles 接管。 */
+export function SpecForm(p: FormProps) {
+  const c = { errors: p.errors, disabled: p.disabled, onSet: p.onSet }
+  const posts: any[] = Array.isArray(p.parsed?.posts) ? p.parsed.posts : []
+  const ids = posts.map((x) => String(x?.id ?? '')).filter(Boolean)
+  const docs: Docs = { files: p.files, onFiles: p.onFiles, onOp: p.onOp, canRemove: posts.length > 1 }
+  const normsRel = typeof p.parsed?.norms === 'string' ? p.parsed.norms : 'NORMS.md'
+  const [adding, setAdding] = useState(false)
+  const addPost = (post: { id: string; agent: string; worktree: string; brief: string[] }, briefText: string) => {
+    p.onOp?.({ op: 'add_post', post })
+    p.onFiles?.({ ...(p.files ?? {}), [post.brief[0]!]: briefText })
+    setAdding(false)
+  }
   return (
     <form class="spec-form" onSubmit={(e) => e.preventDefault()}>
       <fieldset class="card">
         <legend>团队</legend>
-        <TextField {...c} path={['lead']} label="lead（牵头岗）" value={parsed?.lead} required />
+        <LeadField c={c} value={p.parsed?.lead} ids={ids} />
+        <DocArea label="团队规范正文" aria="团队规范正文" rel={normsRel} text={p.files?.[normsRel] ?? ''} disabled={p.disabled} files={p.files} onFiles={p.onFiles} />
       </fieldset>
-      {posts.map((p, i) => (
-        <PostFields key={i} i={i} post={p} c={c} />
+      {posts.map((x, i) => (
+        <PostFields key={String(x?.id ?? i)} i={i} post={x} c={c} docs={docs} />
       ))}
-      <LinkFields ids={ids} c={c} parsed={parsed} />
+      {p.onOp && (
+        <button type="button" class="btn ghost" disabled={p.disabled} onClick={() => setAdding(true)}>
+          新增角色岗位
+        </button>
+      )}
+      {adding && <AddPostDialog onAdd={addPost} onClose={() => setAdding(false)} />}
+      <LinkFields ids={ids} c={c} parsed={p.parsed} />
       <fieldset class="card">
         <legend>预算 budgets.task</legend>
         {BUDGETS.map(([name, def]) => (
-          <NumberField key={name} {...c} path={['budgets', 'task', name]} label={name} value={getIn(parsed, ['budgets', 'task', name])} placeholder={String(def)} />
+          <NumberField key={name} {...c} path={['budgets', 'task', name]} label={name} value={getIn(p.parsed, ['budgets', 'task', name])} placeholder={String(def)} />
         ))}
-        <NumberField {...c} path={['budgets', 'task', 'max_minutes']} label="max_minutes" value={getIn(parsed, ['budgets', 'task', 'max_minutes'])} />
+        <NumberField {...c} path={['budgets', 'task', 'max_minutes']} label="max_minutes" value={getIn(p.parsed, ['budgets', 'task', 'max_minutes'])} />
       </fieldset>
       <fieldset class="card">
         <legend>巡查 patrol</legend>
         {PATROL_NUMBERS.map(([name, def]) => (
-          <NumberField key={name} {...c} path={['patrol', name]} label={name} value={getIn(parsed, ['patrol', name])} placeholder={String(def)} />
+          <NumberField key={name} {...c} path={['patrol', name]} label={name} value={getIn(p.parsed, ['patrol', name])} placeholder={String(def)} />
         ))}
         {PATROL_FLAGS.map(([name, def]) => (
-          <BoolField key={name} {...c} path={['patrol', name]} label={name} value={getIn(parsed, ['patrol', name])} fallback={def} />
+          <BoolField key={name} {...c} path={['patrol', name]} label={name} value={getIn(p.parsed, ['patrol', name])} fallback={def} />
         ))}
       </fieldset>
     </form>

@@ -2,10 +2,26 @@ import fs from 'node:fs'
 import { expect, test } from 'vitest'
 import { Router, statusOf } from '../../src/server/http.js'
 import { registerReadRoutes } from '../../src/server/api-read.js'
+import { registerSpecRoutes } from '../../src/server/api-spec.js'
 import { draftPathOf } from '../../src/spec/draft.js'
 import { cachedOrca } from '../../src/view/snapshot.js'
-import { FakeOrca, seedRunningTeam, setWorktreeSupport } from '../commands/fake-client.js'
+import { FakeOrca, mkDeps, seedRunningTeam, setWorktreeSupport } from '../commands/fake-client.js'
+import { DUO_YAML, mkTeam } from '../spec/helpers.js'
 import { WinglineError } from '../../src/errors.js'
+
+/** 只登记、没启动的团队（Task 1 的 wl init 之后、wl up 之前的形态）：真实 spec 在磁盘上，岗位已登记但 handle 为空。 */
+function seedNeverStarted() {
+  const o = new FakeOrca()
+  const made = mkDeps(o)
+  made.registry.upsertTeam({ name: 'newbie', specPath: mkTeam(DUO_YAML), specHash: 'x', runId: null, coordinatorHandle: null, status: 'stopped' })
+  made.registry.upsertPost({ address: 'builder@newbie', team: 'newbie', agent: 'claude', worktree: 'path:/wt', handle: null, status: 'offline', isLead: true, sessionMarker: null, sessionId: null, sessionAt: null })
+  return { o, ...made }
+}
+
+const get = async (r: Router, d: any, path: string) => {
+  const m = r.match('GET', path)!
+  return (await m.h({ deps: d, params: m.params, query: new URLSearchParams(), body: null })) as any
+}
 
 test('statusOf maps input/orca/uncertain/internal to 400/502/504/500', () => {
   expect(statusOf(new WinglineError('input', 'invalid_param', 'x'))).toBe(400)
@@ -186,4 +202,79 @@ test('3D: post detail lists that post\'s own live signals with a summary (it use
   const route = r.match('GET', '/api/teams/duo/posts/builder')!
   const res = (await route.h({ deps: d, params: { team: 'duo', post: 'builder' }, query: new URLSearchParams(), body: null })) as any
   expect(res.signals.map((s: { signal: string; summary: string | null }) => [s.signal, s.summary])).toEqual([['usage_limit', '重置时间未知']])
+})
+
+// ---- Task 9：团队状态读接口与未启动团队降级（spec 3.3.4）----
+
+test('未启动的团队也能读出总览，且标记 neverStarted（Orca 一次都不碰）', async () => {
+  const { o, deps, registry } = seedNeverStarted()
+  const d = { ...deps, orca: cachedOrca(o) }
+  const r = new Router()
+  registerReadRoutes(r)
+
+  const res = await get(r, d, '/api/teams/newbie')
+  expect(res.neverStarted).toBe(true)
+  expect(res.runId).toBeNull()
+  expect(res.status).toBe('stopped')
+  expect(res.specPath).toBe(registry.getTeam('newbie')!.specPath)
+  expect(res.hasDraft).toBe(false)
+  expect(res.posts.every((p: any) => p.status === 'offline')).toBe(true)
+  expect(res.posts[0]).toMatchObject({ address: 'builder@newbie', agent: 'claude', handle: null, isLead: true, sessionId: null })
+  expect(res.dispatcher).toEqual({ health: { state: 'never' }, frozen: 0, hushed: 0, attentionItems: 0 })
+  // spec 3.3.4：未启动团队不得调用 ps()/dispatcherStatus()——FakeOrca 记录的调用序列必须为空
+  expect(o.calls).toEqual([])
+})
+
+test('未启动团队有草稿时总览带出 hasDraft: true', async () => {
+  const { o, deps, registry } = seedNeverStarted()
+  const d = { ...deps, orca: cachedOrca(o) }
+  const r = new Router(); registerReadRoutes(r)
+  fs.writeFileSync(draftPathOf(registry.getTeam('newbie')!.specPath), 'x')
+  expect((await get(r, d, '/api/teams/newbie')).hasDraft).toBe(true)
+})
+
+test('团队列表带出 status 与 hasDraft；未启动团队不调 ps() 也能出摘要', async () => {
+  const o = new FakeOrca()
+  const { deps, registry } = seedRunningTeam(o)
+  registry.upsertTeam({ name: 'newbie', specPath: mkTeam(DUO_YAML), specHash: 'x', runId: null, coordinatorHandle: null, status: 'stopped' })
+  registry.upsertPost({ address: 'builder@newbie', team: 'newbie', agent: 'claude', worktree: 'path:/wt', handle: null, status: 'offline', isLead: true, sessionMarker: null, sessionId: null, sessionAt: null })
+  const d = { ...deps, orca: cachedOrca(o) }
+  const r = new Router(); registerReadRoutes(r)
+
+  const res = await get(r, d, '/api/teams')
+  expect(res.teams.find((t: any) => t.name === 'duo')).toMatchObject({ status: 'up', hasDraft: false, postsCount: 2 })
+  expect(res.teams.find((t: any) => t.name === 'newbie')).toMatchObject({ status: 'stopped', hasDraft: false, postsCount: 1, attentionCount: 0, dispatcher: 'never' })
+})
+
+test('运行中团队的 Orca 不可达时降级为离线岗位列表并附 orcaUnavailable', async () => {
+  const o = new FakeOrca()
+  const { deps } = seedRunningTeam(o)
+  o.faults.push({ method: 'terminalList', when: 'before', error: new WinglineError('orca', 'runtime_unavailable', 'Orca 未运行') })
+  const d = { ...deps, orca: cachedOrca(o) }
+  const r = new Router(); registerReadRoutes(r)
+
+  const res = await get(r, d, '/api/teams/duo')
+  expect(res.orcaUnavailable).toBe('Orca 未运行')
+  expect(res.neverStarted).toBeUndefined()
+  expect(res.status).toBe('up')
+  expect(res.runId).toBe('run-1')
+  expect(res.posts.every((p: any) => p.status === 'offline')).toBe(true)
+})
+
+test('总览接口对未登记团队仍抛 team_unknown', async () => {
+  const o = new FakeOrca()
+  const { deps } = seedRunningTeam(o)
+  const d = { ...deps, orca: cachedOrca(o) }
+  const r = new Router(); registerReadRoutes(r)
+  await expect(get(r, d, '/api/teams/ghost')).rejects.toMatchObject({ kind: 'input', code: 'team_unknown' })
+})
+
+test('about 带上 autostart 状态；取不到时给出 supported:false', async () => {
+  const o = new FakeOrca()
+  const { deps } = seedRunningTeam(o)
+  const d = { ...deps, orca: cachedOrca(o) }
+  const r = new Router()
+  registerSpecRoutes(r, { version: '9.9.9' })
+  const res = await get(r, d, '/api/about')
+  expect(res.autostart).toHaveProperty('supported')
 })

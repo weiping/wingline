@@ -1,5 +1,8 @@
-import type { AboutItem, AboutTeam } from '@weiping/wingline-core'
+import type { AboutAutostart, AboutItem, AboutTeam } from '@weiping/wingline-core'
+import { api } from '../api.js'
 import { useApi } from '../hooks.js'
+import { ActionDialog } from '../components/ActionDialog.js'
+import { CommandHint } from '../components/CommandHint.js'
 import { Link } from '../components/Link.js'
 import { teamPath } from '../router.js'
 import { ErrorBox, Loading, Pill, Section } from '../components/common.js'
@@ -60,9 +63,67 @@ function TeamRows({ teams }: { teams: AboutTeam[] }) {
   )
 }
 
-/** 关于与诊断：只读，每一项标注来源，取不到的项显示“—”和原因。 */
+/** 支持自动恢复时的状态与开关。 */
+function AutostartBody({ a, onChanged }: { a: Extract<AboutAutostart, { supported: true }>; onChanged: () => void }) {
+  return (
+    <>
+      <p>
+        <Pill tone={a.installed ? 'ok' : 'warn'}>{a.installed ? '已开启' : '未开启'}</Pill>{' '}
+        <span class="muted small">登录后自动恢复控制台与调度</span>
+      </p>
+      <p class="muted small">
+        服务文件 <code>{a.location}</code>
+        {a.command.length > 0 && (
+          <>
+            {' '}· 执行命令 <code>{a.command.join(' ')}</code>
+          </>
+        )}
+      </p>
+      {a.logTail.length > 0 && <pre class="term">{a.logTail.slice(-5).join('\n')}</pre>}
+      <div class="actions">
+        {a.installed ? (
+          <ActionDialog
+            label="关闭自动恢复"
+            title="关闭自动恢复"
+            danger
+            submitLabel="确认关闭"
+            onSubmit={(_v, rr) => api.post('/api/autostart/uninstall', rr ? { retryRequest: rr } : {})}
+            onDone={onChanged}
+          />
+        ) : (
+          <ActionDialog
+            label="开启自动恢复"
+            title="开启自动恢复"
+            fields={[{ name: 'waitOrca', label: '等待 Orca 就绪的时长', initial: '15m', required: true }]}
+            onSubmit={(v, rr) => {
+              const waitOrca = v.waitOrca?.trim() ?? ''
+              return api.post('/api/autostart/install', {
+                ...(waitOrca ? { waitOrca } : {}),
+                ...(rr ? { retryRequest: rr } : {}),
+              })
+            }}
+            onDone={onChanged}
+          />
+        )}
+        <CommandHint command="wl autostart install ；wl autostart uninstall" />
+      </div>
+    </>
+  )
+}
+
+/** 「登录后自动恢复」区块：不支持时说明原因；autostart 缺失（旧服务端）时不渲染。 */
+function AutostartCard({ a, onChanged }: { a?: AboutAutostart; onChanged: () => void }) {
+  if (!a) return null
+  return (
+    <Section title="登录后自动恢复">
+      {a.supported ? <AutostartBody a={a} onChanged={onChanged} /> : <p class="muted small">此系统不支持自动恢复：{a.reason}</p>}
+    </Section>
+  )
+}
+
+/** 关于与诊断：只读，每一项标注来源，取不到的项显示“—”和原因；附自动恢复管理。 */
 export function Settings() {
-  const about = useApi<{ items: AboutItem[]; teams: AboutTeam[] }>('/api/about')
+  const about = useApi<{ items: AboutItem[]; teams: AboutTeam[]; autostart?: AboutAutostart }>('/api/about')
   if (about.error) return <ErrorBox error={about.error} />
   if (!about.data) return <Loading />
   return (
@@ -89,6 +150,7 @@ export function Settings() {
       <Section title="团队" count={about.data.teams.length}>
         {about.data.teams.length === 0 ? <p class="muted small">暂无</p> : <TeamRows teams={about.data.teams} />}
       </Section>
+      <AutostartCard a={about.data.autostart} onChanged={() => about.reload()} />
     </div>
   )
 }

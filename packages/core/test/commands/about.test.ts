@@ -1,9 +1,11 @@
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { expect, test } from 'vitest'
 import { about } from '../../src/commands/about.js'
 import { WinglineError } from '../../src/errors.js'
 import { draftPathOf } from '../../src/spec/draft.js'
+import type { AutostartSys } from '../../src/commands/autostart/index.js'
 import { FakeOrca, mkDeps, seedRunningTeam } from './fake-client.js'
 
 const item = (r: Awaited<ReturnType<typeof about>>, key: string) => r.items.find((i) => i.key === key)
@@ -57,4 +59,37 @@ test('about lists each team with spec path, status, draft flag and dispatcher st
   expect((await about(deps, { version: '1', consoleFile: null })).teams).toEqual([{ name: 'duo', specPath, status: 'up', draft: false, dispatcher: 'never' }])
   fs.writeFileSync(draftPathOf(specPath), 'x')
   expect((await about(deps, { version: '1', consoleFile: null })).teams[0]).toMatchObject({ draft: true })
+})
+
+// ---- Task 9：about 带上 autostart 状态 ----
+
+/** darwin 下的可控宿主：LaunchAgents 路径落在临时 homeDir 下（不存在→installed:false），日志读不到→logTail:[]；exec 在 darwin 上不会被调用。 */
+const darwinSys: AutostartSys = {
+  platform: 'darwin', homeDir: fs.mkdtempSync(path.join(os.tmpdir(), 'wl-autostart-')), uid: 501,
+  node: '/n', script: '/s', exec: async () => ({ code: 0, stdout: '', stderr: '' }), fs,
+}
+
+test('about 带上 autostart：取得到时 supported:true 并展开 AutostartStatus 与平台信息', async () => {
+  const o = new FakeOrca()
+  const { deps } = mkDeps(o)
+  const r = await about(deps, { version: '1', consoleFile: null, autostartSys: darwinSys })
+  expect(r.autostart.supported).toBe(true)
+  if (!r.autostart.supported) return
+  expect(r.autostart).toMatchObject({
+    installed: false, platform: 'darwin',
+    location: path.posix.join(darwinSys.homeDir, 'Library', 'LaunchAgents', 'wingline.restore.plist'),
+    command: [], commandMissing: [], logTail: [], linger: undefined,
+    logPath: path.posix.join(deps.home, 'logs', 'autostart.log'),
+  })
+})
+
+test('about 的 autostart 取不到（平台不支持）时 supported:false 且带 reason，不抛错', async () => {
+  const o = new FakeOrca()
+  const { deps } = mkDeps(o)
+  const r = await about(deps, { version: '1', consoleFile: null, autostartSys: { ...darwinSys, platform: 'win32' } })
+  expect(r.autostart.supported).toBe(false)
+  if (r.autostart.supported) return
+  expect(r.autostart.reason).toContain('暂不支持')
+  // 其余各项不受影响
+  expect(r.items.find((i) => i.key === 'wingline.version')).toMatchObject({ value: '1' })
 })

@@ -1,6 +1,7 @@
 import fs from 'node:fs'
+import path from 'node:path'
 import { expect, test } from 'vitest'
-import { Router } from '../../src/server/http.js'
+import { Router, statusOf } from '../../src/server/http.js'
 import { draftPathOf, fileHash } from '../../src/spec/draft.js'
 import { DUO_YAML } from '../spec/helpers.js'
 import {
@@ -16,37 +17,40 @@ import { cachedOrca } from '../../src/view/snapshot.js'
 import { FakeOrca, seedRunningTeam } from '../commands/fake-client.js'
 import { WinglineError } from '../../src/errors.js'
 
+/** 全部写路由的样例请求（唯一真相源）：加路由只补一行表项，sampleRequest 保持一行查表。 */
+const ROUTE_SAMPLES: Record<string, { path: string; body: Record<string, unknown> }> = {
+  '/api/teams/:team/send': { path: '/api/teams/duo/send', body: { post: 'builder', message: 'hello from console' } },
+  '/api/teams/:team/tasks': { path: '/api/teams/duo/tasks', body: { title: 'sample task' } },
+  '/api/teams/:team/tasks/:id/escalate': { path: '/api/teams/duo/tasks/task-1/escalate', body: { reason: 'need help' } },
+  '/api/teams/:team/tasks/:id/reassign': { path: '/api/teams/duo/tasks/task-1/reassign', body: { to: 'builder' } },
+  '/api/teams/:team/tasks/:id/recover': { path: '/api/teams/duo/tasks/task-1/recover', body: {} },
+  '/api/teams/:team/tasks/:id/claim': { path: '/api/teams/duo/tasks/task-1/claim', body: { as: 'builder@duo' } },
+  '/api/teams/:team/tasks/:id/release': { path: '/api/teams/duo/tasks/task-1/release', body: { as: 'builder@duo' } },
+  '/api/teams/:team/tasks/:id/plan': { path: '/api/teams/duo/tasks/task-1/plan', body: { as: 'builder@duo', text: '先读代码再改' } },
+  '/api/teams/:team/tasks/:id/start': { path: '/api/teams/duo/tasks/task-1/start', body: { as: 'builder@duo' } },
+  '/api/teams/:team/tasks/:id/done': { path: '/api/teams/duo/tasks/task-1/done', body: { as: 'builder@duo' } },
+  '/api/teams/:team/gates/:gateId/resolve': { path: '/api/teams/duo/gates/gate-1/resolve', body: { resolution: 'proceed' } },
+  '/api/teams/:team/posts/:post/freeze': { path: '/api/teams/duo/posts/builder/freeze', body: { reason: 'maintenance' } },
+  '/api/teams/:team/posts/:post/unfreeze': { path: '/api/teams/duo/posts/builder/unfreeze', body: {} },
+  '/api/teams/:team/posts/:post/hush': { path: '/api/teams/duo/posts/builder/hush', body: { forMs: 60000 } },
+  '/api/teams/:team/posts/:post/unhush': { path: '/api/teams/duo/posts/builder/unhush', body: {} },
+  '/api/teams/:team/questions/:messageId/reply': { path: '/api/teams/duo/questions/msg-1/reply', body: { body: 'answer' } },
+  '/api/teams/:team/spec': { path: '/api/teams/duo/spec', body: { yaml: 'version: 1\n', baseHash: null, running: true } },
+  '/api/teams/:team/spec/discard-draft': { path: '/api/teams/duo/spec/discard-draft', body: {} },
+  '/api/teams/:team/up': { path: '/api/teams/duo/up', body: { draft: true } },
+  '/api/teams/:team/down': { path: '/api/teams/duo/down', body: { close: true } },
+  '/api/teams/:team/restore': { path: '/api/teams/duo/restore', body: {} },
+  '/api/teams/:team/dispatcher/up': { path: '/api/teams/duo/dispatcher/up', body: {} },
+  '/api/teams/:team/dispatcher/down': { path: '/api/teams/duo/dispatcher/down', body: { close: true } },
+  '/api/teams': { path: '/api/teams', body: { mode: 'template', name: 'my-team', repo: '/tmp/repo', template: 'duo' } },
+  '/api/autostart/install': { path: '/api/autostart/install', body: { waitOrca: '15m' } },
+  '/api/autostart/uninstall': { path: '/api/autostart/uninstall', body: {} },
+}
+
 function sampleRequest(pattern: string): { path: string; body: Record<string, unknown> } {
-  switch (pattern) {
-    case '/api/teams/:team/send':
-      return { path: '/api/teams/duo/send', body: { post: 'builder', message: 'hello from console' } }
-    case '/api/teams/:team/tasks':
-      return { path: '/api/teams/duo/tasks', body: { title: 'sample task' } }
-    case '/api/teams/:team/tasks/:id/escalate':
-      return { path: '/api/teams/duo/tasks/task-1/escalate', body: { reason: 'need help' } }
-    case '/api/teams/:team/tasks/:id/reassign':
-      return { path: '/api/teams/duo/tasks/task-1/reassign', body: { to: 'builder' } }
-    case '/api/teams/:team/tasks/:id/recover':
-      return { path: '/api/teams/duo/tasks/task-1/recover', body: {} }
-    case '/api/teams/:team/gates/:gateId/resolve':
-      return { path: '/api/teams/duo/gates/gate-1/resolve', body: { resolution: 'proceed' } }
-    case '/api/teams/:team/posts/:post/freeze':
-      return { path: '/api/teams/duo/posts/builder/freeze', body: { reason: 'maintenance' } }
-    case '/api/teams/:team/posts/:post/unfreeze':
-      return { path: '/api/teams/duo/posts/builder/unfreeze', body: {} }
-    case '/api/teams/:team/posts/:post/hush':
-      return { path: '/api/teams/duo/posts/builder/hush', body: { forMs: 60000 } }
-    case '/api/teams/:team/posts/:post/unhush':
-      return { path: '/api/teams/duo/posts/builder/unhush', body: {} }
-    case '/api/teams/:team/questions/:messageId/reply':
-      return { path: '/api/teams/duo/questions/msg-1/reply', body: { body: 'answer' } }
-    case '/api/teams/:team/spec':
-      return { path: '/api/teams/duo/spec', body: { yaml: 'version: 1\n', baseHash: null, running: true } }
-    case '/api/teams/:team/spec/discard-draft':
-      return { path: '/api/teams/duo/spec/discard-draft', body: {} }
-    default:
-      throw new Error(`unknown pattern ${pattern}`)
-  }
+  const sample = ROUTE_SAMPLES[pattern]
+  if (!sample) throw new Error(`unknown pattern ${pattern}`)
+  return sample
 }
 
 function makeRecordingCmds() {
@@ -62,6 +66,11 @@ function makeRecordingCmds() {
     reassignTask: record('reassignTask', { id: 'task-1', to: 'builder@duo' }) as any,
     recoverTask: record('recoverTask', { id: 'task-1' }) as any,
     resolveGate: record('resolveGate', { gateId: 'gate-1' }) as any,
+    claimTask: record('claimTask') as any,
+    releaseTask: record('releaseTask') as any,
+    planTask: record('planTask') as any,
+    startTask: record('startTask', { delivery: 'self' }) as any,
+    doneTask: record('doneTask', { outcome: 'done' }) as any,
     freezePostCmd: record('freezePostCmd', {}) as any,
     unfreezePostCmd: record('unfreezePostCmd', {}) as any,
     hushCmd: record('hushCmd', {}) as any,
@@ -69,6 +78,14 @@ function makeRecordingCmds() {
     dispatcherReply: record('dispatcherReply', {}) as any,
     saveSpecCmd: record('saveSpecCmd', { wrote: 'draft', path: '/t/team.draft.yaml', hash: 'h' }) as any,
     discardDraftCmd: record('discardDraftCmd', { discarded: false }) as any,
+    up: record('up', { team: 'duo', posts: [], run: {} }) as any,
+    down: record('down', { team: 'duo', posts: [] }) as any,
+    restore: record('restore', { team: 'duo', dryRun: false, posts: [], dispatcher: {}, tasks: [] }) as any,
+    dispatcherUp: record('dispatcherUp', { address: 'dispatcher@duo', outcome: 'started' }) as any,
+    dispatcherDown: record('dispatcherDown', { address: 'dispatcher@duo', outcome: 'noop' }) as any,
+    initTeamCmd: record('initTeamCmd', { team: 'duo', specPath: '/t/duo/team.yaml', created: true }) as any,
+    autostartInstall: record('autostartInstall', { platform: 'darwin', file: '/f', command: 'c', logPath: '/l', waitOrca: '15m' }) as any,
+    autostartUninstall: record('autostartUninstall', { file: '/f', removed: true }) as any,
   }
   const audited = auditedCommands(raw, CONSOLE_AUDIT, { prefix: 'console:', actor: 'human' })
   return { cmds: audited, calls, raw }
@@ -145,7 +162,10 @@ test('an uncertain send returns error with retry and retryRequest', async () => 
   })
 })
 
-test.each(WRITE_ROUTES)('$pattern：审计行带 console: 前缀、actor human', async (spec) => {
+/** 审计前缀循环按 listAudit(':team') 断言，只适用于带 :team 参数的路由；init/autostart 的审计另有专门用例。 */
+const TEAM_SCOPED_ROUTES = WRITE_ROUTES.filter((s) => s.check.includes('team'))
+
+test.each(TEAM_SCOPED_ROUTES)('$pattern：审计行带 console: 前缀；actor 取 as（无 as 记 human）', async (spec) => {
   const o = new FakeOrca()
   const { deps } = seedRunningTeam(o)
   deps.registry.insertTaskExt({ taskId: 'task-1', team: 'duo', tags: [], kind: 'work' })
@@ -167,7 +187,7 @@ test.each(WRITE_ROUTES)('$pattern：审计行带 console: 前缀、actor human',
   const audit = deps.registry.listAudit('duo')
   const last = audit.at(-1)!
   expect(last.command).toMatch(/^console: /)
-  expect(last.actor).toBe('human')
+  expect(last.actor).toBe(typeof sample.body.as === 'string' ? sample.body.as : 'human')
 })
 
 test.each(WRITE_ROUTES)('$pattern：原样重试体（原字段 + retryRequest）被接受，不撞 unknown_field', async (spec) => {
@@ -373,7 +393,7 @@ test('gates resolve 的 reassign=123（非字符串） → 400 invalid_param', a
   })
 })
 
-test('retryRequest 下传契约：仅 send、createTask、escalateTask 下传，其余 10 条不向下传', async () => {
+test('retryRequest 下传契约：仅 send、createTask、escalateTask 下传，其余 23 条不向下传', async () => {
   const o = new FakeOrca()
   const { deps } = seedRunningTeam(o)
   deps.registry.insertTaskExt({ taskId: 'task-1', team: 'duo', tags: [], kind: 'work' })
@@ -401,6 +421,11 @@ test('retryRequest 下传契约：仅 send、createTask、escalateTask 下传，
   expect(calls.reassignTask!.at(-1)?.retryRequest).toBeUndefined()
   expect(calls.recoverTask!.at(-1)?.retryRequest).toBeUndefined()
   expect(calls.resolveGate!.at(-1)?.retryRequest).toBeUndefined()
+  expect(calls.claimTask!.at(-1)?.retryRequest).toBeUndefined()
+  expect(calls.releaseTask!.at(-1)?.retryRequest).toBeUndefined()
+  expect(calls.planTask!.at(-1)?.retryRequest).toBeUndefined()
+  expect(calls.startTask!.at(-1)?.retryRequest).toBeUndefined()
+  expect(calls.doneTask!.at(-1)?.retryRequest).toBeUndefined()
   expect(calls.freezePostCmd!.at(-1)?.retryRequest).toBeUndefined()
   expect(calls.unfreezePostCmd!.at(-1)?.retryRequest).toBeUndefined()
   expect(calls.hushCmd!.at(-1)?.retryRequest).toBeUndefined()
@@ -408,6 +433,106 @@ test('retryRequest 下传契约：仅 send、createTask、escalateTask 下传，
   expect(calls.dispatcherReply!.at(-1)?.retryRequest).toBeUndefined()
   expect(calls.saveSpecCmd!.at(-1)?.retryRequest).toBeUndefined()
   expect(calls.discardDraftCmd!.at(-1)?.retryRequest).toBeUndefined()
+  expect(calls.up!.at(-1)?.retryRequest).toBeUndefined()
+  expect(calls.down!.at(-1)?.retryRequest).toBeUndefined()
+  expect(calls.restore!.at(-1)?.retryRequest).toBeUndefined()
+  expect(calls.dispatcherUp!.at(-1)?.retryRequest).toBeUndefined()
+  expect(calls.dispatcherDown!.at(-1)?.retryRequest).toBeUndefined()
+  expect(calls.initTeamCmd!.at(-1)?.retryRequest).toBeUndefined()
+  expect(calls.autostartInstall!.at(-1)?.retryRequest).toBeUndefined()
+  expect(calls.autostartUninstall!.at(-1)?.retryRequest).toBeUndefined()
+})
+
+test.each([
+  ['/api/teams/:team/up', '/api/teams/duo/up', { draft: true }, 'up', { team: 'duo', draft: true, newRun: undefined, adoptRun: undefined }],
+  ['/api/teams/:team/down', '/api/teams/duo/down', { close: true }, 'down', { team: 'duo', close: true }],
+  ['/api/teams/:team/restore', '/api/teams/duo/restore', { dryRun: true, noTasks: true, sessions: { builder: 's-1' } }, 'restore', { team: 'duo', dryRun: true, noTasks: true, sessions: { builder: 's-1' } }],
+  ['/api/teams/:team/dispatcher/up', '/api/teams/duo/dispatcher/up', {}, 'dispatcherUp', { team: 'duo' }],
+  ['/api/teams/:team/dispatcher/down', '/api/teams/duo/dispatcher/down', {}, 'dispatcherDown', { team: 'duo', close: true }],
+  ['/api/teams', '/api/teams', { mode: 'template', name: 'my-team', repo: '/tmp/repo', template: 'duo' }, 'initTeamCmd', { mode: 'template', name: 'my-team', repo: '/tmp/repo', template: 'duo', dir: undefined, specPath: undefined }],
+  ['/api/autostart/install', '/api/autostart/install', { waitOrca: '15m' }, 'autostartInstall', { waitOrca: '15m' }],
+  ['/api/autostart/uninstall', '/api/autostart/uninstall', {}, 'autostartUninstall', undefined],
+])('写路由 %s 调到了对应的 core 命令', async (_pattern, path, body, name, expected) => {
+  const o = new FakeOrca()
+  const { deps } = seedRunningTeam(o)
+  const d = { ...deps, orca: cachedOrca(o) }
+  const { cmds, calls } = makeRecordingCmds()
+  const r = new Router()
+  registerWriteRoutes(r, cmds)
+
+  const route = r.match('POST', path)!
+  const res = await route.h({ deps: d, params: route.params, query: new URLSearchParams(), body })
+  expect(res).toBeDefined()
+  expect(calls[name]!.at(-1)).toEqual(expected)
+})
+
+/** 任务执行流 5 条路由共用的测试底座：录制命令 + 可复用的 POST。 */
+function taskFlowHarness(verb: string) {
+  const o = new FakeOrca()
+  const { deps } = seedRunningTeam(o)
+  deps.registry.insertTaskExt({ taskId: 'task-1', team: 'duo', tags: [], kind: 'work' })
+  const d = { ...deps, orca: cachedOrca(o) }
+  const { cmds, calls } = makeRecordingCmds()
+  const r = new Router()
+  registerWriteRoutes(r, cmds)
+  const route = r.match('POST', `/api/teams/duo/tasks/task-1/${verb}`)!
+  const post = (body: unknown) => route.h({ deps: d, params: route.params, query: new URLSearchParams(), body })
+  return { post, calls }
+}
+
+test.each([
+  ['claim', {}],
+  ['release', {}],
+  ['plan', { text: '先读代码再改' }],
+  ['start', {}],
+  ['done', {}],
+])('任务执行流 %s 的路由可达并带上了 as', async (verb, extra) => {
+  const { post, calls } = taskFlowHarness(verb)
+  const res = await post({ as: 'builder@duo', ...extra })
+  expect(res).toBeDefined()
+  expect(calls[`${verb}Task`]!.at(-1)).toMatchObject({ id: 'task-1', as: 'builder@duo', ...extra })
+})
+
+test('as 不带 @ 时按本团队岗位解释成完整地址', async () => {
+  const { post, calls } = taskFlowHarness('claim')
+  await post({ as: 'builder' })
+  expect(calls.claimTask!.at(-1)).toMatchObject({ id: 'task-1', as: 'builder@duo' })
+})
+
+test('as 必须属于该团队，跨团队的 as 被拒绝', async () => {
+  const { post, calls } = taskFlowHarness('claim')
+  await expect(post({ as: 'builder@other' })).rejects.toMatchObject({ kind: 'input', code: 'invalid_param' })
+  expect(calls.claimTask).toBeUndefined()
+})
+
+test('as 缺省或格式不对时报 invalid_param', async () => {
+  const { post } = taskFlowHarness('claim')
+  await expect(post({})).rejects.toMatchObject({ kind: 'input', code: 'invalid_param' })
+  await expect(post({ as: 'bad name' })).rejects.toMatchObject({ kind: 'input', code: 'invalid_param' })
+})
+
+test('plan 的 text 缺省或为空白时报 invalid_param', async () => {
+  const { post, calls } = taskFlowHarness('plan')
+  await expect(post({ as: 'builder@duo' })).rejects.toMatchObject({ kind: 'input', code: 'invalid_param' })
+  await expect(post({ as: 'builder@duo', text: '   ' })).rejects.toMatchObject({ kind: 'input', code: 'invalid_param' })
+  expect(calls.planTask).toBeUndefined()
+})
+
+test('未启动的团队启动调度员时给出可读提示，而不是 500', async () => {
+  const o = new FakeOrca()
+  const { deps } = seedRunningTeam(o)
+  deps.registry.setRunId('duo', null)
+  const d = { ...deps, orca: cachedOrca(o) }
+  const r = new Router()
+  registerWriteRoutes(r, consoleCommands())
+
+  const route = r.match('POST', '/api/teams/duo/dispatcher/up')!
+  const err = await route.h({ deps: d, params: route.params, query: new URLSearchParams(), body: {} }).then(
+    () => undefined,
+    (e) => e,
+  )
+  expect(err).toMatchObject({ kind: 'input', code: 'run_not_ready' })
+  expect(statusOf(err)).toBe(400)
 })
 
 function realSpecHarness(over: { running?: boolean } = {}) {
@@ -500,4 +625,140 @@ test('a UUID and an Orca-style id are accepted as retryRequest', async () => {
   const h = routeHarness('/api/teams/:team/send')
   await expect(h.call('6f1c2a9e-3b4d-4e5f-8a7b-0c1d2e3f4a5b')).resolves.toBeDefined()
   await expect(h.call('req-1')).resolves.toBeDefined()
+})
+
+/** /api/teams 走真实 initTeamCmd：写进 deps.home 的临时目录并登记注册表（只写文件，不碰系统服务）。 */
+function realTeamHarness() {
+  const o = new FakeOrca()
+  const { deps } = seedRunningTeam(o)
+  const d = { ...deps, orca: cachedOrca(o) }
+  const r = new Router()
+  registerWriteRoutes(r, consoleCommands())
+  const post = (p: string, body: unknown) => {
+    const route = r.match('POST', p)!
+    return route.h({ deps: d, params: route.params, query: new URLSearchParams(), body }) as Promise<any>
+  }
+  return { post, deps }
+}
+
+test('POST /api/teams 用模板新建团队并落 console: init 审计', async () => {
+  const { post, deps } = realTeamHarness()
+  const res = await post('/api/teams', { mode: 'template', name: 'my-team', repo: '/tmp/repo', template: 'duo' })
+  expect(res).toMatchObject({ team: 'my-team', created: true })
+  expect(deps.registry.getTeam('my-team')?.specPath).toBe(path.join(deps.home, 'teams', 'my-team', 'team.yaml'))
+  expect(deps.registry.listAudit('my-team').at(-1)).toMatchObject({ command: 'console: init', actor: 'human' })
+})
+
+test('POST /api/teams 拒绝未知字段与非法模板', async () => {
+  const { post } = realTeamHarness()
+  await expect(post('/api/teams', { mode: 'template', name: 'x', repo: '/r', template: 'nope' })).rejects.toMatchObject({ kind: 'input', code: 'invalid_param' })
+  await expect(post('/api/teams', { mode: 'template', name: 'x', repo: '/r', what: 1 })).rejects.toMatchObject({ kind: 'input', code: 'unknown_field' })
+})
+
+test('POST /api/teams 的非法 mode 在路由层即被拒绝，不会调到命令', async () => {
+  const o = new FakeOrca()
+  const { deps } = seedRunningTeam(o)
+  const d = { ...deps, orca: cachedOrca(o) }
+  const { cmds, calls } = makeRecordingCmds()
+  const r = new Router()
+  registerWriteRoutes(r, cmds)
+  const route = r.match('POST', '/api/teams')!
+  await expect(
+    route.h({ deps: d, params: route.params, query: new URLSearchParams(), body: { mode: 'bogus', name: 'x', repo: '/r' } }),
+  ).rejects.toMatchObject({ kind: 'input', code: 'invalid_param' })
+  expect(calls.initTeamCmd).toBeUndefined()
+})
+
+test('POST /api/autostart/install 与 /uninstall 路由可达并落 console: 审计（team 记 -）', async () => {
+  const o = new FakeOrca()
+  const { deps } = seedRunningTeam(o)
+  const d = { ...deps, orca: cachedOrca(o) }
+  const { cmds, calls } = makeRecordingCmds()
+  const r = new Router()
+  registerWriteRoutes(r, cmds)
+  const post = (p: string, body: unknown) => {
+    const route = r.match('POST', p)!
+    return route.h({ deps: d, params: route.params, query: new URLSearchParams(), body }) as Promise<any>
+  }
+
+  await post('/api/autostart/install', { waitOrca: '15m' })
+  await post('/api/autostart/uninstall', {})
+  expect(calls.autostartInstall!.at(-1)).toEqual({ waitOrca: '15m' })
+  expect(calls.autostartUninstall).toEqual([undefined])
+  expect(deps.registry.listAudit('-').map((row) => row.command)).toEqual(['console: autostart install', 'console: autostart uninstall'])
+})
+
+/** 类型校验用例的底座：录制命令 + 任意 body 的 POST。 */
+function typeHarness(path: string) {
+  const o = new FakeOrca()
+  const { deps } = seedRunningTeam(o)
+  deps.registry.insertTaskExt({ taskId: 'task-1', team: 'duo', tags: [], kind: 'work' })
+  deps.registry.recordGate('gate-1', 'duo', 'task-1')
+  const d = { ...deps, orca: cachedOrca(o) }
+  const { cmds, calls } = makeRecordingCmds()
+  const r = new Router()
+  registerWriteRoutes(r, cmds)
+  const route = r.match('POST', path)!
+  const post = (body: unknown) => route.h({ deps: d, params: route.params, query: new URLSearchParams(), body })
+  const called = () => Object.values(calls).reduce((n, a) => n + (a?.length ?? 0), 0)
+  return { post, called }
+}
+
+/** 请求体字段类型不对的用例：路径 + body。 */
+const BAD_BODIES: Array<[string, Record<string, unknown>]> = [
+  ['/api/teams/duo/send', { post: 'builder', message: 123 }],
+  ['/api/teams/duo/tasks', { title: 123 }],
+  ['/api/teams/duo/tasks', { title: 't', post: 123 }],
+  ['/api/teams/duo/tasks', { title: 't', tags: 'a,b' }],
+  ['/api/teams/duo/tasks', { title: 't', tags: ['a', 1] }],
+  ['/api/teams/duo/tasks', { title: 't', parent: 123 }],
+  ['/api/teams/duo/tasks/task-1/escalate', { reason: 123 }],
+  ['/api/teams/duo/tasks/task-1/escalate', { reason: 'x', reopen: 'yes' }],
+  ['/api/teams/duo/gates/gate-1/resolve', { resolution: 123 }],
+  ['/api/teams/duo/posts/builder/freeze', { reason: 123 }],
+  ['/api/teams/duo/posts/builder/hush', { forMs: '60000' }],
+  ['/api/teams/duo/questions/msg-1/reply', { body: 123 }],
+  ['/api/teams/duo/questions/msg-1/reply', { body: 'x', again: 'yes' }],
+  ['/api/teams/duo/up', { draft: 'yes' }],
+  ['/api/teams/duo/up', { newRun: 1 }],
+  ['/api/teams/duo/up', { adoptRun: 123 }],
+  ['/api/teams/duo/down', { close: 'false' }],
+  ['/api/teams/duo/dispatcher/down', { close: 'false' }],
+  ['/api/teams/duo/restore', { dryRun: 'true' }],
+  ['/api/teams/duo/restore', { noTasks: 1 }],
+  ['/api/teams/duo/restore', { sessions: 'abc' }],
+  ['/api/teams/duo/restore', { sessions: { builder: 123 } }],
+  ['/api/teams/duo/restore', { sessions: ['builder'] }],
+  ['/api/teams', { mode: 'template', name: 'x', repo: 123, template: 'duo' }],
+  ['/api/teams', { mode: 'template', name: 'x', repo: '/r', template: 'duo', dir: 123 }],
+  ['/api/teams', { mode: 'import', specPath: 123 }],
+  ['/api/teams', { mode: 'template', name: 123, repo: '/r', template: 'duo' }],
+  ['/api/autostart/install', { waitOrca: 15 }],
+]
+
+test.each(BAD_BODIES)('%s 的 %j → 400 invalid_param，命令不被调用', async (path, body) => {
+  const { post, called } = typeHarness(path)
+  const err = await post(body).then(
+    () => undefined,
+    (e) => e,
+  )
+  expect(err).toMatchObject({ kind: 'input', code: 'invalid_param' })
+  expect(statusOf(err)).toBe(400)
+  expect(called()).toBe(0)
+})
+
+/** 必填字段缺失：过去会 500 或空跑，现在一律 400。 */
+const MISSING_REQUIRED: Array<[string, Record<string, unknown>]> = [
+  ['/api/teams/duo/send', { post: 'builder' }],
+  ['/api/teams/duo/tasks', {}],
+  ['/api/teams/duo/tasks/task-1/escalate', {}],
+  ['/api/teams/duo/gates/gate-1/resolve', {}],
+  ['/api/teams/duo/posts/builder/freeze', {}],
+  ['/api/teams/duo/questions/msg-1/reply', {}],
+]
+
+test.each(MISSING_REQUIRED)('%s 缺必填字段 → 400 invalid_param', async (path, body) => {
+  const { post, called } = typeHarness(path)
+  await expect(post(body)).rejects.toMatchObject({ kind: 'input', code: 'invalid_param' })
+  expect(called()).toBe(0)
 })
