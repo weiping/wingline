@@ -687,3 +687,78 @@ test('POST /api/autostart/install 与 /uninstall 路由可达并落 console: 审
   expect(calls.autostartUninstall).toEqual([undefined])
   expect(deps.registry.listAudit('-').map((row) => row.command)).toEqual(['console: autostart install', 'console: autostart uninstall'])
 })
+
+/** 类型校验用例的底座：录制命令 + 任意 body 的 POST。 */
+function typeHarness(path: string) {
+  const o = new FakeOrca()
+  const { deps } = seedRunningTeam(o)
+  deps.registry.insertTaskExt({ taskId: 'task-1', team: 'duo', tags: [], kind: 'work' })
+  deps.registry.recordGate('gate-1', 'duo', 'task-1')
+  const d = { ...deps, orca: cachedOrca(o) }
+  const { cmds, calls } = makeRecordingCmds()
+  const r = new Router()
+  registerWriteRoutes(r, cmds)
+  const route = r.match('POST', path)!
+  const post = (body: unknown) => route.h({ deps: d, params: route.params, query: new URLSearchParams(), body })
+  const called = () => Object.values(calls).reduce((n, a) => n + (a?.length ?? 0), 0)
+  return { post, called }
+}
+
+/** 请求体字段类型不对的用例：路径 + body。 */
+const BAD_BODIES: Array<[string, Record<string, unknown>]> = [
+  ['/api/teams/duo/send', { post: 'builder', message: 123 }],
+  ['/api/teams/duo/tasks', { title: 123 }],
+  ['/api/teams/duo/tasks', { title: 't', post: 123 }],
+  ['/api/teams/duo/tasks', { title: 't', tags: 'a,b' }],
+  ['/api/teams/duo/tasks', { title: 't', tags: ['a', 1] }],
+  ['/api/teams/duo/tasks', { title: 't', parent: 123 }],
+  ['/api/teams/duo/tasks/task-1/escalate', { reason: 123 }],
+  ['/api/teams/duo/tasks/task-1/escalate', { reason: 'x', reopen: 'yes' }],
+  ['/api/teams/duo/gates/gate-1/resolve', { resolution: 123 }],
+  ['/api/teams/duo/posts/builder/freeze', { reason: 123 }],
+  ['/api/teams/duo/posts/builder/hush', { forMs: '60000' }],
+  ['/api/teams/duo/questions/msg-1/reply', { body: 123 }],
+  ['/api/teams/duo/questions/msg-1/reply', { body: 'x', again: 'yes' }],
+  ['/api/teams/duo/up', { draft: 'yes' }],
+  ['/api/teams/duo/up', { newRun: 1 }],
+  ['/api/teams/duo/up', { adoptRun: 123 }],
+  ['/api/teams/duo/down', { close: 'false' }],
+  ['/api/teams/duo/dispatcher/down', { close: 'false' }],
+  ['/api/teams/duo/restore', { dryRun: 'true' }],
+  ['/api/teams/duo/restore', { noTasks: 1 }],
+  ['/api/teams/duo/restore', { sessions: 'abc' }],
+  ['/api/teams/duo/restore', { sessions: { builder: 123 } }],
+  ['/api/teams/duo/restore', { sessions: ['builder'] }],
+  ['/api/teams', { mode: 'template', name: 'x', repo: 123, template: 'duo' }],
+  ['/api/teams', { mode: 'template', name: 'x', repo: '/r', template: 'duo', dir: 123 }],
+  ['/api/teams', { mode: 'import', specPath: 123 }],
+  ['/api/teams', { mode: 'template', name: 123, repo: '/r', template: 'duo' }],
+  ['/api/autostart/install', { waitOrca: 15 }],
+]
+
+test.each(BAD_BODIES)('%s 的 %j → 400 invalid_param，命令不被调用', async (path, body) => {
+  const { post, called } = typeHarness(path)
+  const err = await post(body).then(
+    () => undefined,
+    (e) => e,
+  )
+  expect(err).toMatchObject({ kind: 'input', code: 'invalid_param' })
+  expect(statusOf(err)).toBe(400)
+  expect(called()).toBe(0)
+})
+
+/** 必填字段缺失：过去会 500 或空跑，现在一律 400。 */
+const MISSING_REQUIRED: Array<[string, Record<string, unknown>]> = [
+  ['/api/teams/duo/send', { post: 'builder' }],
+  ['/api/teams/duo/tasks', {}],
+  ['/api/teams/duo/tasks/task-1/escalate', {}],
+  ['/api/teams/duo/gates/gate-1/resolve', {}],
+  ['/api/teams/duo/posts/builder/freeze', {}],
+  ['/api/teams/duo/questions/msg-1/reply', {}],
+]
+
+test.each(MISSING_REQUIRED)('%s 缺必填字段 → 400 invalid_param', async (path, body) => {
+  const { post, called } = typeHarness(path)
+  await expect(post(body)).rejects.toMatchObject({ kind: 'input', code: 'invalid_param' })
+  expect(called()).toBe(0)
+})

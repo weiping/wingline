@@ -65,6 +65,37 @@ export interface WriteRouteSpec {
   call: (cmds: WriteCommands, ctx: HandlerContext) => Promise<unknown>
 }
 
+/** 布尔开关：只收 true / false（缺省放行）。字符串 "false" 不再当成真值。 */
+function checkBool(key: string, val: unknown): void {
+  if (val !== undefined && typeof val !== 'boolean') {
+    throw new WinglineError('input', 'invalid_param', `参数 ${key}=${val} 不合法`)
+  }
+}
+
+/** 毫秒数：只收有限数字（缺省放行）。 */
+function checkNumber(key: string, val: unknown): void {
+  if (val !== undefined && (typeof val !== 'number' || !Number.isFinite(val))) {
+    throw new WinglineError('input', 'invalid_param', `参数 ${key}=${val} 不合法`)
+  }
+}
+
+/** 岗位 → 会话 id 的字符串映射：对象、且每个值都是字符串。 */
+function parseSessions(raw: unknown): Record<string, string> | undefined {
+  if (raw === undefined) return undefined
+  const ok = !!raw && typeof raw === 'object' && !Array.isArray(raw) && Object.values(raw).every((v) => typeof v === 'string')
+  if (!ok) throw new WinglineError('input', 'invalid_param', '参数 sessions 不合法')
+  return raw as Record<string, string>
+}
+
+/** 标签：字符串数组。 */
+function parseTags(raw: unknown): string[] | undefined {
+  if (raw === undefined) return undefined
+  if (!Array.isArray(raw) || !raw.every((t) => typeof t === 'string')) {
+    throw new WinglineError('input', 'invalid_param', '参数 tags 不合法')
+  }
+  return raw as string[]
+}
+
 export const WRITE_ROUTES: WriteRouteSpec[] = [
   {
     pattern: '/api/teams/:team/send',
@@ -72,6 +103,7 @@ export const WRITE_ROUTES: WriteRouteSpec[] = [
     fields: ['post', 'message', 'retryRequest'],
     call: async (cmds, ctx) => {
       checkParam('post', ctx.body.post)
+      checkParam('message', ctx.body.message)
       const address = postAddress(ctx.body.post, ctx.params.team!)
       return cmds.send(ctx.deps, { address, message: ctx.body.message, retryRequest: ctx.body.retryRequest })
     },
@@ -82,9 +114,10 @@ export const WRITE_ROUTES: WriteRouteSpec[] = [
     fields: ['title', 'post', 'tags', 'parent', 'retryRequest'],
     call: async (cmds, ctx) => {
       const { title, post, tags, parent, retryRequest } = ctx.body
-      if (post) checkParam('post', post)
-      if (parent) checkParam('id', parent)
-      return cmds.createTask(ctx.deps, { team: ctx.params.team!, title, post: post ? postAddress(post, ctx.params.team!) : undefined, tags, parent, retryRequest })
+      checkParam('title', title)
+      if (post !== undefined) checkParam('post', post)
+      if (parent !== undefined) checkParam('id', parent)
+      return cmds.createTask(ctx.deps, { team: ctx.params.team!, title, post: post ? postAddress(post, ctx.params.team!) : undefined, tags: parseTags(tags), parent, retryRequest })
     },
   },
   {
@@ -93,6 +126,8 @@ export const WRITE_ROUTES: WriteRouteSpec[] = [
     fields: ['reason', 'reopen', 'retryRequest'],
     call: async (cmds, ctx) => {
       const { reason, reopen, retryRequest } = ctx.body
+      checkParam('reason', reason)
+      checkBool('reopen', reopen)
       return cmds.escalateTask(ctx.deps, { id: ctx.params.id!, reason, reopen, retryRequest })
     },
   },
@@ -153,7 +188,8 @@ export const WRITE_ROUTES: WriteRouteSpec[] = [
     fields: ['resolution', 'reassign', 'retryRequest'],
     call: async (cmds, ctx) => {
       const { resolution, reassign } = ctx.body
-      if (reassign !== undefined && typeof reassign !== 'string') checkParam('post', reassign)
+      checkParam('resolution', resolution)
+      if (reassign !== undefined) checkParam('reassign', reassign)
       const target = reassign ? (reassign.includes('@') ? reassign : (checkParam('post', reassign), postAddress(reassign, ctx.params.team!))) : undefined
       return cmds.resolveGate(ctx.deps, { gateId: ctx.params.gateId!, resolution, reassign: target })
     },
@@ -162,7 +198,10 @@ export const WRITE_ROUTES: WriteRouteSpec[] = [
     pattern: '/api/teams/:team/posts/:post/freeze',
     check: ['team', 'post'],
     fields: ['reason', 'retryRequest'],
-    call: async (cmds, ctx) => cmds.freezePostCmd(ctx.deps, { address: postAddress(ctx.params.post!, ctx.params.team!), reason: ctx.body.reason }),
+    call: async (cmds, ctx) => {
+      checkParam('reason', ctx.body.reason)
+      return cmds.freezePostCmd(ctx.deps, { address: postAddress(ctx.params.post!, ctx.params.team!), reason: ctx.body.reason })
+    },
   },
   {
     pattern: '/api/teams/:team/posts/:post/unfreeze',
@@ -174,7 +213,10 @@ export const WRITE_ROUTES: WriteRouteSpec[] = [
     pattern: '/api/teams/:team/posts/:post/hush',
     check: ['team', 'post'],
     fields: ['forMs', 'retryRequest'],
-    call: async (cmds, ctx) => cmds.hushCmd(ctx.deps, { address: postAddress(ctx.params.post!, ctx.params.team!), forMs: ctx.body.forMs }),
+    call: async (cmds, ctx) => {
+      checkNumber('forMs', ctx.body.forMs)
+      return cmds.hushCmd(ctx.deps, { address: postAddress(ctx.params.post!, ctx.params.team!), forMs: ctx.body.forMs })
+    },
   },
   {
     pattern: '/api/teams/:team/posts/:post/unhush',
@@ -188,6 +230,8 @@ export const WRITE_ROUTES: WriteRouteSpec[] = [
     fields: ['body', 'again', 'retryRequest'],
     call: async (cmds, ctx) => {
       const { body, again } = ctx.body
+      checkParam('body', body)
+      checkBool('again', again)
       return cmds.dispatcherReply(ctx.deps, { team: ctx.params.team!, messageId: ctx.params.messageId!, body, again })
     },
   },
@@ -213,19 +257,33 @@ export const WRITE_ROUTES: WriteRouteSpec[] = [
     pattern: '/api/teams/:team/up',
     check: ['team'],
     fields: ['draft', 'newRun', 'adoptRun', 'retryRequest'],
-    call: async (cmds, ctx) => cmds.up(ctx.deps, { team: ctx.params.team!, draft: ctx.body.draft, newRun: ctx.body.newRun, adoptRun: ctx.body.adoptRun }),
+    call: async (cmds, ctx) => {
+      const { draft, newRun, adoptRun } = ctx.body
+      checkBool('draft', draft)
+      checkBool('newRun', newRun)
+      if (adoptRun !== undefined) checkParam('adoptRun', adoptRun)
+      return cmds.up(ctx.deps, { team: ctx.params.team!, draft, newRun, adoptRun })
+    },
   },
   {
     pattern: '/api/teams/:team/down',
     check: ['team'],
     fields: ['close', 'retryRequest'],
-    call: async (cmds, ctx) => cmds.down(ctx.deps, { team: ctx.params.team!, close: !!ctx.body.close }),
+    call: async (cmds, ctx) => {
+      checkBool('close', ctx.body.close)
+      return cmds.down(ctx.deps, { team: ctx.params.team!, close: !!ctx.body.close })
+    },
   },
   {
     pattern: '/api/teams/:team/restore',
     check: ['team'],
     fields: ['dryRun', 'noTasks', 'sessions', 'retryRequest'],
-    call: async (cmds, ctx) => cmds.restore(ctx.deps, { team: ctx.params.team!, dryRun: !!ctx.body.dryRun, noTasks: !!ctx.body.noTasks, sessions: ctx.body.sessions }),
+    call: async (cmds, ctx) => {
+      const { dryRun, noTasks } = ctx.body
+      checkBool('dryRun', dryRun)
+      checkBool('noTasks', noTasks)
+      return cmds.restore(ctx.deps, { team: ctx.params.team!, dryRun: !!dryRun, noTasks: !!noTasks, sessions: parseSessions(ctx.body.sessions) })
+    },
   },
   {
     pattern: '/api/teams/:team/dispatcher/up',
@@ -237,7 +295,10 @@ export const WRITE_ROUTES: WriteRouteSpec[] = [
     pattern: '/api/teams/:team/dispatcher/down',
     check: ['team'],
     fields: ['close', 'retryRequest'],
-    call: async (cmds, ctx) => cmds.dispatcherDown(ctx.deps, { team: ctx.params.team!, close: ctx.body.close ?? true }),
+    call: async (cmds, ctx) => {
+      checkBool('close', ctx.body.close)
+      return cmds.dispatcherDown(ctx.deps, { team: ctx.params.team!, close: ctx.body.close ?? true })
+    },
   },
   {
     pattern: '/api/teams',
@@ -246,6 +307,9 @@ export const WRITE_ROUTES: WriteRouteSpec[] = [
     call: async (cmds, ctx) => {
       const { mode, name, repo, template, dir, specPath } = ctx.body
       if (mode !== 'template' && mode !== 'import') throw new WinglineError('input', 'invalid_param', '参数 mode 不合法')
+      for (const key of ['name', 'repo', 'template', 'dir', 'specPath'] as const) {
+        if (ctx.body[key] !== undefined) checkParam(key, ctx.body[key])
+      }
       return cmds.initTeamCmd(ctx.deps, { mode, name, repo, template, dir, specPath })
     },
   },
@@ -253,7 +317,10 @@ export const WRITE_ROUTES: WriteRouteSpec[] = [
     pattern: '/api/autostart/install',
     check: [],
     fields: ['waitOrca', 'retryRequest'],
-    call: async (cmds, ctx) => cmds.autostartInstall(ctx.deps, { waitOrca: ctx.body.waitOrca }),
+    call: async (cmds, ctx) => {
+      if (ctx.body.waitOrca !== undefined) checkParam('waitOrca', ctx.body.waitOrca)
+      return cmds.autostartInstall(ctx.deps, { waitOrca: ctx.body.waitOrca })
+    },
   },
   {
     pattern: '/api/autostart/uninstall',

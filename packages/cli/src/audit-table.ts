@@ -21,7 +21,7 @@ const id = (a: { id: string }) => a.id
 export const AUDIT: AuditTable<Commands> = {
   init: {
     command: 'init',
-    team: (_a, ctx) => (ctx.result as { team?: string } | undefined)?.team ?? '-',
+    team: byResult,
     summary: (a, ctx) => ({ mode: a.mode, template: a.template, created: (ctx.result as { created?: boolean } | undefined)?.created }),
   },
   up: {
