@@ -19,6 +19,19 @@ export default function activate(orca: OrcaWorkerApi): void {
     return { ok: true, home: d.home, teams: d.registry.listTeams().length }
   })
 
+  orca.panels.handle('probe.orca', async () => {
+    const d = shared()
+    try {
+      const status = await d.orca.status()
+      if (!status.reachable) return { reachable: false, version: null, terminals: 0, error: 'Orca 不可达' }
+      const version = await d.orca.version()
+      const terminals = await d.orca.terminalList()
+      return { reachable: true, version, terminals: terminals.length }
+    } catch (err) {
+      return { reachable: false, version: null, terminals: 0, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
   orca.panels.handle('teams.list', async () => {
     const teams = teamSummaries(shared())
     orca.panels.post('teams.changed', { teams })

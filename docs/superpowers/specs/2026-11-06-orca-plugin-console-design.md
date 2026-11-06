@@ -273,8 +273,17 @@ Worker → Panel 事件：`team.changed`、`attention.changed`、`task.changed`�
 **探针结论**：
 - 探针 1（worker 能加载 core、读账本）：**成立**（worker.test 通过；`@weiping/wingline-core` 由 pnpm workspace 链接，worker 直接 `import`）。
 - 探针 3（面板↔worker request 往返）：**成立**（panel.test 用 `mockHost.requests` 应答，`plugin.request` 正常）。
-- 探针 2（worker 内调 `orca … --json`）：**未验**（需用户批准插件后 `orca plugin dev load` 实跑）。
+- 探针 2（worker 内调 `orca … --json`）：**成立**。用户批准指纹 `ap1-e8e1be4c96515a82aec88c5ba0b87b79` 后实跑
+  `orca plugin dev request packages/orca-plugin probe.orca` → `{ reachable: true, version: "1.4.250", terminals: 5 }`。
 - 探针 4（audit parity）、5（编辑器可行性）：**未做**。
+
+**真机面板**：已 `orca plugin open local.wingline --panel wingline` 在 Orca 里打开，`orca plugin shot` 截图确认渲染正常
+（标题「雁阵」、徽标「0 个团队」、空态提示）。本机 `~/.wingline/state.db` **账本为空**（0 团队 / 0 岗位），故显示空态；
+带数据的渲染由 `plugin test` 的 mock 场景覆盖。
+
+**运维备忘**：开发插件已在 Orca 中批准并加载；撤销用 `orca plugin dev unload packages/orca-plugin`。
+worker 首次被 request 拉起时偶发 `unavailable: worker disconnected before responding`，
+用 `orca plugin dev watch <dir>` 常驻或重试一次即可（探针即遇此情况）。
 
 ### 15.1 踩坑：本机 Orca 1.4.250 安装缺 `orca.d.ts`
 

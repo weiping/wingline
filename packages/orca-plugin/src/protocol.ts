@@ -5,6 +5,8 @@ declare module 'orca' {
   interface PluginRequests {
     /** 探针：worker 是否活着、core 是否可加载。 */
     'probe.ping': { output: { ok: true; home: string; teams: number } }
+    /** 探针：worker 经 core 调 Orca（orca … --json）是否通。 */
+    'probe.orca': { output: { reachable: boolean; version: string | null; terminals: number; error?: string } }
     /** 团队清单（来自本地账本，不碰 Orca）。 */
     'teams.list': { output: { teams: TeamSummary[] } }
   }
