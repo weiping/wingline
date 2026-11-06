@@ -20,5 +20,8 @@
     "test",
     "spikes",
     "vitest.config.ts"
+  ],
+  "exclude": [
+    "packages/orca-plugin"
   ]
 }
