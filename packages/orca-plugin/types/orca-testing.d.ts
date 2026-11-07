@@ -23,8 +23,8 @@ declare module 'orca/testing' {
     findAll(query: { role?: string; text?: string }): Array<{ text?: string }>
     tree(): unknown
     summary(): string[]
-    press(target: { text?: string }): Promise<void>
-    type(target: { text?: string }, value: string, options?: { replace?: boolean; submit?: boolean }): Promise<void>
+    press(target: { text?: string; role?: string }): Promise<void>
+    type(target: { text?: string; role?: string }, value: string, options?: { replace?: boolean; submit?: boolean }): Promise<void>
     post(event: string, payload?: unknown): Promise<void>
     emit(event: string, payload?: unknown): Promise<void>
     settled(): Promise<void>

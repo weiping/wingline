@@ -8,10 +8,10 @@ const POSTS = {
 }
 const INBOX = {
   team: 'duo',
-  pending: 2,
+  pending: 3,
   dispatcher: { state: 'running' },
-  frozen: [{ post: 'builder@duo', reason: '闸门连败', frozenAt: '2026-11-07T00:00:00Z' }],
-  signals: [],
+  frozen: [{ post: 'checker@duo', reason: '闸门连败', frozenAt: '2026-11-07T00:00:00Z' }],
+  signals: [{ post: 'builder@duo', signal: 'no_progress', level: 1, summary: '20 分钟没输出', since: null }],
   questions: [{ messageId: 'm1', asker: 'checker@duo', body: '要改哪个文件？', options: ['a', 'b'], relayedAt: '2026-11-07T00:00:00Z' }],
   stale: [],
   warnings: [],
@@ -25,8 +25,7 @@ test('面板列出团队名', async () => {
   const host = mockHost({ requests: { 'teams.list': { teams: [TEAM] } } })
   const p = await mount(panel, { host })
   await p.settled()
-  const tree = JSON.stringify(p.tree())
-  assert.ok(tree.includes('duo'), `面板没有画出团队名：${tree}`)
+  assert.ok(JSON.stringify(p.tree()).includes('duo'))
   await p.unmount()
 })
 
@@ -44,58 +43,161 @@ test('展开后能列出岗位，点「打开终端」请求 post.openTerminal',
   })
   const p = await mount(panel, { host })
   await p.settled()
-
   await p.press({ text: '展开' })
   await p.settled()
-  assert.ok(JSON.stringify(p.tree()).includes('builder@duo'), '展开后没有画出岗位')
-
+  assert.ok(JSON.stringify(p.tree()).includes('builder@duo'))
   await p.press({ text: '打开终端' })
   await p.settled()
   assert.deepEqual(opened, [{ address: 'builder@duo' }])
   await p.unmount()
 })
 
-test('收件箱视图列出冻结与提问，并显示待处理计数', async () => {
+test('岗位预览：点「预览」请求 post.preview 并画出终端内容', async () => {
+  const requested: unknown[] = []
   const host = mockHost({
     requests: {
       'teams.list': { teams: [TEAM] },
-      'team.inbox': INBOX,
-      'team.posts': POSTS
+      'team.posts': POSTS,
+      'post.preview': (input: unknown) => {
+        requested.push(input)
+        return { address: 'builder@duo', handle: 'term_1', lines: ['$ claude', 'hello'], truncated: false }
+      }
     }
   })
   const p = await mount(panel, { host })
   await p.settled()
+  await p.press({ text: '展开' })
+  await p.settled()
+  await p.press({ text: '预览' })
+  await p.settled()
+  assert.deepEqual(requested, [{ address: 'builder@duo' }])
+  assert.ok(JSON.stringify(p.tree()).includes('hello'), '预览内容没画出来')
+  await p.unmount()
+})
 
+test('收件箱视图列出冻结与提问，并显示待处理计数', async () => {
+  const host = mockHost({
+    requests: { 'teams.list': { teams: [TEAM] }, 'team.inbox': INBOX, 'team.posts': POSTS }
+  })
+  const p = await mount(panel, { host })
+  await p.settled()
   await p.press({ text: '展开' })
   await p.settled()
   await p.press({ text: '收件箱' })
   await p.settled()
-
   const tree = JSON.stringify(p.tree())
-  assert.ok(tree.includes('待处理'), `没有待处理计数：${tree}`)
-  assert.ok(tree.includes('冻结'), `没有冻结条目：${tree}`)
-  assert.ok(tree.includes('要改哪个文件'), `没有提问条目：${tree}`)
+  assert.ok(tree.includes('待处理'))
+  assert.ok(tree.includes('冻结'))
+  assert.ok(tree.includes('要改哪个文件'))
   await p.unmount()
 })
 
-test('任务视图列出任务标题与状态', async () => {
+test('收件箱「解冻」写操作发给 write.unfreeze', async () => {
+  const calls: Array<{ name: string; input: unknown }> = []
   const host = mockHost({
     requests: {
       'teams.list': { teams: [TEAM] },
-      'team.tasks': TASKS,
-      'team.posts': POSTS
+      'team.inbox': INBOX,
+      'team.posts': POSTS,
+      'write.unfreeze': (input: unknown) => {
+        calls.push({ name: 'unfreeze', input })
+        return { skipped: [] }
+      }
     }
   })
   const p = await mount(panel, { host })
   await p.settled()
+  await p.press({ text: '展开' })
+  await p.settled()
+  await p.press({ text: '收件箱' })
+  await p.settled()
+  await p.press({ text: '解冻' })
+  await p.settled()
+  assert.deepEqual(calls, [{ name: 'unfreeze', input: { address: 'checker@duo' } }])
+  await p.unmount()
+})
 
+test('收件箱「冻结」写操作发给 write.freeze', async () => {
+  const calls: Array<{ name: string; input: unknown }> = []
+  const host = mockHost({
+    requests: {
+      'teams.list': { teams: [TEAM] },
+      'team.inbox': INBOX,
+      'team.posts': POSTS,
+      'write.freeze': (input: unknown) => {
+        calls.push({ name: 'freeze', input })
+        return { ok: true }
+      }
+    }
+  })
+  const p = await mount(panel, { host })
+  await p.settled()
+  await p.press({ text: '展开' })
+  await p.settled()
+  await p.press({ text: '收件箱' })
+  await p.settled()
+  await p.press({ text: '冻结岗位' })
+  await p.settled()
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0]!.name, 'freeze')
+  assert.equal((calls[0]!.input as { address: string }).address, 'builder@duo')
+  await p.unmount()
+})
+
+test('收件箱「回答」把草稿发给 write.reply', async () => {
+  const calls: Array<{ name: string; input: unknown }> = []
+  const host = mockHost({
+    requests: {
+      'teams.list': { teams: [TEAM] },
+      'team.inbox': INBOX,
+      'team.posts': POSTS,
+      'write.reply': (input: unknown) => {
+        calls.push({ name: 'reply', input })
+        return { messageId: 'm1', duplicate: false }
+      }
+    }
+  })
+  const p = await mount(panel, { host })
+  await p.settled()
+  await p.press({ text: '展开' })
+  await p.settled()
+  await p.press({ text: '收件箱' })
+  await p.settled()
+  await p.type({ role: 'textbox' }, '改 main.ts')
+  await p.settled()
+  await p.press({ text: '发送回答' })
+  await p.settled()
+  assert.equal(calls.length, 1)
+  assert.deepEqual(calls[0]!.input, { team: 'duo', messageId: 'm1', body: '改 main.ts' })
+  await p.unmount()
+})
+
+test('任务视图列出任务，并可认领（以岗位身份）', async () => {
+  const calls: Array<{ name: string; input: unknown }> = []
+  const host = mockHost({
+    requests: {
+      'teams.list': { teams: [TEAM] },
+      'team.tasks': TASKS,
+      'team.posts': POSTS,
+      'write.claimTask': (input: unknown) => {
+        calls.push({ name: 'claim', input })
+        return { ok: true }
+      }
+    }
+  })
+  const p = await mount(panel, { host })
+  await p.settled()
   await p.press({ text: '展开' })
   await p.settled()
   await p.press({ text: '任务' })
   await p.settled()
-
   const tree = JSON.stringify(p.tree())
-  assert.ok(tree.includes('实现登录'), `没有任务标题：${tree}`)
-  assert.ok(tree.includes('ready'), `没有任务状态：${tree}`)
+  assert.ok(tree.includes('实现登录'))
+  assert.ok(tree.includes('ready'))
+  await p.type({ role: 'textbox' }, 'builder@duo')
+  await p.settled()
+  await p.press({ text: '认领' })
+  await p.settled()
+  assert.deepEqual(calls, [{ name: 'claim', input: { id: 't1', as: 'builder@duo' } }])
   await p.unmount()
 })

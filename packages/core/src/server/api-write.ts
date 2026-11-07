@@ -497,8 +497,8 @@ export const CONSOLE_AUDIT: AuditTable<WriteCommands> = {
   },
 }
 
-/** 控制台用 `console:`，TUI 用 `tui:`；两者共用同一张审计表，执行者都是 human。 */
-export function auditedWriteCommands(prefix: 'console:' | 'tui:'): WriteCommands {
+/** 控制台用 `console:`，TUI 用 `tui:`，Orca 插件用 `plugin:`；三者共用同一张审计表，执行者都是 human。 */
+export function auditedWriteCommands(prefix: 'console:' | 'tui:' | 'plugin:'): WriteCommands {
   const raw: WriteCommands = {
     send,
     createTask,

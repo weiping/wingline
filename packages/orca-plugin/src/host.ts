@@ -6,11 +6,13 @@ import path from 'node:path'
 import {
   attention,
   auditedCommands,
+  auditedWriteCommands,
   coreAuditTable,
   createCallLog,
   createOrcaClient,
   createOrcaRunner,
   listTasks,
+  plainText,
   ps,
   Registry,
   createSpecFacade,
@@ -179,6 +181,82 @@ export async function taskDtos(deps: CommandDeps, team: string): Promise<TaskDto
     readySince: t.readySince,
     dispatchedAt: t.dispatchedAt
   }))
+}
+
+// ── 写操作（审计走 core 的同一张表，actor=human） ─────────────────
+
+/**
+ * 插件的写命令：与控制台（`console:`）、TUI（`tui:`）共用同一张审计表，
+ * 只是前缀不同（`plugin:`），执行者一律 human。
+ */
+export function pluginWrites() {
+  return auditedWriteCommands('plugin:')
+}
+
+/** 回答岗位提问。 */
+export async function replyQuestion(
+  deps: CommandDeps,
+  a: { team: string; messageId: string; body: string }
+): Promise<{ messageId: string; duplicate: boolean }> {
+  return pluginWrites().dispatcherReply(deps, a)
+}
+
+/** 冻结岗位。 */
+export async function freezePost(deps: CommandDeps, a: { address: string; reason: string }): Promise<void> {
+  return pluginWrites().freezePostCmd(deps, a)
+}
+
+/** 解冻岗位。 */
+export async function unfreezePost(
+  deps: CommandDeps,
+  a: { address: string }
+): Promise<{ skipped: Array<{ taskId: string; command: string }> }> {
+  return pluginWrites().unfreezePostCmd(deps, a)
+}
+
+/** 认领任务（以岗位身份）。 */
+export async function claimTask(deps: CommandDeps, a: { id: string; as: string }): Promise<void> {
+  return pluginWrites().claimTask(deps, a)
+}
+
+/** 完成任务（以岗位身份）。 */
+export async function doneTask(deps: CommandDeps, a: { id: string; as: string }): Promise<unknown> {
+  return pluginWrites().doneTask(deps, a)
+}
+
+// ── 岗位终端预览 ────────────────────────────────────────────
+
+export interface PreviewDto {
+  address: string
+  handle: string | null
+  lines: string[]
+  truncated: boolean
+  error?: string
+}
+
+/**
+ * 岗位终端最后若干行：先试渲染后的屏幕（source=screen），拿不到就回退到 preview 文本。
+ * 与控制台岗位详情页的 40 行预览同一口径。
+ */
+export async function postPreview(deps: CommandDeps, address: string, lines = 40): Promise<PreviewDto> {
+  const team = address.split('@')[1]
+  if (!team) return { address, handle: null, lines: [], truncated: false, error: '岗位地址格式不对' }
+  await ps(deps, { team })
+  const post = deps.registry.getPost(address)
+  if (!post?.handle) return { address, handle: null, lines: [], truncated: false, error: '岗位没有在线终端' }
+  try {
+    try {
+      const screen = await deps.orca.terminalRead({ handle: post.handle, lines })
+      const body = plainText(screen.text).split('\n').slice(-lines)
+      return { address, handle: post.handle, lines: body, truncated: screen.rows < lines }
+    } catch {
+      const view = await deps.orca.terminalShow({ handle: post.handle })
+      const body = plainText(view.preview).split('\n').slice(-lines)
+      return { address, handle: post.handle, lines: body, truncated: false }
+    }
+  } catch (err) {
+    return { address, handle: post.handle, lines: [], truncated: false, error: err instanceof Error ? err.message : String(err) }
+  }
 }
 
 /**

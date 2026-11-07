@@ -5,8 +5,10 @@ import {
   Button,
   Callout,
   Card,
+  CodeView,
   EmptyState,
   Heading,
+  Input,
   plugin,
   read,
   Row,
@@ -16,7 +18,7 @@ import {
   Text
 } from 'orca'
 
-import type { InboxDto, PostDto, TaskDto } from './host.js'
+import type { InboxDto, PostDto, PreviewDto, TaskDto } from './host.js'
 import type { TeamSummary } from './protocol.js'
 
 type View = 'posts' | 'inbox' | 'tasks'
@@ -37,6 +39,14 @@ const inbox = atom<Record<string, InboxDto>>({})
 /** 每个团队的任务列表。 */
 const tasks = atom<Record<string, TaskDto[]>>({})
 const busyTeam = atom<string | null>(null)
+
+/** 写操作的身份：claim / done 要「以岗位身份」执行。 */
+const actor = atom('actor', '')
+/** 预览的岗位地址与内容。 */
+const preview = atom<PreviewDto | null>(null)
+const previewAddress = atom('previewAddress', '')
+/** 回答提问的草稿，按 messageId 存。 */
+const replyDrafts = atom<Record<string, string>>({})
 
 async function refresh(): Promise<void> {
   set(loading, true)
@@ -105,6 +115,41 @@ async function openTerminal(address: string): Promise<void> {
   }
 }
 
+async function loadPreview(address: string): Promise<void> {
+  set(previewAddress, address)
+  set(preview, null)
+  try {
+    const answer = await plugin.request('post.preview', { address })
+    set(preview, answer as PreviewDto)
+  } catch (err) {
+    set(error, err instanceof Error ? err.message : String(err))
+  }
+}
+
+const WRITE_METHODS = {
+  reply: 'write.reply',
+  freeze: 'write.freeze',
+  unfreeze: 'write.unfreeze',
+  claim: 'write.claimTask',
+  done: 'write.doneTask'
+} as const
+
+async function runWrite(
+  kind: keyof typeof WRITE_METHODS,
+  args: Record<string, unknown>,
+  reload: () => Promise<void>,
+  okText: string
+): Promise<void> {
+  try {
+    await plugin.request(WRITE_METHODS[kind], args)
+    set(notice, okText)
+    set(error, null)
+    await reload()
+  } catch (err) {
+    set(error, err instanceof Error ? err.message : String(err))
+  }
+}
+
 export function setup(ctx: import('orca').PanelContext): void {
   ctx.subscriptions.push(plugin.on('teams.changed', (payload) => set(teams, payload.teams as TeamSummary[])))
   void refresh()
@@ -122,31 +167,59 @@ const STATUS_TONE: Record<string, 'success' | 'warning' | 'danger' | 'neutral'> 
   escalated: 'danger'
 }
 
-function PostsView({ rows }: { rows: PostDto[] }) {
+function PostsView({ rows, team }: { rows: PostDto[]; team: string }) {
+  const shownPreview = read(preview)
+  const previewFor = read(previewAddress)
   if (rows.length === 0) {
     return <Text muted size="xs">这个团队还没有岗位。</Text>
   }
   return (
     <Stack gap="xs">
       {rows.map((post) => (
-        <Row key={post.address} justify="between" gap="xs">
-          <Text size="xs">
-            {post.address}
-            {post.isLead ? '（牵头岗）' : ''}
-          </Text>
-          <Row gap="xs">
-            <Badge tone={STATUS_TONE[post.status] ?? 'neutral'}>{post.status}</Badge>
-            <Button variant="ghost" size="sm" disabled={post.handle === null} onPress={() => openTerminal(post.address)}>
-              打开终端
-            </Button>
+        <Stack key={post.address} gap="xs">
+          <Row justify="between" gap="xs">
+            <Text size="xs">
+              {post.address}
+              {post.isLead ? '（牵头岗）' : ''}
+            </Text>
+            <Row gap="xs">
+              <Badge tone={STATUS_TONE[post.status] ?? 'neutral'}>{post.status}</Badge>
+              <Button variant="ghost" size="sm" disabled={post.handle === null} onPress={() => openTerminal(post.address)}>
+                打开终端
+              </Button>
+              <Button variant="ghost" size="sm" disabled={post.handle === null} onPress={() => loadPreview(post.address)}>
+                预览
+              </Button>
+            </Row>
           </Row>
-        </Row>
+          {previewFor === post.address && shownPreview !== null && (
+            <Stack gap="xs">
+              {shownPreview.error !== undefined && (
+                <Text size="xs" muted>
+                  读不到屏幕：{shownPreview.error}
+                </Text>
+              )}
+              {shownPreview.error === undefined && shownPreview.lines.length > 0 && (
+                <CodeView
+                  code={shownPreview.lines.join('\n')}
+                  label={`${post.address} 最后 ${shownPreview.lines.length} 行`}
+                  maxHeight={220}
+                />
+              )}
+              {shownPreview.error === undefined && shownPreview.lines.length === 0 && (
+                <Text size="xs" muted>
+                  终端还没有输出。
+                </Text>
+              )}
+            </Stack>
+          )}
+        </Stack>
       ))}
     </Stack>
   )
 }
 
-function InboxView({ box }: { box: InboxDto | undefined }) {
+function InboxView({ box, team }: { box: InboxDto | undefined; team: string }) {
   if (!box) return <Text muted size="xs">没有收件箱数据。</Text>
   if (box.pending === 0) {
     return <Text muted size="xs">没有要处理的事项。</Text>
@@ -155,26 +228,72 @@ function InboxView({ box }: { box: InboxDto | undefined }) {
     <Stack gap="xs">
       {box.frozen.map((f) => (
         <Row key={`frozen-${f.post}`} justify="between" gap="xs">
-          <Text size="xs">冻结：{f.post}</Text>
-          <Badge tone="danger">冻结</Badge>
-        </Row>
-      ))}
-      {box.signals.map((s) => (
-        <Row key={`sig-${s.post}-${s.signal}`} justify="between" gap="xs">
-          <Text size="xs">
-            信号：{s.post} · {s.summary ?? s.signal}
-          </Text>
-          <Badge tone={s.level >= 2 ? 'warning' : 'neutral'}>L{s.level}</Badge>
-        </Row>
-      ))}
-      {box.questions.map((q) => (
-        <Row key={`q-${q.messageId}`} justify="between" gap="xs">
           <Text size="xs" truncate>
-            提问：{q.asker} · {q.body}
+            冻结：{f.post}
           </Text>
-          <Badge tone="warning">待答</Badge>
+          <Row gap="xs">
+            <Badge tone="danger">冻结</Badge>
+            <Button
+              variant="outline"
+              size="sm"
+              onPress={() => runWrite('unfreeze', { address: f.post }, () => loadInbox(team), `已解冻 ${f.post}`)}
+            >
+              解冻
+            </Button>
+          </Row>
         </Row>
       ))}
+      {box.signals.map((s) => {
+        const isFrozen = box.frozen.some((f) => f.post === s.post)
+        return (
+          <Row key={`sig-${s.post}-${s.signal}`} justify="between" gap="xs">
+            <Text size="xs" truncate>
+              信号：{s.post} · {s.summary ?? s.signal}
+            </Text>
+            <Row gap="xs">
+              <Badge tone={s.level >= 2 ? 'warning' : 'neutral'}>L{s.level}</Badge>
+              <Button
+                variant="outline"
+                size="sm"
+                onPress={() => runWrite('freeze', { address: s.post, reason: `面板冻结：${s.summary ?? s.signal}` }, () => loadInbox(team), `已冻结 ${s.post}`)}
+              >
+                冻结岗位
+              </Button>
+            </Row>
+          </Row>
+        )
+      })}
+      {box.questions.map((q) => {
+        const draft = read(replyDrafts)[q.messageId] ?? ''
+        return (
+          <Stack key={`q-${q.messageId}`} gap="xs">
+            <Row justify="between" gap="xs">
+              <Text size="xs" truncate>
+                提问：{q.asker} · {q.body}
+              </Text>
+              <Badge tone="warning">待答</Badge>
+            </Row>
+            <Row gap="xs">
+              <Input
+                label="回答内容"
+                placeholder="回答内容"
+                value={draft}
+                onChange={(v: string) => set(replyDrafts, { ...read(replyDrafts), [q.messageId]: v })}
+              />
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={draft.trim().length === 0}
+                onPress={() =>
+                  runWrite('reply', { team, messageId: q.messageId, body: draft }, () => loadInbox(team), `已回答 ${q.asker}`)
+                }
+              >
+                发送回答
+              </Button>
+            </Row>
+          </Stack>
+        )
+      })}
       {box.stale.map((s) => (
         <Row key={`stale-${s.taskId}`} justify="between" gap="xs">
           <Text size="xs" truncate>
@@ -197,26 +316,60 @@ function InboxView({ box }: { box: InboxDto | undefined }) {
   )
 }
 
-function TasksView({ rows }: { rows: TaskDto[] | undefined }) {
+function TasksView({ rows, team }: { rows: TaskDto[] | undefined; team: string }) {
+  const actorText = read(actor)
   if (!rows) return <Text muted size="xs">没有任务数据。</Text>
   if (rows.length === 0) return <Text muted size="xs">这个团队还没有任务。</Text>
   return (
     <Stack gap="xs">
+      <Row gap="xs">
+        <Input
+          label="操作身份"
+          placeholder="post@team"
+          value={actorText}
+          onChange={(v: string) => set(actor, v)}
+        />
+      </Row>
       {rows.map((t) => (
-        <Row key={t.id} justify="between" gap="xs">
-          <Text size="xs" truncate>
-            {t.title}
-          </Text>
-          <Row gap="xs">
-            {t.claimedBy !== null && (
-              <Text size="xs" muted>
-                {t.claimedBy}
-              </Text>
-            )}
-            <Badge tone={STATUS_TONE[t.status] ?? 'neutral'}>{t.status}</Badge>
+        <Stack key={t.id} gap="xs">
+          <Row justify="between" gap="xs">
+            <Text size="xs" truncate>
+              {t.title}
+            </Text>
+            <Row gap="xs">
+              {t.claimedBy !== null && (
+                <Text size="xs" muted>
+                  {t.claimedBy}
+                </Text>
+              )}
+              <Badge tone={STATUS_TONE[t.status] ?? 'neutral'}>{t.status}</Badge>
+            </Row>
           </Row>
-        </Row>
+          <Row gap="xs">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={actorText.trim().length === 0 || t.status !== 'ready'}
+              onPress={() => runWrite('claim', { id: t.id, as: actorText }, () => loadTasks(team), `已认领 ${t.title}`)}
+            >
+              认领
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={actorText.trim().length === 0 || (t.status !== 'dispatched' && t.status !== 'ready')}
+              onPress={() =>
+                runWrite('done', { id: t.id, as: actorText }, () => loadTasks(team), `已提交完成 ${t.title}`)
+              }
+            >
+              完成
+            </Button>
+          </Row>
+        </Stack>
       ))}
+      <Text size="xs" muted>
+        写操作以「操作身份」岗位执行，进审计（actor=human）。
+      </Text>
     </Stack>
   )
 }
@@ -244,7 +397,7 @@ export default function Panel() {
         </Row>
       </Row>
       {err !== null && <Callout tone="danger" title="操作失败">{err}</Callout>}
-      {hint !== null && <Callout tone="accent" title="已切换窗口">{hint}</Callout>}
+      {hint !== null && <Callout tone="accent" title="已完成">{hint}</Callout>}
       {list !== null && list.length === 0 && busy && <Spinner label="正在读取账本" labelHidden />}
       {list !== null && list.length === 0 && !busy && (
         <EmptyState title="还没有团队" description="先在终端里执行 wl up <team.yaml> 登记一个团队。" />
@@ -294,11 +447,11 @@ export default function Panel() {
                     </Row>
                     {loadingTeam === team.name && <Spinner label="正在读取" labelHidden />}
                     {loadingTeam !== team.name && currentView === 'posts' && (
-                      <PostsView rows={allPosts[team.name] ?? []} />
+                      <PostsView rows={allPosts[team.name] ?? []} team={team.name} />
                     )}
-                    {loadingTeam !== team.name && currentView === 'inbox' && <InboxView box={box} />}
+                    {loadingTeam !== team.name && currentView === 'inbox' && <InboxView box={box} team={team.name} />}
                     {loadingTeam !== team.name && currentView === 'tasks' && (
-                      <TasksView rows={allTasks[team.name]} />
+                      <TasksView rows={allTasks[team.name]} team={team.name} />
                     )}
                     <Row gap="xs">
                       <Button variant="ghost" size="sm" onPress={() => open(team.name)}>

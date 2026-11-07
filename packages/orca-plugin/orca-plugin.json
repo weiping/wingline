@@ -4,13 +4,16 @@
   "name": "Wingline",
   "version": "0.1.0",
   "description": "雁阵 Wingline 的 Orca 侧栏控制台：团队、收件箱、任务与岗位的一处视图。",
-  "engines": { "orca": ">=1.4.246" },
+  "engines": { "orca": ">=1.4.248" },
   "execution": "trusted-worker",
   "pluginApi": 1,
   "main": "src/worker.ts",
   "contributes": {
     "panels": [
       { "id": "wingline", "title": "Wingline", "icon": "blocks", "entry": "src/panel.tsx", "ui": "components" }
+    ],
+    "statusBarItems": [
+      { "id": "wingline", "icon": "blocks", "text": "雁阵", "tone": "neutral", "tooltip": "雁阵待处理事项" }
     ]
   },
   "capabilities": [

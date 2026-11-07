@@ -24,6 +24,21 @@ declare module 'orca' {
     'team.inbox': { input: { team: string }; output: import('./host.js').InboxDto }
     /** 任务看板：团队当前的任务列表。 */
     'team.tasks': { input: { team: string }; output: { tasks: import('./host.js').TaskDto[] } }
+    /** 写操作：回答提问。 */
+    'write.reply': {
+      input: { team: string; messageId: string; body: string }
+      output: { messageId: string; duplicate: boolean }
+    }
+    /** 写操作：冻结岗位。 */
+    'write.freeze': { input: { address: string; reason: string }; output: { ok: true } }
+    /** 写操作：解冻岗位。 */
+    'write.unfreeze': { input: { address: string }; output: { skipped: unknown[] } }
+    /** 写操作：认领任务（以岗位身份）。 */
+    'write.claimTask': { input: { id: string; as: string }; output: { ok: true } }
+    /** 写操作：完成任务（以岗位身份）。 */
+    'write.doneTask': { input: { id: string; as: string }; output: { ok: true } }
+    /** 岗位终端预览：最后 40 行。 */
+    'post.preview': { input: { address: string; lines?: number }; output: import('./host.js').PreviewDto }
   }
   interface PluginPanelEvents {
     /** 面板刷新时 worker 广播。 */
