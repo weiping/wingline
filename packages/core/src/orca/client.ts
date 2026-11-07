@@ -245,10 +245,13 @@ function inboxMethods(runner: OrcaRunner): Pick<OrcaClient, 'check' | 'reply' | 
       }
     },
     async reply(a) {
-      const r = await runner.json<{ message: { id: string }; duplicate?: boolean }>([
+      // Orca 1.4.251 起回执是 { messageId }；旧版是 { message: { id } }。两种都认。
+      const r = await runner.json<{ message?: { id?: string }; messageId?: string; duplicate?: boolean }>([
         'orchestration', 'reply', '--id', a.id, '--body', a.body, '--run', a.run, '--from', a.from,
       ])
-      return { messageId: r.message.id, duplicate: r.duplicate ?? false }
+      const messageId = r.message?.id ?? r.messageId
+      if (!messageId) throw new WinglineError('orca', 'reply_shape_unknown', 'Orca 的回复回执里没有 messageId')
+      return { messageId, duplicate: r.duplicate ?? false }
     },
     async workerList(a): Promise<WorkerView[]> {
       const r = await runner.json<{ workers: RawWorker[] }>(['orchestration', 'worker-list', '--run', a.run])

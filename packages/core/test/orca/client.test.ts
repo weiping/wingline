@@ -299,6 +299,11 @@ test('reply / workerList / worktreeSet argv and mapping', async () => {
   expect(calls[2]).toEqual(['worktree', 'set', '--worktree', 'id:w', '--comment', 'c'])
 })
 
+test('reply 认 Orca 1.4.251 的 { messageId } 回执（旧版 { message: { id } } 也认）', async () => {
+  const { client } = clientWith({ 'orchestration reply': { messageId: 'msg-new' } })
+  expect(await client.reply({ id: 'm', body: 'b', run: 'r', from: 'c' })).toEqual({ messageId: 'msg-new', duplicate: false })
+})
+
 test('worktreeSet accepts the real (sanitised) receipt and the probed support constant matches it', async () => {
   const receipt = fixture('worktree-set')
   const { client, calls } = clientWith({ 'worktree set': receipt })
