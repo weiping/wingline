@@ -255,12 +255,18 @@ export default function Panel() {
           const box = allInbox[team.name]
           const pending = box?.pending ?? 0
           return (
-            <Card key={team.name} title={team.name} description={`${team.posts} 个岗位 · ${team.status}`}>
+            <Card key={team.name}>
               <Stack gap="xs">
-                <Row justify="between">
-                  <Badge tone={team.status === 'up' ? 'success' : 'neutral'}>{team.status}</Badge>
+                <Row justify="between" gap="xs">
+                  <Row gap="xs">
+                    <Text weight="medium">{team.name}</Text>
+                    <Badge tone={team.status === 'up' ? 'success' : 'neutral'}>{team.status}</Badge>
+                  </Row>
                   {pending > 0 && <Badge tone="warning">{pending} 待处理</Badge>}
                 </Row>
+                <Text muted size="xs">
+                  {team.posts} 个岗位
+                </Text>
                 {isOpen ? (
                   <>
                     <Row gap="xs">
