@@ -4,17 +4,21 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 import {
+  attention,
   auditedCommands,
   coreAuditTable,
   createCallLog,
   createOrcaClient,
   createOrcaRunner,
+  listTasks,
   ps,
   Registry,
   createSpecFacade,
   initTeamCmd,
+  type AttentionReport,
   type PsRow,
   type SpecForEdit,
+  type TaskRow,
   resolveOrcaExecutable,
   winglineHome,
   type CommandDeps
@@ -103,6 +107,78 @@ export async function openPostTerminal(deps: CommandDeps, address: string): Prom
   if (!post?.handle) return { navigated: false, handle: null }
   const res = await deps.orca.terminalSwitch({ handle: post.handle })
   return { navigated: res.navigated, handle: post.handle }
+}
+
+// ── P1 只读：收件箱与任务看板 ───────────────────────────────────
+
+export interface InboxDto {
+  team: string
+  pending: number
+  dispatcher: { state: string }
+  frozen: Array<{ post: string; reason: string; frozenAt: string }>
+  signals: Array<{ post: string; signal: string; level: number; summary: string | null; since: string | null }>
+  questions: Array<{ messageId: string; asker: string; body: string; options: string[]; relayedAt: string }>
+  stale: Array<{ taskId: string; title: string; reason: string; owner: string | null; command: string }>
+  warnings: string[]
+  unavailable: string[]
+}
+
+/** 收件箱：走 core 的 attention()（CLI / 控制台 / TUI 同一口径）。 */
+export async function inboxDto(deps: CommandDeps, team: string): Promise<InboxDto> {
+  const r: AttentionReport = await attention(deps, team)
+  return {
+    team: r.team,
+    pending: r.frozen.length + r.signals.length + r.questions.length + r.stale.length + r.warnings.length,
+    dispatcher: { state: r.dispatcher.state },
+    frozen: r.frozen.map((f) => ({ post: f.post, reason: f.reason, frozenAt: f.frozenAt })),
+    signals: r.signals.map((s) => ({
+      post: s.post,
+      signal: s.signal,
+      level: s.level,
+      summary: s.summary,
+      since: s.since
+    })),
+    questions: r.questions.map((q) => ({
+      messageId: q.messageId,
+      asker: q.asker,
+      body: q.body,
+      options: q.options,
+      relayedAt: q.relayedAt
+    })),
+    stale: r.stale.map((s) => ({ taskId: s.taskId, title: s.title, reason: s.reason, owner: s.owner, command: s.command })),
+    warnings: r.warnings,
+    unavailable: r.unavailable
+  }
+}
+
+export interface TaskDto {
+  id: string
+  status: string
+  title: string
+  kind: string
+  tags: string[]
+  claimedBy: string | null
+  epoch: number
+  gateFailures: number
+  readySince: string | null
+  dispatchedAt: string | null
+}
+
+/** 任务看板：走 core 的 listTasks()（同 CLI `wl task list`）。 */
+export async function taskDtos(deps: CommandDeps, team: string): Promise<TaskDto[]> {
+  const rows: TaskRow[] = await listTasks(deps, { team })
+  return rows.map((t) => ({
+    id: t.id,
+    status: t.status,
+    title: t.title,
+    kind: t.kind,
+    tags: t.tags,
+    claimedBy: t.claimedBy,
+    epoch: t.epoch,
+    gateFailures: t.gateFailures,
+    readySince: t.readySince,
+    dispatchedAt: t.dispatchedAt
+  }))
 }
 
 /**
