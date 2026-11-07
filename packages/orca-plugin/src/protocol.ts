@@ -12,6 +12,8 @@ declare module 'orca' {
       input: { name: string; repo: string; template?: 'duo' | 'solo' | 'trio' }
       output: { team: string; specPath: string; created: boolean }
     }
+    /** 编辑器：加载团队规格（需 team 已登记）。 */
+    'spec.readForEdit': { input: { team: string }; output: import('./host.js').SpecForEditDto }
     /** 团队清单（来自本地账本，不碰 Orca）。 */
     'teams.list': { output: { teams: TeamSummary[] } }
   }

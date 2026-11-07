@@ -10,7 +10,9 @@ import {
   createOrcaClient,
   createOrcaRunner,
   Registry,
+  createSpecFacade,
   initTeamCmd,
+  type SpecForEdit,
   resolveOrcaExecutable,
   winglineHome,
   type CommandDeps
@@ -75,4 +77,20 @@ export function teamSummaries(deps: CommandDeps): Array<{
  */
 export function auditedInit() {
   return auditedCommands({ init: initTeamCmd }, coreAuditTable(), { actor: 'human' })
+}
+
+export type SpecForEditDto = Pick<SpecForEdit, 'specPath' | 'yaml' | 'hash' | 'running'> & {
+  hasDraft: boolean
+  docKeys: string[]
+}
+
+export function specForEditDto(view: SpecForEdit): SpecForEditDto {
+  return {
+    specPath: view.specPath,
+    yaml: view.yaml,
+    hash: view.hash,
+    running: view.running,
+    hasDraft: view.draft !== null,
+    docKeys: Object.keys(view.files)
+  }
 }

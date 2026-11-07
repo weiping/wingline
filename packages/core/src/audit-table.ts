@@ -90,6 +90,20 @@ const ENTRIES: Record<string, LooseEntry> = {
     team: (a) => a.team,
     target: (a) => a.messageId,
     summary: (a) => ({ body: a.body, again: a.again })
+  },
+  saveSpecCmd: {
+    command: 'spec save',
+    team: (a) => a.team,
+    target: (_a, ctx) => (ctx.result as { path?: string } | undefined)?.path ?? null,
+    summary: (a, ctx) => {
+      const r = ctx.result as { wrote?: string; hash?: string } | undefined
+      return { baseHash: a.baseHash?.slice(0, 16), running: a.running, wrote: r?.wrote, hash: r?.hash?.slice(0, 16) }
+    }
+  },
+  discardDraftCmd: {
+    command: 'spec discard-draft',
+    team: (a) => a.team,
+    summary: (_a, ctx) => ({ discarded: (ctx.result as { discarded?: boolean } | undefined)?.discarded })
   }
 }
 

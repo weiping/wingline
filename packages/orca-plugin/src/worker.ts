@@ -2,8 +2,8 @@
 // 无构建步骤：.ts 由 Orca 直接转译（不做类型检查，类型由 tsc -p . 保证）。
 import type { OrcaWorkerApi } from 'orca/worker'
 
-import { auditedInit, createDeps, teamSummaries } from './host.js'
-import type { CommandDeps } from '@weiping/wingline-core'
+import { auditedInit, createDeps, specForEditDto, teamSummaries } from './host.js'
+import { createSpecFacade, type CommandDeps } from '@weiping/wingline-core'
 
 let deps: CommandDeps | undefined
 
@@ -40,6 +40,11 @@ export default function activate(orca: OrcaWorkerApi): void {
       created: boolean
     }
     return result
+  })
+
+  orca.panels.handle('spec.readForEdit', async ({ team }) => {
+    const view = createSpecFacade(shared()).readForEdit(team)
+    return specForEditDto(view)
   })
 
   orca.panels.handle('teams.list', async () => {

@@ -322,6 +322,14 @@ CLI 改成 `export const AUDIT = coreAuditTable<Commands>()`（内容不变，18
 
 **结论同时收紧了 §7**：编辑器**不必**留在 `wl console`（决定 1 保留为过渡期妥协，不是终局）。
 
+### 15.5 `createSpecFacade`（2026-11-07，探针 5 前置）
+
+- 路径：`packages/core/src/spec/facade.ts` → `createSpecFacade(deps)`
+- 方法：`readForEdit` / `validate` / `save`（审计 `spec save`）/ `discardDraft` / `resolveDoc` / `readDoc` / `writeDoc`
+- 审计：`CORE_AUDIT` 已补 `saveSpecCmd` / `discardDraftCmd`（与 console CONSOLE_AUDIT 同形）
+- 插件：`spec.readForEdit` 请求（worker 调用门面，返回 YAML 摘要 DTO）
+- 测试：`packages/core/test/spec/facade.test.ts`（3/3 绿）
+
 ### 15.1 踩坑：本机 Orca 1.4.250 安装缺 `orca.d.ts`
 
 `orca plugin create` / `orca plugin types` 在本机报错：
