@@ -39,6 +39,8 @@ declare module 'orca' {
     'write.doneTask': { input: { id: string; as: string }; output: { ok: true } }
     /** 岗位终端预览：最后 40 行。 */
     'post.preview': { input: { address: string; lines?: number }; output: import('./host.js').PreviewDto }
+    /** 岗位详情：当前任务、信号、冻结、时间线 50 条。 */
+    'post.detail': { input: { team: string; address: string }; output: import('./host.js').PostDetailDto }
   }
   interface PluginPanelEvents {
     /** 面板刷新时 worker 广播。 */

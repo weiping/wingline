@@ -14,13 +14,16 @@ import {
   listTasks,
   plainText,
   ps,
+  readTimeline,
   Registry,
+  signalSummary,
   createSpecFacade,
   initTeamCmd,
   type AttentionReport,
   type PsRow,
   type SpecForEdit,
   type TaskRow,
+  type TimelineEvent,
   resolveOrcaExecutable,
   winglineHome,
   type CommandDeps
@@ -181,6 +184,80 @@ export async function taskDtos(deps: CommandDeps, team: string): Promise<TaskDto
     readySince: t.readySince,
     dispatchedAt: t.dispatchedAt
   }))
+}
+
+// ── 岗位详情（时间线 + 任务历史） ───────────────────────────────
+
+export interface PostDetailDto {
+  address: string
+  status: PsRow['status']
+  isLead: boolean
+  handle: string | null
+  sessionId: string | null
+  currentTask: { id: string; title: string; status: string } | null
+  queued: Array<{ id: string; title: string; status: string }>
+  signals: Array<{ signal: string; level: number; summary: string | null; since: string | null }>
+  frozen: { reason: string; frozenAt: string } | null
+  hushedUntil: string | null
+  events: TimelineEventDto[]
+}
+
+export interface TimelineEventDto {
+  id: string
+  at: string
+  source: string
+  actor: string
+  action: string
+  target: string | null
+  outcome: string | null
+}
+
+export function timelineDto(events: TimelineEvent[]): TimelineEventDto[] {
+  return events.map((e) => ({
+    id: e.id,
+    at: e.at,
+    source: e.source,
+    actor: e.actor,
+    action: e.action,
+    target: e.target,
+    outcome: e.outcome
+  }))
+}
+
+/**
+ * 岗位详情：与控制台岗位详情页同一口径（当前任务、排队、信号、冻结、静音、
+ * 按岗位过滤的时间线 50 条）。终端预览另有 post.preview。
+ */
+export async function postDetailDto(deps: CommandDeps, team: string, address: string): Promise<PostDetailDto> {
+  const rows = await ps(deps, { team })
+  const pRow = rows.find((p) => p.address === address)
+  if (!pRow) throw new Error(`岗位 ${address} 不存在`)
+
+  const allTasks: TaskRow[] = await listTasks(deps, { team })
+  const currentTask = allTasks.find((t) => t.claimedBy === address && t.status === 'dispatched') ?? null
+  const queued = allTasks.filter((t) => t.claimedBy === address && t.status === 'ready')
+
+  const signals = deps.registry
+    .listPatrolState(team)
+    .filter((s) => s.post === address && !s.clearedAt && s.level >= 1)
+    .map((s) => ({ signal: s.signal, level: s.level, summary: signalSummary(s), since: s.since }))
+  const frozen = deps.registry.getFrozen(address)
+  const hushedUntil = deps.registry.hushedUntil(address)
+  const logRes = await readTimeline(deps, { team, post: address, limit: 50 })
+
+  return {
+    address,
+    status: pRow.status,
+    isLead: pRow.isLead,
+    handle: pRow.handle,
+    sessionId: deps.registry.getPost(address)?.sessionId ?? null,
+    currentTask: currentTask && { id: currentTask.id, title: currentTask.title, status: currentTask.status },
+    queued: queued.map((t) => ({ id: t.id, title: t.title, status: t.status })),
+    signals,
+    frozen: frozen && { reason: frozen.reason, frozenAt: frozen.frozenAt },
+    hushedUntil,
+    events: timelineDto(logRes.events)
+  }
 }
 
 // ── 写操作（审计走 core 的同一张表，actor=human） ─────────────────

@@ -10,6 +10,7 @@ import {
   freezePost,
   inboxDto,
   openPostTerminal,
+  postDetailDto,
   postDtos,
   postPreview,
   replyQuestion,
@@ -163,5 +164,9 @@ export default function activate(orca: OrcaWorkerApi): void {
 
   orca.panels.handle('post.preview', async ({ address, lines }) => {
     return postPreview(shared(), address, lines ?? 40)
+  })
+
+  orca.panels.handle('post.detail', async ({ team, address }) => {
+    return postDetailDto(shared(), team, address)
   })
 }

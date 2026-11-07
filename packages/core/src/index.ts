@@ -55,6 +55,7 @@ export {
 } from './commands/dispatcher/lifecycle.js'
 export * from './commands/dispatcher/loop.js'
 export * from './commands/dispatcher/attention.js'
+export * from './commands/dispatcher/signal-summary.js'
 export * from './commands/dispatcher/controls.js'
 export * from './commands/dispatcher/inbox.js'
 export * from './commands/dispatcher/outlets.js'

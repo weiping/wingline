@@ -18,7 +18,7 @@ import {
   Text
 } from 'orca'
 
-import type { InboxDto, PostDto, PreviewDto, TaskDto } from './host.js'
+import type { InboxDto, PostDetailDto, PostDto, PreviewDto, TaskDto } from './host.js'
 import type { TeamSummary } from './protocol.js'
 
 type View = 'posts' | 'inbox' | 'tasks'
@@ -45,6 +45,9 @@ const actor = atom('actor', '')
 /** 预览的岗位地址与内容。 */
 const preview = atom<PreviewDto | null>(null)
 const previewAddress = atom('previewAddress', '')
+/** 岗位详情（时间线 + 任务历史）。 */
+const detail = atom<PostDetailDto | null>(null)
+const detailAddress = atom('detailAddress', '')
 /** 回答提问的草稿，按 messageId 存。 */
 const replyDrafts = atom<Record<string, string>>({})
 
@@ -126,6 +129,17 @@ async function loadPreview(address: string): Promise<void> {
   }
 }
 
+async function loadDetail(team: string, address: string): Promise<void> {
+  set(detailAddress, address)
+  set(detail, null)
+  try {
+    const answer = await plugin.request('post.detail', { team, address })
+    set(detail, answer as PostDetailDto)
+  } catch (err) {
+    set(error, err instanceof Error ? err.message : String(err))
+  }
+}
+
 const WRITE_METHODS = {
   reply: 'write.reply',
   freeze: 'write.freeze',
@@ -170,6 +184,8 @@ const STATUS_TONE: Record<string, 'success' | 'warning' | 'danger' | 'neutral'> 
 function PostsView({ rows, team }: { rows: PostDto[]; team: string }) {
   const shownPreview = read(preview)
   const previewFor = read(previewAddress)
+  const shownDetail = read(detail)
+  const detailFor = read(detailAddress)
   if (rows.length === 0) {
     return <Text muted size="xs">这个团队还没有岗位。</Text>
   }
@@ -189,6 +205,9 @@ function PostsView({ rows, team }: { rows: PostDto[]; team: string }) {
               </Button>
               <Button variant="ghost" size="sm" disabled={post.handle === null} onPress={() => loadPreview(post.address)}>
                 预览
+              </Button>
+              <Button variant="ghost" size="sm" onPress={() => loadDetail(team, post.address)}>
+                详情
               </Button>
             </Row>
           </Row>
@@ -213,7 +232,44 @@ function PostsView({ rows, team }: { rows: PostDto[]; team: string }) {
               )}
             </Stack>
           )}
+          {detailFor === post.address && shownDetail !== null && <PostDetailView d={shownDetail} />}
         </Stack>
+      ))}
+    </Stack>
+  )
+}
+
+function PostDetailView({ d }: { d: PostDetailDto }) {
+  return (
+    <Stack gap="xs">
+      {d.currentTask !== null && (
+        <Text size="xs">
+          当前任务：{d.currentTask.title}（{d.currentTask.status}）
+        </Text>
+      )}
+      {d.currentTask === null && <Text size="xs" muted>当前没有进行中的任务。</Text>}
+      {d.queued.length > 0 && (
+        <Text size="xs" muted>
+          排队 {d.queued.length} 条：{d.queued.map((t) => t.title).join('、')}
+        </Text>
+      )}
+      {d.frozen !== null && <Text size="xs">已冻结：{d.frozen.reason}</Text>}
+      {d.hushedUntil !== null && <Text size="xs" muted>静音到 {d.hushedUntil}</Text>}
+      {d.signals.map((s) => (
+        <Text key={`${s.signal}-${s.since}`} size="xs">
+          信号：{s.summary ?? s.signal}（L{s.level}）
+        </Text>
+      ))}
+      <Text size="xs" muted>
+        时间线（最近 {d.events.length} 条）：
+      </Text>
+      {d.events.length === 0 && <Text size="xs" muted>还没有事件。</Text>}
+      {d.events.slice(-12).reverse().map((e) => (
+        <Text key={e.id} size="xs">
+          {e.at.slice(11, 19)} {e.action}
+          {e.target !== null ? ` → ${e.target}` : ''}
+          {e.outcome !== null && e.outcome !== 'ok' ? `（${e.outcome}）` : ''} · {e.actor}
+        </Text>
       ))}
     </Stack>
   )

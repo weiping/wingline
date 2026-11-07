@@ -201,3 +201,33 @@ test('任务视图列出任务，并可认领（以岗位身份）', async () =>
   assert.deepEqual(calls, [{ name: 'claim', input: { id: 't1', as: 'builder@duo' } }])
   await p.unmount()
 })
+
+test('岗位「详情」请求 post.detail 并画出时间线', async () => {
+  const requested: unknown[] = []
+  const host = mockHost({
+    requests: {
+      'teams.list': { teams: [TEAM] },
+      'team.posts': POSTS,
+      'post.detail': (input: unknown) => {
+        requested.push(input)
+        return {
+          address: 'builder@duo', status: 'live', isLead: true, handle: 'term_1', sessionId: null,
+          currentTask: { id: 't9', title: '评审登录', status: 'dispatched' }, queued: [],
+          signals: [], frozen: null, hushedUntil: null,
+          events: [{ id: 'task:1', at: '2026-11-07T13:18:46Z', source: 'task', actor: 'builder@duo', action: 'done', target: 't1', outcome: 'ok' }]
+        }
+      }
+    }
+  })
+  const p = await mount(panel, { host })
+  await p.settled()
+  await p.press({ text: '展开' })
+  await p.settled()
+  await p.press({ text: '详情' })
+  await p.settled()
+  assert.deepEqual(requested, [{ team: 'duo', address: 'builder@duo' }])
+  const tree = JSON.stringify(p.tree())
+  assert.ok(tree.includes('评审登录'), `没画出当前任务：${tree}`)
+  assert.ok(tree.includes('done'), `没画出时间线事件：${tree}`)
+  await p.unmount()
+})
