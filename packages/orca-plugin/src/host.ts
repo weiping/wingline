@@ -4,10 +4,13 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 import {
+  auditedCommands,
+  coreAuditTable,
   createCallLog,
   createOrcaClient,
   createOrcaRunner,
   Registry,
+  initTeamCmd,
   resolveOrcaExecutable,
   winglineHome,
   type CommandDeps
@@ -64,4 +67,12 @@ export function teamSummaries(deps: CommandDeps): Array<{
     posts: deps.registry.listPosts(row.name).length,
     specPath: row.specPath
   }))
+}
+
+/**
+ * 与 CLI 同一张审计表、同一 actor（human），所以插件写出来的审计行和命令行写的是同一种东西。
+ * 表在 core（core/src/audit-table.ts），CLI、控制台与插件共用。
+ */
+export function auditedInit() {
+  return auditedCommands({ init: initTeamCmd }, coreAuditTable(), { actor: 'human' })
 }

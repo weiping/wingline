@@ -7,6 +7,11 @@ declare module 'orca' {
     'probe.ping': { output: { ok: true; home: string; teams: number } }
     /** 探针：worker 经 core 调 Orca（orca … --json）是否通。 */
     'probe.orca': { output: { reachable: boolean; version: string | null; terminals: number; error?: string } }
+    /** 探针：插件走审计包装写一次 init（与 CLI 对照）。 */
+    'probe.audit': {
+      input: { name: string; repo: string; template?: 'duo' | 'solo' | 'trio' }
+      output: { team: string; specPath: string; created: boolean }
+    }
     /** 团队清单（来自本地账本，不碰 Orca）。 */
     'teams.list': { output: { teams: TeamSummary[] } }
   }

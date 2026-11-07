@@ -2,7 +2,7 @@
 // 无构建步骤：.ts 由 Orca 直接转译（不做类型检查，类型由 tsc -p . 保证）。
 import type { OrcaWorkerApi } from 'orca/worker'
 
-import { createDeps, teamSummaries } from './host.js'
+import { auditedInit, createDeps, teamSummaries } from './host.js'
 import type { CommandDeps } from '@weiping/wingline-core'
 
 let deps: CommandDeps | undefined
@@ -30,6 +30,16 @@ export default function activate(orca: OrcaWorkerApi): void {
     } catch (err) {
       return { reachable: false, version: null, terminals: 0, error: err instanceof Error ? err.message : String(err) }
     }
+  })
+
+  orca.panels.handle('probe.audit', async ({ name, repo, template }) => {
+    const init = auditedInit()
+    const result = (await init.init(shared(), { mode: 'template', name, repo, template: template ?? 'duo' })) as {
+      team: string
+      specPath: string
+      created: boolean
+    }
+    return result
   })
 
   orca.panels.handle('teams.list', async () => {

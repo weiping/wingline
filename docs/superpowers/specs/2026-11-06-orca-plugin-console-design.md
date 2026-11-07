@@ -275,7 +275,8 @@ Worker → Panel 事件：`team.changed`、`attention.changed`、`task.changed`�
 - 探针 3（面板↔worker request 往返）：**成立**（panel.test 用 `mockHost.requests` 应答，`plugin.request` 正常）。
 - 探针 2（worker 内调 `orca … --json`）：**成立**。用户批准指纹 `ap1-e8e1be4c96515a82aec88c5ba0b87b79` 后实跑
   `orca plugin dev request packages/orca-plugin probe.orca` → `{ reachable: true, version: "1.4.250", terminals: 5 }`。
-- 探针 4（audit parity）、5（编辑器可行性）：**未做**。
+- 探针 4（audit parity）：**成立**。见 §15.3。
+- 探针 5（编辑器可行性）：**成立，不必用 HTML 面板**。见 §15.4。
 
 **真机面板**：已 `orca plugin open local.wingline --panel wingline` 在 Orca 里打开，`orca plugin shot` 截图确认渲染正常
 （标题「雁阵」、徽标「0 个团队」、空态提示）。本机 `~/.wingline/state.db` **账本为空**（0 团队 / 0 岗位），故显示空态；
@@ -284,6 +285,42 @@ Worker → Panel 事件：`team.changed`、`attention.changed`、`task.changed`�
 **运维备忘**：开发插件已在 Orca 中批准并加载；撤销用 `orca plugin dev unload packages/orca-plugin`。
 worker 首次被 request 拉起时偶发 `unavailable: worker disconnected before responding`，
 用 `orca plugin dev watch <dir>` 常驻或重试一次即可（探针即遇此情况）。
+
+### 15.3 探针 4：CLI 与插件的审计一致（成立）
+
+**前置修正**：审计表原本在 `packages/cli/src/audit-table.ts`（CLI 私有），插件无法复用 → **同一件事会写出两种记录**。
+已把表移到 core：`packages/core/src/audit-table.ts` 导出 `coreAuditTable()` / `CORE_AUDIT`，
+CLI 改成 `export const AUDIT = coreAuditTable<Commands>()`（内容不变，1853 个测试仍绿）。
+
+**实测**（同一台机器、同一张账本）：
+
+| 来源 | 团队 | command | actor | outcome | target | detail |
+|------|------|---------|-------|---------|--------|--------|
+| CLI `wl init probe-cli --template duo --repo …` | `probe-cli` | `init` | `human` | `ok` | `null` | `{"mode":"template","template":"duo","created":true}` |
+| 插件 `probe.audit`（worker → core → `auditedCommands`） | `probe-plugin` | `init` | `human` | `ok` | `null` | `{"mode":"template","template":"duo","created":true}` |
+
+**逐字段一致**（除团队名不同）。actor 用 `human`，命令名不带来源前缀 → 与 CLI 记录同形；
+若日后要区分来源，用 `auditedCommands` 的 `prefix` 选项（控制台已在用 `console:` 前缀）。
+
+### 15.4 探针 5：3C/3E 编辑器能不能放进 components 面板（成立，不用 HTML）
+
+对着 components API 逐条核了 3C/3E 编辑器需要的能力：
+
+| 编辑器需求 | components 是否有 | 结论 |
+|------------|-----------------|------|
+| 岗位增删 / 角色 / 开关 | `Input` `Select` `Switch` `Checkbox` `IconButton` | ✓ |
+| brief 正文、`NORMS.md` | `Textarea` + `Markdown` 预览 | ✓ |
+| 表单 ↔ YAML 双视图 | `Tabs` + `Grid(columns:2)` + `CodeView`（左右两栏） | ✓（YAML 原文由 worker 从 core 取） |
+| 预演（改了什么、会跑什么命令） | `SpecPlan` 结构化（posts/fields/commands）→ `Table` + `Callout` | ✓ 结构化预览，**不需要**文本 diff |
+| 冲突 / 报错提示 | `Callout` | ✓ |
+| 大表格（岗位、字段） | `Table`（排序/选择/加载更多） | ✓ |
+
+**结论**：Phase 3 的编辑器**用 components 面板即可**，不必降级到 HTML 面板。
+**条件**：core 需再导出一层「插件可用的 spec 门面」——`loadTeamSpec`（YAML→结构）、`applySpecOp`/`setField`（结构→YAML，保持注释与排版）、
+`resolveDocPath`/`readDocText`/`writeDocAtomic`（`NORMS.md`、`briefs/*.md`）、`planSpecChange`（预演）——都在 core 里，但要用一个
+`createSpecFacade(deps, team)` 这样的稳定入口包起来，避免插件直接摸文件系统。
+
+**结论同时收紧了 §7**：编辑器**不必**留在 `wl console`（决定 1 保留为过渡期妥协，不是终局）。
 
 ### 15.1 踩坑：本机 Orca 1.4.250 安装缺 `orca.d.ts`
 
