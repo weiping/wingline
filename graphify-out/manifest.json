@@ -558,9 +558,9 @@
     "semantic_hash": ""
   },
   "packages/core/src/orca/client.ts": {
-    "mtime": 1794048274.952018,
-    "seen": 1794048436.999404,
-    "ast_hash": "9015e3af239178496b7b6980bff34c70",
+    "mtime": 1794057434.1651514,
+    "seen": 1794057510.537584,
+    "ast_hash": "b2d8a4862027090d71a061857b1b4f53",
     "semantic_hash": ""
   },
   "packages/core/src/orca/cmd-escape.ts": {
@@ -1182,9 +1182,9 @@
     "semantic_hash": ""
   },
   "packages/core/test/orca/client.test.ts": {
-    "mtime": 1794048278.50832,
-    "seen": 1794048436.99946,
-    "ast_hash": "653674ff2fc5e29b2a8a2a3347483135",
+    "mtime": 1794057451.5124133,
+    "seen": 1794057510.537642,
+    "ast_hash": "6fcfa7fcba592c14c30369fd0e480e48",
     "semantic_hash": ""
   },
   "packages/core/test/orca/cmd-escape.test.ts": {
@@ -2106,8 +2106,8 @@
     "semantic_hash": ""
   },
   "docs/superpowers/specs/2026-11-06-orca-plugin-console-design.md": {
-    "mtime": 1794056541.3293586,
-    "seen": 1794056549.7560918,
+    "mtime": 1794057502.398627,
+    "seen": 1794057510.53774,
     "ast_hash": "220ebfbaff1bfe7570c3edb7b1db3c60",
     "semantic_hash": ""
   },

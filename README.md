@@ -15,6 +15,19 @@ npm install -g @weiping/wingline
 
 > 状态：阶段 0–1（团队与岗位）、阶段 2A（任务工作流）、阶段 2B（调度员与巡查）、阶段 3A（重启恢复与审计时间线）、阶段 3B（本地控制台）、阶段 3C（团队编辑器 / Orca 界面同步 / `wl tui`）已完成；阶段 3D 已实现登录后自动恢复（`wl restore --all` / `wl autostart`）、未读标记与远端环境（Lima 等）的会话恢复，读画面的巡查信号（上下文快满、用量上限）及后续阶段见[设计总纲](docs/superpowers/specs/2026-10-10-wingline-design.md)。
 
+## 开发工具：造一条演示提问
+
+面板与 CLI 的收件箱要有内容可看时，用这条命令造一条**真链路**的提问
+（给调度员发一条 Orca 编排消息 → 调度员中继给人类 → 落 `questions` 表 → 面板可见可回答）：
+
+```bash
+pnpm demo:question                                   # 给 duo 造一条
+pnpm demo:question -- --team duo --body "改哪个文件？" --count 2
+pnpm demo:question -- --reset                        # 清掉造过的演示提问
+```
+
+造完在 Orca 插件面板 → duo → 收件箱就能看到「待答」，可以直接回答。
+
 ## 功能
 
 - **声明式团队**：`team.yaml` 写明岗位、使用的 agent 与模型、worktree、岗位简报和团队规范。`wl up` 幂等，重复执行不会产生重复终端；岗位地址形如 `builder@duo`。

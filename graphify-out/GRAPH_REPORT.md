@@ -1,7 +1,7 @@
 # Graph Report - wingline  (2026-11-07)
 
 ## Corpus Check
-- 375 files · ~331,340 words
+- 375 files · ~331,419 words
 - Verdict: corpus is large enough that graph structure adds value.
 - Unclassified: 7 file(s) not represented in the graph (top: (none) 5, .css 1, .cmd 1)
 
@@ -11,7 +11,7 @@
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `ec3944b3`
+- Built from commit: `2bd2cf4c`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
