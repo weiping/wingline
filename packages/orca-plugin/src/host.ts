@@ -24,6 +24,7 @@ import {
   type SpecForEdit,
   type TaskRow,
   type TimelineEvent,
+  showTask,
   resolveOrcaExecutable,
   winglineHome,
   type CommandDeps
@@ -257,6 +258,49 @@ export async function postDetailDto(deps: CommandDeps, team: string, address: st
     frozen: frozen && { reason: frozen.reason, frozenAt: frozen.frozenAt },
     hushedUntil,
     events: timelineDto(logRes.events)
+  }
+}
+
+export interface TaskDetailDto {
+  id: string
+  team: string
+  status: string
+  title: string
+  kind: string
+  tags: string[]
+  plan: string | null
+  claimedBy: string | null
+  epoch: number
+  gateFailures: number
+  outcome: string | null
+  reportedBy: string | null
+  gateId: string | null
+  gateOutput: string | null
+  result: string | null
+  history: Array<{ at: string; actor: string; action: string; detail: string | null }>
+}
+
+/** 任务详情：与 `wl task show --history` 同一口径（showTask + history）。 */
+export async function taskDetailDto(deps: CommandDeps, id: string): Promise<TaskDetailDto> {
+  const t = await showTask(deps, { id, history: true })
+  const team = deps.registry.getTaskExt(t.id)?.team ?? '-'
+  return {
+    id: t.id,
+    team,
+    status: t.status,
+    title: t.title,
+    kind: t.kind,
+    tags: t.tags,
+    plan: t.plan,
+    claimedBy: t.claimedBy,
+    epoch: t.epoch,
+    gateFailures: t.gateFailures,
+    outcome: t.outcome,
+    reportedBy: t.reportedBy,
+    gateId: t.gateId ?? null,
+    gateOutput: t.gateOutput ?? null,
+    result: t.result,
+    history: (t.history ?? []).map((h) => ({ at: h.at, actor: h.actor, action: h.action, detail: h.detail }))
   }
 }
 

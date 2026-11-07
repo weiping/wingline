@@ -18,7 +18,7 @@ import {
   Text
 } from 'orca'
 
-import type { InboxDto, PostDetailDto, PostDto, PreviewDto, TaskDto } from './host.js'
+import type { InboxDto, PostDetailDto, PostDto, PreviewDto, TaskDetailDto, TaskDto } from './host.js'
 import type { TeamSummary } from './protocol.js'
 
 type View = 'posts' | 'inbox' | 'tasks'
@@ -50,6 +50,9 @@ const detail = atom<PostDetailDto | null>(null)
 const detailAddress = atom('detailAddress', '')
 /** 回答提问的草稿，按 messageId 存。 */
 const replyDrafts = atom<Record<string, string>>({})
+/** 任务详情（计划 / 历史 / gate 输出），按任务 id 存。 */
+const taskDetails = atom<Record<string, TaskDetailDto>>({})
+const detailLoading = atom('detailLoading', '')
 
 async function refresh(): Promise<void> {
   set(loading, true)
@@ -118,6 +121,18 @@ async function openTerminal(address: string): Promise<void> {
   }
 }
 
+async function loadTaskDetail(id: string): Promise<void> {
+  set(detailLoading, id)
+  try {
+    const answer = await plugin.request('task.detail', { id })
+    set(taskDetails, { ...read(taskDetails), [id]: answer as TaskDetailDto })
+  } catch (err) {
+    set(error, err instanceof Error ? err.message : String(err))
+  } finally {
+    set(detailLoading, '')
+  }
+}
+
 async function loadPreview(address: string): Promise<void> {
   set(previewAddress, address)
   set(preview, null)
@@ -166,6 +181,10 @@ async function runWrite(
 
 export function setup(ctx: import('orca').PanelContext): void {
   ctx.subscriptions.push(plugin.on('teams.changed', (payload) => set(teams, payload.teams as TeamSummary[])))
+  // worker 轮询推送：面板开着时免手刷。
+  ctx.subscriptions.push(plugin.on('inbox.changed', ({ team, inbox: box }) => set(inbox, { ...read(inbox), [team]: box })))
+  ctx.subscriptions.push(plugin.on('tasks.changed', ({ team, tasks: rows }) => set(tasks, { ...read(tasks), [team]: rows })))
+  ctx.subscriptions.push(plugin.on('posts.changed', ({ team, posts: rows }) => set(posts, { ...read(posts), [team]: rows })))
   void refresh()
 }
 
@@ -374,6 +393,8 @@ function InboxView({ box, team }: { box: InboxDto | undefined; team: string }) {
 
 function TasksView({ rows, team }: { rows: TaskDto[] | undefined; team: string }) {
   const actorText = read(actor)
+  const details = read(taskDetails)
+  const loadingId = read(detailLoading)
   if (!rows) return <Text muted size="xs">没有任务数据。</Text>
   if (rows.length === 0) return <Text muted size="xs">这个团队还没有任务。</Text>
   return (
@@ -386,43 +407,73 @@ function TasksView({ rows, team }: { rows: TaskDto[] | undefined; team: string }
           onChange={(v: string) => set(actor, v)}
         />
       </Row>
-      {rows.map((t) => (
-        <Stack key={t.id} gap="xs">
-          <Row justify="between" gap="xs">
-            <Text size="xs" truncate>
-              {t.title}
-            </Text>
-            <Row gap="xs">
-              {t.claimedBy !== null && (
-                <Text size="xs" muted>
-                  {t.claimedBy}
-                </Text>
-              )}
-              <Badge tone={STATUS_TONE[t.status] ?? 'neutral'}>{t.status}</Badge>
+      {rows.map((t) => {
+        const d = details[t.id]
+        return (
+          <Stack key={t.id} gap="xs">
+            <Row justify="between" gap="xs">
+              <Text size="xs" truncate>
+                {t.title}
+              </Text>
+              <Row gap="xs">
+                {t.claimedBy !== null && (
+                  <Text size="xs" muted>
+                    {t.claimedBy}
+                  </Text>
+                )}
+                <Badge tone={STATUS_TONE[t.status] ?? 'neutral'}>{t.status}</Badge>
+              </Row>
             </Row>
-          </Row>
-          <Row gap="xs">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={actorText.trim().length === 0 || t.status !== 'ready'}
-              onPress={() => runWrite('claim', { id: t.id, as: actorText }, () => loadTasks(team), `已认领 ${t.title}`)}
-            >
-              认领
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={actorText.trim().length === 0 || (t.status !== 'dispatched' && t.status !== 'ready')}
-              onPress={() =>
-                runWrite('done', { id: t.id, as: actorText }, () => loadTasks(team), `已提交完成 ${t.title}`)
-              }
-            >
-              完成
-            </Button>
-          </Row>
-        </Stack>
-      ))}
+            <Row gap="xs">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={actorText.trim().length === 0 || t.status !== 'ready'}
+                onPress={() => runWrite('claim', { id: t.id, as: actorText }, () => loadTasks(team), `已认领 ${t.title}`)}
+              >
+                认领
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={actorText.trim().length === 0 || (t.status !== 'dispatched' && t.status !== 'ready')}
+                onPress={() =>
+                  runWrite('done', { id: t.id, as: actorText }, () => loadTasks(team), `已提交完成 ${t.title}`)
+                }
+              >
+                完成
+              </Button>
+              {loadingId === t.id ? (
+                <Spinner label="读取详情" labelHidden />
+              ) : (
+                <Button variant="ghost" size="sm" onPress={() => loadTaskDetail(t.id)}>
+                  详情
+                </Button>
+              )}
+            </Row>
+            {d !== undefined && (
+              <Stack gap="xs">
+                {d.plan !== null && <Text size="xs">计划：{d.plan}</Text>}
+                {d.outcome !== null && <Text size="xs">结果：{d.outcome}</Text>}
+                {d.gateFailures > 0 && <Text size="xs">闸门连败 {d.gateFailures} 次</Text>}
+                {d.gateOutput !== null && <CodeView code={d.gateOutput.slice(-800)} label="gate 输出（尾部）" maxHeight={160} />}
+                {d.history.length > 0 && (
+                  <>
+                    <Text size="xs" muted>
+                      历史（最近 {Math.min(d.history.length, 8)} 条）：
+                    </Text>
+                    {d.history.slice(-8).reverse().map((h) => (
+                      <Text key={`${h.at}-${h.action}`} size="xs">
+                        {h.at.slice(11, 19)} {h.action} · {h.actor}
+                      </Text>
+                    ))}
+                  </>
+                )}
+              </Stack>
+            )}
+          </Stack>
+        )
+      })}
       <Text size="xs" muted>
         写操作以「操作身份」岗位执行，进审计（actor=human）。
       </Text>

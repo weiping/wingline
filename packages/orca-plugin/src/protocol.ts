@@ -41,10 +41,16 @@ declare module 'orca' {
     'post.preview': { input: { address: string; lines?: number }; output: import('./host.js').PreviewDto }
     /** 岗位详情：当前任务、信号、冻结、时间线 50 条。 */
     'post.detail': { input: { team: string; address: string }; output: import('./host.js').PostDetailDto }
+    /** 任务详情：计划、历史、gate 输出。 */
+    'task.detail': { input: { id: string }; output: import('./host.js').TaskDetailDto }
   }
   interface PluginPanelEvents {
     /** 面板刷新时 worker 广播。 */
     'teams.changed': { teams: TeamSummary[] }
+    /** worker 轮询发现变化后推送（免手刷）。 */
+    'inbox.changed': { team: string; inbox: import('./host.js').InboxDto }
+    'tasks.changed': { team: string; tasks: import('./host.js').TaskDto[] }
+    'posts.changed': { team: string; posts: import('./host.js').PostDto[] }
   }
 }
 

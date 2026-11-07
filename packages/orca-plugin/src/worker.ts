@@ -15,6 +15,7 @@ import {
   postPreview,
   replyQuestion,
   specForEditDto,
+  taskDetailDto,
   taskDtos,
   teamSummaries,
   unfreezePost
@@ -34,15 +35,39 @@ const STATUS_BAR_INTERVAL_MS = 30_000
 
 let statusTimer: ReturnType<typeof setInterval> | null = null
 
-/** 状态条刷新：各团队收件箱的待处理数汇总；有待处理时用 warning 色。 */
-async function refreshStatusBar(orca: OrcaWorkerApi): Promise<void> {
+/** 上次推送给面板的快照（JSON 串），变了才推，避免面板反复重画。 */
+const lastPushed = new Map<string, string>()
+
+async function pushIfChanged(orca: OrcaWorkerApi, key: string, event: 'inbox.changed' | 'tasks.changed' | 'posts.changed', team: string, payload: unknown): Promise<void> {
+  const json = JSON.stringify(payload)
+  if (lastPushed.get(key) === json) return
+  lastPushed.set(key, json)
+  orca.panels.post(event, { team, ...(payload as object) })
+}
+
+/** 轮询一圈：更新状态条，并把每个团队的收件箱 / 任务 / 岗位变化推给打开的面板。 */
+async function refreshAll(orca: OrcaWorkerApi): Promise<void> {
   const d = shared()
   let pending = 0
   for (const team of d.registry.listTeams()) {
     try {
-      pending += (await inboxDto(d, team.name)).pending
+      const inbox = await inboxDto(d, team.name)
+      pending += inbox.pending
+      await pushIfChanged(orca, `inbox:${team.name}`, 'inbox.changed', team.name, inbox)
     } catch {
       // 单个团队读不到（未启动 / Orca 不可达）不影响其它团队
+    }
+    try {
+      const tasks = await taskDtos(d, team.name)
+      await pushIfChanged(orca, `tasks:${team.name}`, 'tasks.changed', team.name, { tasks })
+    } catch {
+      // 同上
+    }
+    try {
+      const posts = await postDtos(d, team.name)
+      await pushIfChanged(orca, `posts:${team.name}`, 'posts.changed', team.name, { posts })
+    } catch {
+      // 同上
     }
   }
   await orca.host.call('statusBar.update', {
@@ -60,8 +85,8 @@ async function refreshStatusBar(orca: OrcaWorkerApi): Promise<void> {
 function startStatusBar(orca: OrcaWorkerApi): void {
   if (statusTimer !== null) return
   const tick = (): void => {
-    refreshStatusBar(orca).catch((err) => {
-      console.warn('[wingline] 状态条刷新失败：', err instanceof Error ? err.message : String(err))
+    refreshAll(orca).catch((err) => {
+      console.warn('[wingline] 轮询失败：', err instanceof Error ? err.message : String(err))
     })
   }
   tick()
@@ -168,5 +193,9 @@ export default function activate(orca: OrcaWorkerApi): void {
 
   orca.panels.handle('post.detail', async ({ team, address }) => {
     return postDetailDto(shared(), team, address)
+  })
+
+  orca.panels.handle('task.detail', async ({ id }) => {
+    return taskDetailDto(shared(), id)
   })
 }
