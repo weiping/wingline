@@ -138,11 +138,11 @@ test('runCreate / runUse / runShow read run.coordinator_handle; runUse has no --
     'orchestration run-show': { run: { id: 'run-1', coordinator_handle: 'h2' } },
   })
   expect(await client.runCreate({ objective: 'wingline:duo', from: 'h1', retryRequest: 'rid' })).toEqual({ id: 'run-1', coordinatorHandle: 'h1', replayed: false })
-  expect(calls[0]).toEqual(['orchestration', 'run-create', '--objective', 'wingline:duo', '--from', 'h1', '--retry-request', 'rid'])
+  expect(calls[0]).toEqual(['orchestration', 'run-create', '--full', '--objective', 'wingline:duo', '--from', 'h1', '--retry-request', 'rid'])
   expect(await client.runUse({ id: 'run-1', from: 'h2' })).toEqual({ coordinatorHandle: 'h2' })
-  expect(calls[1]).toEqual(['orchestration', 'run-use', '--id', 'run-1', '--from', 'h2'])
+  expect(calls[1]).toEqual(['orchestration', 'run-use', '--full', '--id', 'run-1', '--from', 'h2'])
   expect(await client.runShow({ id: 'run-1' })).toEqual({ coordinatorHandle: 'h2' })
-  expect(calls[2]).toEqual(['orchestration', 'run-show', '--id', 'run-1'])
+  expect(calls[2]).toEqual(['orchestration', 'run-show', '--full', '--id', 'run-1'])
 })
 test('runList maps runs; requestShow reads state', async () => {
   const { client, calls } = clientWith({
@@ -152,6 +152,34 @@ test('runList maps runs; requestShow reads state', async () => {
   expect(await client.runList()).toEqual([{ id: 'run-1', objective: 'wingline:duo', coordinatorHandle: 'h1', createdAt: '2026-10-15 01:00:00' }])
   expect(await client.requestShow({ request: 'rid' })).toEqual({ state: 'completed', receipt: {} })
   expect(calls[1]).toEqual(['orchestration', 'request-show', '--request', 'rid'])
+})
+test('runList follows nextCursor to the last page', async () => {
+  const calls: string[][] = []
+  const runner: OrcaRunner = {
+    async json<T>(args: string[]) {
+      calls.push(args)
+      const page = args[args.length - 1] === 'c1'
+        ? { runs: [{ id: 'run-2', objective: 'wingline:duo', coordinator_handle: null, created_at: 'b' }] }
+        : { runs: [{ id: 'run-1', objective: 'wingline:rt', coordinator_handle: 'h1', created_at: 'a' }], nextCursor: 'c1' }
+      return page as T
+    },
+    async text() { return '' },
+  }
+  expect(await createOrcaClient(runner).runList()).toEqual([
+    { id: 'run-1', objective: 'wingline:rt', coordinatorHandle: 'h1', createdAt: 'a' },
+    { id: 'run-2', objective: 'wingline:duo', coordinatorHandle: null, createdAt: 'b' },
+  ])
+  expect(calls[0]).toEqual(['orchestration', 'run-list', '--full'])
+  expect(calls[1]).toEqual(['orchestration', 'run-list', '--full', '--cursor', 'c1'])
+})
+test('runList stops when the cursor stops advancing', async () => {
+  const runner: OrcaRunner = {
+    async json<T>() {
+      return { runs: [{ id: 'run-1', objective: 'wingline:rt', coordinator_handle: 'h1', created_at: 'a' }], nextCursor: 'c1' } as T
+    },
+    async text() { return '' },
+  }
+  expect(await createOrcaClient(runner).runList()).toHaveLength(2)
 })
 test('taskCreate passes quotes/newline/中文 verbatim and appends --parent / --retry-request only when given', async () => {
   const { client, calls } = clientWith({ 'orchestration task-create': { task: { id: 't1' }, ...m('x', true) } })
