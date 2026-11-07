@@ -103,6 +103,8 @@ export interface OrcaClient {
   terminalWait(a: { handle: string; forState: 'tui-idle'; timeoutMs: number }): Promise<{ satisfied: boolean }>
   terminalSend(a: { handle: string; text: string; enter: true; waitSubmitSec: number; retryRequest?: string }): Promise<SendResult>
   terminalClose(a: { handle: string }): Promise<CloseResult>
+  /** 把 Orca 窗口切到某个终端标签页（UI 导航，不改变终端本身）。 */
+  terminalSwitch(a: { handle: string }): Promise<{ navigated: boolean }>
   runCreate(a: { objective: string; from: string; retryRequest?: string }): Promise<{ id: string; coordinatorHandle: string; replayed: boolean }>
   runUse(a: { id: string; from: string }): Promise<{ coordinatorHandle: string }>
   runShow(a: { id: string }): Promise<{ coordinatorHandle: string }>

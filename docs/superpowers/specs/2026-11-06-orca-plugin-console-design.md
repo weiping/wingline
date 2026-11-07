@@ -330,7 +330,17 @@ CLI 改成 `export const AUDIT = coreAuditTable<Commands>()`（内容不变，18
 - 插件：`spec.readForEdit` 请求（worker 调用门面，返回 YAML 摘要 DTO）
 - 测试：`packages/core/test/spec/facade.test.ts`（3/3 绿）
 
-### 15.1 踩坑：本机 Orca 1.4.250 安装缺 `orca.d.ts`
+### 15.6 岗位终端按钮（2026-11-07）
+
+- core 新增 `OrcaClient.terminalSwitch` → `orca terminal switch --terminal <handle>`（读 `focus.navigated`）；
+  单测 `packages/core/test/orca/client.test.ts`；`FakeOrca` 同步补上。
+- 插件 worker：`team.posts`（走 core 的 `ps()`，给 live/uncertain/offline 与 handle）、`post.openTerminal`（先 `ps()` 刷新 handle，再 `terminalSwitch`）。
+- 面板：团队卡片加「岗位终端」展开按钮，展开后每个岗位一行（地址、牵头岗标记、状态徽标、「打开终端」）。
+- 实测（duo，两个 live 岗位）：`team.posts` 返回 builder/checker 的 handle；`post.openTerminal` 对真实岗位 `navigated: true`，
+  对不存在岗位 `navigated: false`（按钮此时禁用）。
+- **注意**：worker 里 `deps.orca.terminalSwitch` 一度报 “not a function”——worker 进程缓存了旧的 core dist。
+  改 core 后要 `orca plugin restart`（或 `pnpm build` 后重启 worker），不是 reload。
+：本机 Orca 1.4.250 安装缺 `orca.d.ts`
 
 `orca plugin create` / `orca plugin types` 在本机报错：
 

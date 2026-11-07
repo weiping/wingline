@@ -383,6 +383,10 @@ export class FakeOrca implements OrcaClient {
     if (this.ptyKilled) this.terminals = this.terminals.filter((t) => t.handle !== a.handle)
     return { ptyKilled: this.ptyKilled }
   }
+  async terminalSwitch(a: { handle: string }) {
+    this.calls.push('terminalSwitch')
+    return { navigated: this.terminals.some((t) => t.handle === a.handle) }
+  }
 }
 
 /** 在任务当前的 dispatch 上推一条 question 消息（R6 形态），并记入 questions。 */

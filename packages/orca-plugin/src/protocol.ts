@@ -16,6 +16,10 @@ declare module 'orca' {
     'spec.readForEdit': { input: { team: string }; output: import('./host.js').SpecForEditDto }
     /** 团队清单（来自本地账本，不碰 Orca）。 */
     'teams.list': { output: { teams: TeamSummary[] } }
+    /** 岗位列表：走 core 的 ps()，含存活状态与终端 handle。 */
+    'team.posts': { input: { team: string }; output: { posts: import('./host.js').PostDto[] } }
+    /** 把 Orca 窗口切到某个岗位的终端。 */
+    'post.openTerminal': { input: { address: string }; output: { navigated: boolean; handle: string | null } }
   }
   interface PluginPanelEvents {
     /** 面板刷新时 worker 广播。 */

@@ -114,6 +114,12 @@ test('terminalClose reads close.ptyKilled', async () => {
   expect(calls[0]).toEqual(['terminal', 'close', '--terminal', 'h'])
 })
 
+test('terminalSwitch reads focus.navigated', async () => {
+  const { client, calls } = clientWith({ 'terminal switch': { focus: { navigated: true } } })
+  expect(await client.terminalSwitch({ handle: 'h' })).toEqual({ navigated: true })
+  expect(calls[0]).toEqual(['terminal', 'switch', '--terminal', 'h'])
+})
+
 test("terminalWait: Orca reports a wait timeout as an ok:false 'timeout' error, which means not satisfied", async () => {
   const runner: OrcaRunner = {
     async json() { throw new WinglineError('orca', 'timeout', 'timeout') },

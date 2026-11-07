@@ -69,7 +69,7 @@ const toTask = (t: RawTask): OrchestrationTask => ({
   result: t.result ?? null,
 })
 
-type OrchestrationMethods = Omit<OrcaClient, 'version' | 'status' | 'search' | 'tabCreate' | 'terminalList' | 'terminalCreate' | 'terminalWait' | 'terminalSend' | 'terminalClose'>
+type OrchestrationMethods = Omit<OrcaClient, 'version' | 'status' | 'search' | 'tabCreate' | 'terminalList' | 'terminalCreate' | 'terminalWait' | 'terminalSend' | 'terminalClose' | 'terminalSwitch'>
 
 // Orca 1.4.251 起 run-* 的简版回执只剩 { runId, objective }（没有 coordinator_handle），
 // --full 才给完整记录；下面这几个调用都要 --full，否则协调者句柄读不出来。
@@ -282,7 +282,7 @@ const orchestrationMethods = (runner: OrcaRunner): OrchestrationMethods => ({
   ...inboxMethods(runner),
 })
 
-type TerminalMethods = Pick<OrcaClient, 'terminalList' | 'terminalCreate' | 'terminalWait' | 'terminalSend' | 'terminalClose'>
+type TerminalMethods = Pick<OrcaClient, 'terminalList' | 'terminalCreate' | 'terminalWait' | 'terminalSend' | 'terminalClose' | 'terminalSwitch'>
 
 function terminalMethods(runner: OrcaRunner): TerminalMethods {
   return {
@@ -332,6 +332,10 @@ function terminalMethods(runner: OrcaRunner): TerminalMethods {
       return { ptyKilled: r.close.ptyKilled }
     },
 
+    async terminalSwitch(a) {
+      const r = await runner.json<{ focus: { navigated: boolean } }>(['terminal', 'switch', '--terminal', a.handle])
+      return { navigated: r.focus.navigated }
+    },
   }
 }
 

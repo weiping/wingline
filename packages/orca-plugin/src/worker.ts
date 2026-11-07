@@ -2,7 +2,7 @@
 // 无构建步骤：.ts 由 Orca 直接转译（不做类型检查，类型由 tsc -p . 保证）。
 import type { OrcaWorkerApi } from 'orca/worker'
 
-import { auditedInit, createDeps, specForEditDto, teamSummaries } from './host.js'
+import { auditedInit, createDeps, openPostTerminal, postDtos, specForEditDto, teamSummaries } from './host.js'
 import { createSpecFacade, type CommandDeps } from '@weiping/wingline-core'
 
 let deps: CommandDeps | undefined
@@ -51,5 +51,14 @@ export default function activate(orca: OrcaWorkerApi): void {
     const teams = teamSummaries(shared())
     orca.panels.post('teams.changed', { teams })
     return { teams }
+  })
+
+  orca.panels.handle('team.posts', async ({ team }) => {
+    const posts = await postDtos(shared(), team)
+    return { posts }
+  })
+
+  orca.panels.handle('post.openTerminal', async ({ address }) => {
+    return openPostTerminal(shared(), address)
   })
 }

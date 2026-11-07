@@ -9,9 +9,11 @@ import {
   createCallLog,
   createOrcaClient,
   createOrcaRunner,
+  ps,
   Registry,
   createSpecFacade,
   initTeamCmd,
+  type PsRow,
   type SpecForEdit,
   resolveOrcaExecutable,
   winglineHome,
@@ -69,6 +71,38 @@ export function teamSummaries(deps: CommandDeps): Array<{
     posts: deps.registry.listPosts(row.name).length,
     specPath: row.specPath
   }))
+}
+
+export interface PostDto {
+  address: string
+  agent: string
+  status: PsRow['status']
+  handle: string | null
+  isLead: boolean
+}
+
+/** 岗位列表：走 core 的 ps()（同一套口径：live / uncertain / offline 与 handle 解析）。 */
+export async function postDtos(deps: CommandDeps, team: string): Promise<PostDto[]> {
+  const rows = await ps(deps, { team })
+  return rows.map((r) => ({
+    address: r.address,
+    agent: r.agent,
+    status: r.status,
+    handle: r.handle,
+    isLead: r.isLead
+  }))
+}
+
+/** 把 Orca 窗口切到某个岗位的终端；没有存活终端时返回 navigated: false。 */
+export async function openPostTerminal(deps: CommandDeps, address: string): Promise<{ navigated: boolean; handle: string | null }> {
+  const team = address.split('@')[1]
+  if (!team) return { navigated: false, handle: null }
+  // 先跑一次 ps()：它会把当前活着的终端 handle 写回注册表。
+  await ps(deps, { team })
+  const post = deps.registry.getPost(address)
+  if (!post?.handle) return { navigated: false, handle: null }
+  const res = await deps.orca.terminalSwitch({ handle: post.handle })
+  return { navigated: res.navigated, handle: post.handle }
 }
 
 /**
