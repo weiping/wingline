@@ -67,6 +67,10 @@ export function dispatcherLaunchCommand(a: {
 export interface UpArgs {
   team: string
   platform?: NodeJS.Platform
+  /** 覆盖启动命令里的 node 可执行文件。插件 worker 的 process.execPath 是宿主（Orca）的二进制，必须传真实 node。 */
+  node?: string
+  /** 覆盖启动命令里的 wingline 入口脚本。插件等宿主进程的 argv[1] 不是 wingline，必须显式传。 */
+  script?: string
   confirmMs?: number
   pollMs?: number
   sleep?: (ms: number) => Promise<void>
@@ -101,7 +105,13 @@ export async function dispatcherUp(
   }
   const platform = a.platform ?? process.platform
   const command = dispatcherLaunchCommand({
-    platform, node: process.execPath, script: process.argv[1] ?? '', team: a.team, home: deps.home, orca: deps.orcaPath, nodeOnPath: platform === 'win32' ? nodeOnPath(deps) : undefined,
+    platform,
+    node: a.node ?? process.execPath,
+    script: a.script ?? process.argv[1] ?? '',
+    team: a.team,
+    home: deps.home,
+    orca: deps.orcaPath,
+    nodeOnPath: platform === 'win32' ? nodeOnPath(deps) : undefined,
   })
   const lead = deps.registry.listPosts(a.team).find((p) => p.isLead)!
   const { handle } = await deps.orca.terminalCreate({ worktree: lead.worktree, title: address, command })

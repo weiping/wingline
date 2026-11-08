@@ -460,6 +460,18 @@ export class Registry {
     this.db.prepare('DELETE FROM requests WHERE id = ?').run(id)
   }
 
+  /**
+   * 岗位生命周期结束（down --close / 终端已消失）时，把该岗位未完成的请求行结为 done。
+   * 不结账的话，下次 up 的 nextRequestId 会沿用在 Orca 侧早已完成的旧行（本地还是 uncertain），
+   * beginRequest 与 Orca 的完成记录互相矛盾，up 卡死在 request_already_done。
+   * 返回结账的行数。
+   */
+  finalizePostRequests(team: string, post: string): number {
+    const open = this.listOpenRequests(`${team}:${post}:`)
+    for (const r of open) this.finishRequest(r.id, 'done', { closed: true })
+    return open.length
+  }
+
   listOpenRequests(prefix: string): Array<{ id: string; state: RequestState; updatedAt: string; args: string | null }> {
     const rows = this.db
       .prepare("SELECT id, state, updated_at, args FROM requests WHERE state IN ('pending','uncertain') AND substr(id, 1, ?) = ? ORDER BY id")

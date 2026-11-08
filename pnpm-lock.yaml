@@ -14,6 +14,9 @@ importers:
       '@types/node':
         specifier: ^22.13.0
         version: 22.20.5
+      '@weiping/wingline-core':
+        specifier: workspace:*
+        version: link:packages/core
       tsx:
         specifier: ^4.19.0
         version: 4.23.15
@@ -41,6 +44,16 @@ importers:
       zod:
         specifier: ^3.24.0
         version: 3.25.76
+
+  packages/orca-plugin:
+    dependencies:
+      '@weiping/wingline-core':
+        specifier: workspace:^
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^22.13.0
+        version: 22.20.5
 
   packages/web:
     dependencies:

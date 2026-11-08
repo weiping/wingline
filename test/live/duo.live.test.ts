@@ -42,6 +42,8 @@ test('spec 7.10 acceptance 1–5: up → up again → ps → send → down --clo
 
     const first = await wl(['up', yaml, '--json'], env)
     expect(first.json.result.posts.map((p: any) => p.outcome)).toEqual(['launched', 'launched'])
+    // Run 必须真的建出来：Orca 的 run-* 回执形状变了（简版只剩 runId），这里能钉住
+    expect(first.json.result.run.outcome).toBe('created')
     expect(await titles()).toEqual(expect.arrayContaining(['builder@duo', 'checker@duo']))
 
     const before = (await titles()).length

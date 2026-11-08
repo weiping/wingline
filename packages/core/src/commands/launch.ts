@@ -32,11 +32,21 @@ export async function recorded<T>(reg: Registry, id: string, fn: () => Promise<T
 
 export const stepDone = (reg: Registry, id: string) => reg.getRequest(id)?.state === 'done'
 
-/** 终端被关后重新拉起要换新 id，否则 Orca 会按旧 id 回放旧回执。 */
+/**
+ * 终端被关后重新拉起要换新 id，否则 Orca 会按旧 id 回放旧回执。
+ *
+ * 两段推进：
+ * ① brief 段（原语义，located 时也生效）：create+brief 都 done 才推进——
+ *    at_prompt 拒发后 brief 行缺失，重跑必须复用同一代把 brief 补发。
+ * ② 重启段（仅 !located，终端已消失）：create+wait 都 done 的代整代跳过——
+ *    没有 brief 行的岗位（wait 未确认就中断，brief 从未发生）原来会永远卡在
+ *    「create 已 done 的代」上，beginRequest 撞 request_already_done。
+ */
 export function lifetimeGen(l: Launch, post: string, located: boolean): number {
   const done = (step: Step, g: number) => stepDone(l.deps.registry, requestId(l.spec.name, post, step, l.hash, g))
   let g = 0
   while (done('create', g) && done('brief', g)) g++
+  if (!located) while (done('create', g) && done('wait', g)) g++
   if (!located && done('create', g)) g++
   return g
 }

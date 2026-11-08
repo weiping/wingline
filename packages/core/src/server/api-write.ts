@@ -26,6 +26,8 @@ import { realAutostartSys } from '../commands/autostart/sys.js'
 
 /** 控制台口径的参数：带 team 名（审计表靠它取团队），开关在路由层已归一成 boolean。 */
 export interface ConsoleUpArgs { team: string; draft?: boolean; newRun?: boolean; adoptRun?: string }
+/** 控制台 / 插件的调度员启动参数；node/script 供插件 worker 等非 wingline 宿主覆盖 self 命令。 */
+export interface ConsoleDispatcherUpArgs { team: string; node?: string; script?: string }
 export interface ConsoleDownArgs { team: string; close?: boolean }
 export interface ConsoleRestoreArgs { team: string; dryRun?: boolean; noTasks?: boolean; sessions?: Record<string, string> }
 
@@ -51,7 +53,7 @@ export interface WriteCommands {
   up: (deps: CommandDeps, a: ConsoleUpArgs) => Promise<UpResult>
   down: (deps: CommandDeps, a: ConsoleDownArgs) => Promise<DownResult>
   restore: (deps: CommandDeps, a: ConsoleRestoreArgs) => Promise<RestoreResult>
-  dispatcherUp: (deps: CommandDeps, a: { team: string }) => Promise<{ address: string; outcome: 'already_running' | 'started'; handle?: string }>
+  dispatcherUp: (deps: CommandDeps, a: ConsoleDispatcherUpArgs) => Promise<{ address: string; outcome: 'already_running' | 'started'; handle?: string }>
   dispatcherDown: (deps: CommandDeps, a: { team: string; close?: boolean }) => Promise<{ address: string; outcome: 'noop' | 'closed' | 'already_gone' }>
   initTeamCmd: typeof initTeamCmd
   autostartInstall: (deps: CommandDeps, a: { waitOrca?: string }) => Promise<{ platform: string; file: string; command: string[]; logPath: string; waitOrca: string }>
@@ -497,8 +499,8 @@ export const CONSOLE_AUDIT: AuditTable<WriteCommands> = {
   },
 }
 
-/** 控制台用 `console:`，TUI 用 `tui:`；两者共用同一张审计表，执行者都是 human。 */
-export function auditedWriteCommands(prefix: 'console:' | 'tui:'): WriteCommands {
+/** 控制台用 `console:`，TUI 用 `tui:`，Orca 插件用 `plugin:`；三者共用同一张审计表，执行者都是 human。 */
+export function auditedWriteCommands(prefix: 'console:' | 'tui:' | 'plugin:'): WriteCommands {
   const raw: WriteCommands = {
     send,
     createTask,
@@ -527,7 +529,7 @@ export function auditedWriteCommands(prefix: 'console:' | 'tui:'): WriteCommands
     },
     down: (deps, a) => down(deps, { team: a.team, close: !!a.close }),
     restore: (deps, a) => restore(deps, { team: a.team, dryRun: !!a.dryRun, noTasks: !!a.noTasks, sessions: a.sessions }),
-    dispatcherUp: (deps, a) => dispatcherUp(deps, { team: a.team }),
+    dispatcherUp: (deps, a) => dispatcherUp(deps, { team: a.team, node: a.node, script: a.script }),
     dispatcherDown: (deps, a) => dispatcherDown(deps, { team: a.team, close: a.close ?? true }),
     initTeamCmd,
     // 系统宿主（launchd/systemd）只有真实执行时才能取：默认 realAutostartSys，测试经 cmds 注入替换

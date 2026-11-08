@@ -1,0 +1,590 @@
+// 组装 wingline-core 需要的依赖：本地账本 + Orca 客户端。
+// 与 wl CLI 用同一套 core 函数与同一条审计链；插件只是另一条入口。
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+import {
+  attention,
+  auditedCommands,
+  auditedWriteCommands,
+  coreAuditTable,
+  createCallLog,
+  createOrcaClient,
+  createOrcaRunner,
+  dispatcherHealth,
+  listTasks,
+  plainText,
+  ps,
+  readTimeline,
+  Registry,
+  loadTeamSpec,
+  signalSummary,
+  createSpecFacade,
+  initTeamCmd,
+  type AttentionReport,
+  type PsRow,
+  type SpecForEdit,
+  type TaskRow,
+  type TimelineEvent,
+  showTask,
+  resolveOrcaExecutable,
+  winglineHome,
+  type CommandDeps
+} from '@weiping/wingline-core'
+
+function which(name: string, env: NodeJS.ProcessEnv): string | null {
+  const pathVar = env.PATH ?? ''
+  const exts = process.platform === 'win32' ? (env.PATHEXT ?? '.EXE;.CMD;.BAT').split(';') : ['']
+  for (const dir of pathVar.split(path.delimiter)) {
+    if (!dir) continue
+    for (const ext of exts) {
+      const candidate = path.join(dir, name + ext)
+      try {
+        fs.accessSync(candidate, fs.constants.X_OK)
+        return candidate
+      } catch {
+        // 继续找下一个
+      }
+    }
+  }
+  return null
+}
+
+/** 一次性构造 deps；worker 生命周期内复用同一份。 */
+export function createDeps(env: NodeJS.ProcessEnv = process.env): CommandDeps {
+  const home = winglineHome(env)
+  const exe = resolveOrcaExecutable({ env, platform: process.platform, which: (n) => which(n, env) })
+  const runner = createOrcaRunner(exe, createCallLog(path.join(home, 'logs')))
+  return {
+    orca: createOrcaClient(runner),
+    registry: Registry.open(path.join(home, 'state.db')),
+    warn: (msg: string) => console.warn('[wingline]', msg),
+    verifiedOrca: '>=1.4.214 <1.5.0',
+    multilineSafe: !exe.viaCmd,
+    home,
+    orcaPath: exe.cmdPath ?? exe.file,
+    env,
+    now: () => new Date(),
+    monotonic: () => performance.now()
+  }
+}
+
+export async function teamSummaries(deps: CommandDeps): Promise<Array<{
+  name: string
+  status: 'up' | 'stopped'
+  runId: string | null
+  posts: number
+  specPath: string
+  dispatcherState: 'running' | 'stale' | 'stopped' | 'never'
+  /** 实时离线岗位数；团队从未启动或 Orca 不可达时为 null（面板据此决定要不要显示「拉起岗位」）。 */
+  offlinePosts: number | null
+}>> {
+  return Promise.all(
+    deps.registry.listTeams().map(async (row) => {
+      let offlinePosts: number | null = null
+      if (row.runId !== null) {
+        try {
+          const rows = await ps(deps, { team: row.name })
+          offlinePosts = rows.filter((r) => r.status !== 'live').length
+        } catch {
+          // Orca 不可达：保持 null，按钮交给 dispatcher/up 的幂等性兜底
+        }
+      }
+      return {
+        name: row.name,
+        status: row.status,
+        runId: row.runId,
+        posts: deps.registry.listPosts(row.name).length,
+        specPath: row.specPath,
+        dispatcherState: dispatcherHealth(deps, row.name).state,
+        offlinePosts
+      }
+    })
+  )
+}
+
+export interface PostDto {
+  address: string
+  agent: string
+  status: PsRow['status']
+  handle: string | null
+  isLead: boolean
+}
+
+/** 岗位列表：走 core 的 ps()（同一套口径：live / uncertain / offline 与 handle 解析）。 */
+export async function postDtos(deps: CommandDeps, team: string): Promise<PostDto[]> {
+  const rows = await ps(deps, { team })
+  return rows.map((r) => ({
+    address: r.address,
+    agent: r.agent,
+    status: r.status,
+    handle: r.handle,
+    isLead: r.isLead
+  }))
+}
+
+/** 把 Orca 窗口切到某个岗位的终端。岗位不在线（终端已退出）时给出原因，不碰过期 handle。 */
+export async function openPostTerminal(
+  deps: CommandDeps,
+  address: string
+): Promise<{ navigated: boolean; handle: string | null; reason: string | null }> {
+  const team = address.split('@')[1]
+  if (!team) return { navigated: false, handle: null, reason: '岗位地址格式不对' }
+  // ps() 会把当前活着的终端 handle 写回注册表；以它的实时状态为准，
+  // 不直接信注册表里的 handle——终端退出后那个 handle 是过期残留（switch 会报 terminal_exited）。
+  const rows = await ps(deps, { team })
+  const post = rows.find((r) => r.address === address)
+  if (!post) return { navigated: false, handle: null, reason: '岗位不存在' }
+  if (post.status !== 'live' || post.handle === null) {
+    return { navigated: false, handle: null, reason: `${address} 不在线（${post.status}），先 wl up 或 wl restore` }
+  }
+  const res = await deps.orca.terminalSwitch({ handle: post.handle })
+  return { navigated: res.navigated, handle: post.handle, reason: null }
+}
+
+// ── P1 只读：收件箱与任务看板 ───────────────────────────────────
+
+export interface InboxDto {
+  team: string
+  pending: number
+  dispatcher: { state: string }
+  frozen: Array<{ post: string; reason: string; frozenAt: string }>
+  signals: Array<{ post: string; signal: string; level: number; summary: string | null; since: string | null }>
+  questions: Array<{ messageId: string; asker: string; body: string; options: string[]; relayedAt: string }>
+  stale: Array<{ taskId: string; title: string; reason: string; owner: string | null; command: string }>
+  warnings: string[]
+  unavailable: string[]
+}
+
+/** 收件箱：走 core 的 attention()（CLI / 控制台 / TUI 同一口径）。 */
+export async function inboxDto(deps: CommandDeps, team: string): Promise<InboxDto> {
+  const r: AttentionReport = await attention(deps, team)
+  return {
+    team: r.team,
+    pending: r.frozen.length + r.signals.length + r.questions.length + r.stale.length + r.warnings.length,
+    dispatcher: { state: r.dispatcher.state },
+    frozen: r.frozen.map((f) => ({ post: f.post, reason: f.reason, frozenAt: f.frozenAt })),
+    signals: r.signals.map((s) => ({
+      post: s.post,
+      signal: s.signal,
+      level: s.level,
+      summary: s.summary,
+      since: s.since
+    })),
+    questions: r.questions.map((q) => ({
+      messageId: q.messageId,
+      asker: q.asker,
+      body: q.body,
+      options: q.options,
+      relayedAt: q.relayedAt
+    })),
+    stale: r.stale.map((s) => ({ taskId: s.taskId, title: s.title, reason: s.reason, owner: s.owner, command: s.command })),
+    warnings: r.warnings,
+    unavailable: r.unavailable
+  }
+}
+
+export interface TaskDto {
+  id: string
+  status: string
+  title: string
+  kind: string
+  tags: string[]
+  claimedBy: string | null
+  epoch: number
+  gateFailures: number
+  readySince: string | null
+  dispatchedAt: string | null
+}
+
+/** 任务看板：走 core 的 listTasks()（同 CLI `wl task list`）。 */
+export async function taskDtos(deps: CommandDeps, team: string): Promise<TaskDto[]> {
+  const rows: TaskRow[] = await listTasks(deps, { team })
+  return rows.map((t) => ({
+    id: t.id,
+    status: t.status,
+    title: t.title,
+    kind: t.kind,
+    tags: t.tags,
+    claimedBy: t.claimedBy,
+    epoch: t.epoch,
+    gateFailures: t.gateFailures,
+    readySince: t.readySince,
+    dispatchedAt: t.dispatchedAt
+  }))
+}
+
+// ── 岗位详情（时间线 + 任务历史） ───────────────────────────────
+
+export interface PostDetailDto {
+  address: string
+  status: PsRow['status']
+  isLead: boolean
+  handle: string | null
+  sessionId: string | null
+  currentTask: { id: string; title: string; status: string } | null
+  queued: Array<{ id: string; title: string; status: string }>
+  signals: Array<{ signal: string; level: number; summary: string | null; since: string | null }>
+  frozen: { reason: string; frozenAt: string } | null
+  hushedUntil: string | null
+  events: TimelineEventDto[]
+}
+
+export interface TimelineEventDto {
+  id: string
+  at: string
+  source: string
+  actor: string
+  action: string
+  target: string | null
+  outcome: string | null
+}
+
+export function timelineDto(events: TimelineEvent[]): TimelineEventDto[] {
+  return events.map((e) => ({
+    id: e.id,
+    at: e.at,
+    source: e.source,
+    actor: e.actor,
+    action: e.action,
+    target: e.target,
+    outcome: e.outcome
+  }))
+}
+
+/**
+ * 岗位详情：与控制台岗位详情页同一口径（当前任务、排队、信号、冻结、静音、
+ * 按岗位过滤的时间线 50 条）。终端预览另有 post.preview。
+ */
+export async function postDetailDto(deps: CommandDeps, team: string, address: string): Promise<PostDetailDto> {
+  const rows = await ps(deps, { team })
+  const pRow = rows.find((p) => p.address === address)
+  if (!pRow) throw new Error(`岗位 ${address} 不存在`)
+
+  const allTasks: TaskRow[] = await listTasks(deps, { team })
+  const currentTask = allTasks.find((t) => t.claimedBy === address && t.status === 'dispatched') ?? null
+  const queued = allTasks.filter((t) => t.claimedBy === address && t.status === 'ready')
+
+  const signals = deps.registry
+    .listPatrolState(team)
+    .filter((s) => s.post === address && !s.clearedAt && s.level >= 1)
+    .map((s) => ({ signal: s.signal, level: s.level, summary: signalSummary(s), since: s.since }))
+  const frozen = deps.registry.getFrozen(address)
+  const hushedUntil = deps.registry.hushedUntil(address)
+  const logRes = await readTimeline(deps, { team, post: address, limit: 50 })
+
+  return {
+    address,
+    status: pRow.status,
+    isLead: pRow.isLead,
+    handle: pRow.handle,
+    sessionId: deps.registry.getPost(address)?.sessionId ?? null,
+    currentTask: currentTask && { id: currentTask.id, title: currentTask.title, status: currentTask.status },
+    queued: queued.map((t) => ({ id: t.id, title: t.title, status: t.status })),
+    signals,
+    frozen: frozen && { reason: frozen.reason, frozenAt: frozen.frozenAt },
+    hushedUntil,
+    events: timelineDto(logRes.events)
+  }
+}
+
+export interface TaskDetailDto {
+  id: string
+  team: string
+  status: string
+  title: string
+  kind: string
+  tags: string[]
+  plan: string | null
+  claimedBy: string | null
+  epoch: number
+  gateFailures: number
+  outcome: string | null
+  reportedBy: string | null
+  gateId: string | null
+  gateOutput: string | null
+  result: string | null
+  history: Array<{ at: string; actor: string; action: string; detail: string | null }>
+}
+
+/** 任务详情：与 `wl task show --history` 同一口径（showTask + history）。 */
+export async function taskDetailDto(deps: CommandDeps, id: string): Promise<TaskDetailDto> {
+  const t = await showTask(deps, { id, history: true })
+  const team = deps.registry.getTaskExt(t.id)?.team ?? '-'
+  return {
+    id: t.id,
+    team,
+    status: t.status,
+    title: t.title,
+    kind: t.kind,
+    tags: t.tags,
+    plan: t.plan,
+    claimedBy: t.claimedBy,
+    epoch: t.epoch,
+    gateFailures: t.gateFailures,
+    outcome: t.outcome,
+    reportedBy: t.reportedBy,
+    gateId: t.gateId ?? null,
+    gateOutput: t.gateOutput ?? null,
+    result: t.result,
+    history: (t.history ?? []).map((h) => ({ at: h.at, actor: h.actor, action: h.action, detail: h.detail }))
+  }
+}
+
+// ── 写操作（审计走 core 的同一张表，actor=human） ─────────────────
+
+/**
+ * 插件的写命令：与控制台（`console:`）、TUI（`tui:`）共用同一张审计表，
+ * 只是前缀不同（`plugin:`），执行者一律 human。
+ */
+export function pluginWrites() {
+  return auditedWriteCommands('plugin:')
+}
+
+/** 回答岗位提问。 */
+export async function replyQuestion(
+  deps: CommandDeps,
+  a: { team: string; messageId: string; body: string }
+): Promise<{ messageId: string; duplicate: boolean }> {
+  return pluginWrites().dispatcherReply(deps, a)
+}
+
+/** 冻结岗位。 */
+export async function freezePost(deps: CommandDeps, a: { address: string; reason: string }): Promise<void> {
+  return pluginWrites().freezePostCmd(deps, a)
+}
+
+/** 解冻岗位。 */
+export async function unfreezePost(
+  deps: CommandDeps,
+  a: { address: string }
+): Promise<{ skipped: Array<{ taskId: string; command: string }> }> {
+  return pluginWrites().unfreezePostCmd(deps, a)
+}
+
+/** 认领任务（以岗位身份）。 */
+export async function claimTask(deps: CommandDeps, a: { id: string; as: string }): Promise<void> {
+  return pluginWrites().claimTask(deps, a)
+}
+
+/** 完成任务（以岗位身份）。 */
+export async function doneTask(deps: CommandDeps, a: { id: string; as: string }): Promise<unknown> {
+  return pluginWrites().doneTask(deps, a)
+}
+
+/**
+ * 停止团队：先静默停调度员（关它的终端），再关岗位终端。
+ * 顺序反了会让调度员在最后几秒继续往即将关闭的岗位派活。
+ */
+export async function downTeam(
+  deps: CommandDeps,
+  a: { team: string; close: boolean }
+): Promise<{
+  posts: Array<{ address: string; outcome: string; reason?: string }>
+  dispatcher: { outcome: string; reason?: string } | null
+}> {
+  let dispatcher: { outcome: string; reason?: string } | null = null
+  try {
+    const d = await dispatcherDown(deps, { team: a.team, close: true })
+    dispatcher = { outcome: d.outcome }
+  } catch (err) {
+    dispatcher = { outcome: 'failed', reason: err instanceof Error ? err.message : String(err) }
+  }
+  const r = await pluginWrites().down(deps, a)
+  return {
+    posts: (r.posts ?? []).map((p) => ({
+      address: p.address,
+      outcome: p.outcome,
+      ...(p.reason !== undefined && p.reason !== null ? { reason: p.reason } : {})
+    })),
+    dispatcher
+  }
+}
+
+/**
+ * 插件 worker 的 process.execPath 是宿主（Orca）的二进制、argv[1] 也不是 wingline，
+ * 直接让 core 拼「self 命令」会启动一个 Electron 实例（撞单实例锁秒退）。
+ * 所以这里必须显式传真实 node 与 wingline 入口脚本。
+ */
+function winglineLaunch(): { node: string; script: string } {
+  const node = which('node', process.env)
+  if (!node) throw new Error('PATH 上找不到 node，无法拼调度员启动命令')
+  const candidate = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../cli/dist/main.js')
+  if (fs.existsSync(candidate)) return { node, script: candidate }
+  const wl = which('wl', process.env)
+  if (wl) return { node, script: wl }
+  throw new Error('找不到 wingline CLI 入口（cli/dist/main.js 或全局 wl），无法拼调度员启动命令')
+}
+
+/**
+ * 启动调度员（core dispatcherUp：新建调度员终端并跑循环）。
+ * 「终端在但进程死了」（dispatcher_stale）→ 先关掉旧终端再试一次。
+ */
+export async function dispatcherUp(deps: CommandDeps, a: { team: string }): Promise<{ outcome: 'already_running' | 'started' }> {
+  const launch = winglineLaunch()
+  try {
+    return await pluginWrites().dispatcherUp(deps, { team: a.team, node: launch.node, script: launch.script })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    if (!msg.includes('dispatcher_stale')) throw err
+    await pluginWrites().dispatcherDown(deps, { team: a.team, close: true })
+    return pluginWrites().dispatcherUp(deps, { team: a.team, node: launch.node, script: launch.script })
+  }
+}
+
+export interface UpResultDto {
+  posts: Array<{ address: string; outcome: string; reason?: string }>
+  run: { outcome: string; reason?: string } | null
+  /** 调度器是否被顺带启动（调度员是团队的隐式组件，不在面板上单独暴露）。 */
+  dispatcher: { outcome: 'started' | 'already_running' | 'failed'; reason?: string } | null
+}
+
+/**
+ * 全新拉起：走 core 的 up（幂等，活终端复用、死终端重建），随后静默启动调度员。
+ * 团队已停止时的拉起走这条路径（新生命周期）；崩溃恢复走 restore。
+ * 注意：Orca 的 worktree 选择器 current 按调用进程 cwd 解析，插件 worker 的 cwd 是 /，
+ * 所以必须先 chdir 到团队 repo。
+ */
+export async function upTeam(
+  deps: CommandDeps,
+  a: { team: string; draft?: boolean; newRun?: boolean; adoptRun?: string }
+): Promise<UpResultDto> {
+  const row = deps.registry.getTeam(a.team)
+  if (row) {
+    try {
+      const repo = loadTeamSpec(row.specPath).repo
+      if (repo.startsWith('path:')) process.chdir(repo.slice(5))
+    } catch {
+      // 规格读不了就让 up 自己报错
+    }
+  }
+  const r = await pluginWrites().up(deps, a)
+  let dispatcher: UpResultDto['dispatcher'] = null
+  try {
+    const d = await dispatcherUp(deps, { team: a.team })
+    dispatcher = { outcome: d.outcome }
+  } catch (err) {
+    dispatcher = { outcome: 'failed', reason: err instanceof Error ? err.message : String(err) }
+  }
+  return {
+    posts: (r.posts ?? []).map((p) => ({
+      address: p.address,
+      outcome: p.outcome,
+      ...(p.reason !== undefined && p.reason !== null ? { reason: p.reason } : {})
+    })),
+    run: r.run
+      ? { outcome: r.run.outcome, ...(r.run.reason !== undefined && r.run.reason !== null ? { reason: r.run.reason } : {}) }
+      : null,
+    dispatcher
+  }
+}
+
+/** 停止调度员＝关闭调度员终端（循环随之退出）；close=false 是 core 的 noop。 */
+export async function dispatcherDown(
+  deps: CommandDeps,
+  a: { team: string; close?: boolean }
+): Promise<{ outcome: 'noop' | 'closed' | 'already_gone' }> {
+  return pluginWrites().dispatcherDown(deps, a)
+}
+
+// ── 接回会话（restore） ─────────────────────────────────────
+
+export interface RestoreResultDto {
+  team: string
+  dryRun: boolean
+  posts: Array<{ address: string; outcome: string; reason?: string; sessionId?: string }>
+  run: { outcome: string; reason?: string } | null
+  dispatcher: { action: string; state: string; reason?: string }
+  tasks: Array<{ taskId: string; owner: string; outcome: string; reason?: string }>
+  /** worker 等岗位就绪后回填。 */
+  live?: number
+  total?: number
+}
+
+/** 接回会话：走 core 的 restore（把岗位接回原会话，并恢复 Run、调度员与任务）。 */
+export async function restoreTeam(
+  deps: CommandDeps,
+  a: { team: string; dryRun?: boolean; noTasks?: boolean; sessions?: Record<string, string> }
+): Promise<RestoreResultDto> {
+  const r = await pluginWrites().restore(deps, a)
+  return {
+    team: r.team,
+    dryRun: r.dryRun,
+    posts: (r.posts ?? []).map((p) => ({
+      address: p.address,
+      outcome: p.outcome,
+      ...(p.reason !== undefined && p.reason !== null ? { reason: p.reason } : {}),
+      ...(p.sessionId !== undefined ? { sessionId: p.sessionId } : {})
+    })),
+    ...(r.run
+      ? { run: { outcome: r.run.outcome, ...(r.run.reason !== undefined && r.run.reason !== null ? { reason: r.run.reason } : {}) } }
+      : { run: null }),
+    dispatcher: { action: r.dispatcher.action, state: r.dispatcher.state, ...(r.dispatcher.reason ? { reason: r.dispatcher.reason } : {}) },
+    tasks: (r.tasks ?? []).map((t) => ({
+      taskId: t.taskId,
+      owner: t.owner,
+      outcome: t.outcome,
+      ...(t.reason !== undefined && t.reason !== null ? { reason: t.reason } : {})
+    }))
+  }
+}
+
+// ── 岗位终端预览 ────────────────────────────────────────────
+
+export interface PreviewDto {
+  address: string
+  handle: string | null
+  lines: string[]
+  truncated: boolean
+  error?: string
+}
+
+/**
+ * 岗位终端最后若干行：先试渲染后的屏幕（source=screen），拿不到就回退到 preview 文本。
+ * 与控制台岗位详情页的 40 行预览同一口径。
+ */
+export async function postPreview(deps: CommandDeps, address: string, lines = 40): Promise<PreviewDto> {
+  const team = address.split('@')[1]
+  if (!team) return { address, handle: null, lines: [], truncated: false, error: '岗位地址格式不对' }
+  await ps(deps, { team })
+  const post = deps.registry.getPost(address)
+  if (!post?.handle) return { address, handle: null, lines: [], truncated: false, error: '岗位没有在线终端' }
+  try {
+    try {
+      const screen = await deps.orca.terminalRead({ handle: post.handle, lines })
+      const body = plainText(screen.text).split('\n').slice(-lines)
+      return { address, handle: post.handle, lines: body, truncated: screen.rows < lines }
+    } catch {
+      const view = await deps.orca.terminalShow({ handle: post.handle })
+      const body = plainText(view.preview).split('\n').slice(-lines)
+      return { address, handle: post.handle, lines: body, truncated: false }
+    }
+  } catch (err) {
+    return { address, handle: post.handle, lines: [], truncated: false, error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+/**
+ * 与 CLI 同一张审计表、同一 actor（human），所以插件写出来的审计行和命令行写的是同一种东西。
+ * 表在 core（core/src/audit-table.ts），CLI、控制台与插件共用。
+ */
+export function auditedInit() {
+  return auditedCommands({ init: initTeamCmd }, coreAuditTable(), { actor: 'human' })
+}
+
+export type SpecForEditDto = Pick<SpecForEdit, 'specPath' | 'yaml' | 'hash' | 'running'> & {
+  hasDraft: boolean
+  docKeys: string[]
+}
+
+export function specForEditDto(view: SpecForEdit): SpecForEditDto {
+  return {
+    specPath: view.specPath,
+    yaml: view.yaml,
+    hash: view.hash,
+    running: view.running,
+    hasDraft: view.draft !== null,
+    docKeys: Object.keys(view.files)
+  }
+}

@@ -43,6 +43,9 @@ function tabTitles(node: unknown, found = new Map<string, string>()): Map<string
 const retryArgs = (a: { retryRequest?: string }) => (a.retryRequest ? ['--retry-request', a.retryRequest] : [])
 const replayedOf = (r: { mutation?: { replayed?: boolean } }) => r.mutation?.replayed ?? false
 
+/** run-list 每页 10 条；翻够这么多页还没完，就当找不全（`wl up` 会按这个提示走 --adopt-run）。 */
+const RUN_LIST_MAX_PAGES = 50
+
 type Mutation = { mutation?: { replayed?: boolean } }
 interface RawTask {
   id: string
@@ -66,34 +69,42 @@ const toTask = (t: RawTask): OrchestrationTask => ({
   result: t.result ?? null,
 })
 
-type OrchestrationMethods = Omit<OrcaClient, 'version' | 'status' | 'search' | 'tabCreate' | 'terminalList' | 'terminalCreate' | 'terminalWait' | 'terminalSend' | 'terminalClose'>
+type OrchestrationMethods = Omit<OrcaClient, 'version' | 'status' | 'search' | 'tabCreate' | 'terminalList' | 'terminalCreate' | 'terminalWait' | 'terminalSend' | 'terminalClose' | 'terminalSwitch'>
 
+// Orca 1.4.251 起 run-* 的简版回执只剩 { runId, objective }（没有 coordinator_handle），
+// --full 才给完整记录；下面这几个调用都要 --full，否则协调者句柄读不出来。
 function runMethods(runner: OrcaRunner): Pick<OrcaClient, 'runCreate' | 'runUse' | 'runShow' | 'runList' | 'requestShow'> {
   type RunReply = { run: { id: string; coordinator_handle: string } }
+
   return {
     async runCreate(a) {
-      const r = await runner.json<RunReply & Mutation>(['orchestration', 'run-create', '--objective', a.objective, '--from', a.from, ...retryArgs(a)])
+      const r = await runner.json<RunReply & Mutation>(['orchestration', 'run-create', '--full', '--objective', a.objective, '--from', a.from, ...retryArgs(a)])
       return { id: r.run.id, coordinatorHandle: r.run.coordinator_handle, replayed: replayedOf(r) }
     },
     async runUse(a) {
-      const r = await runner.json<RunReply>(['orchestration', 'run-use', '--id', a.id, '--from', a.from])
+      const r = await runner.json<RunReply>(['orchestration', 'run-use', '--full', '--id', a.id, '--from', a.from])
       return { coordinatorHandle: r.run.coordinator_handle }
     },
     async runShow(a) {
-      const r = await runner.json<RunReply>(['orchestration', 'run-show', '--id', a.id])
+      const r = await runner.json<RunReply>(['orchestration', 'run-show', '--full', '--id', a.id])
       return { coordinatorHandle: r.run.coordinator_handle }
     },
     async runList() {
-      const r = await runner.json<{
-        runs: Array<{ id: string; objective: string; coordinator_handle: string | null; created_at: string }>
-        nextCursor?: string | null
-        page?: { nextCursor?: string | null }
-      }>(['orchestration', 'run-list'])
-      // 还有下一页就不能当成"找全了"：按 objective 找回 Run 会漏掉后面的候选
-      if (r.nextCursor ?? r.page?.nextCursor) {
-        throw new WinglineError('orca', 'run_list_truncated', 'run-list 结果不止一页，无法确认没有其他候选 Run', { hint: '用 wl up --adopt-run <id> 指定要找回的 Run' })
+      const runs: RunSummary[] = []
+      let cursor: string | undefined
+      for (let page = 0; page < RUN_LIST_MAX_PAGES; page++) {
+        const r = await runner.json<{
+          runs: Array<{ id: string; objective: string; coordinator_handle: string | null; created_at: string }>
+          nextCursor?: string | null
+          page?: { nextCursor?: string | null }
+        }>(['orchestration', 'run-list', '--full', ...(cursor ? ['--cursor', cursor] : [])])
+        runs.push(...r.runs.map((x): RunSummary => ({ id: x.id, objective: x.objective, coordinatorHandle: x.coordinator_handle, createdAt: x.created_at })))
+        // 还有下一页就得接着翻：按 objective 找回 Run 会漏掉后面的候选
+        const next = r.nextCursor ?? r.page?.nextCursor ?? undefined
+        if (!next || next === cursor) return runs
+        cursor = next
       }
-      return r.runs.map((x): RunSummary => ({ id: x.id, objective: x.objective, coordinatorHandle: x.coordinator_handle, createdAt: x.created_at }))
+      throw new WinglineError('orca', 'run_list_truncated', 'run-list 分页超过上限，无法确认没有其他候选 Run', { hint: '用 wl up --adopt-run <id> 指定要找回的 Run' })
     },
     async requestShow(a) {
       const r = await runner.json<{ state: RequestShowState; receipt?: unknown }>(['orchestration', 'request-show', '--request', a.request])
@@ -234,10 +245,13 @@ function inboxMethods(runner: OrcaRunner): Pick<OrcaClient, 'check' | 'reply' | 
       }
     },
     async reply(a) {
-      const r = await runner.json<{ message: { id: string }; duplicate?: boolean }>([
+      // Orca 1.4.251 起回执是 { messageId }；旧版是 { message: { id } }。两种都认。
+      const r = await runner.json<{ message?: { id?: string }; messageId?: string; duplicate?: boolean }>([
         'orchestration', 'reply', '--id', a.id, '--body', a.body, '--run', a.run, '--from', a.from,
       ])
-      return { messageId: r.message.id, duplicate: r.duplicate ?? false }
+      const messageId = r.message?.id ?? r.messageId
+      if (!messageId) throw new WinglineError('orca', 'reply_shape_unknown', 'Orca 的回复回执里没有 messageId')
+      return { messageId, duplicate: r.duplicate ?? false }
     },
     async workerList(a): Promise<WorkerView[]> {
       const r = await runner.json<{ workers: RawWorker[] }>(['orchestration', 'worker-list', '--run', a.run])
@@ -271,7 +285,7 @@ const orchestrationMethods = (runner: OrcaRunner): OrchestrationMethods => ({
   ...inboxMethods(runner),
 })
 
-type TerminalMethods = Pick<OrcaClient, 'terminalList' | 'terminalCreate' | 'terminalWait' | 'terminalSend' | 'terminalClose'>
+type TerminalMethods = Pick<OrcaClient, 'terminalList' | 'terminalCreate' | 'terminalWait' | 'terminalSend' | 'terminalClose' | 'terminalSwitch'>
 
 function terminalMethods(runner: OrcaRunner): TerminalMethods {
   return {
@@ -319,6 +333,11 @@ function terminalMethods(runner: OrcaRunner): TerminalMethods {
     async terminalClose(a) {
       const r = await runner.json<{ close: { ptyKilled: boolean } }>(['terminal', 'close', '--terminal', a.handle])
       return { ptyKilled: r.close.ptyKilled }
+    },
+
+    async terminalSwitch(a) {
+      const r = await runner.json<{ focus: { navigated: boolean } }>(['terminal', 'switch', '--terminal', a.handle])
+      return { navigated: r.focus.navigated }
     },
   }
 }

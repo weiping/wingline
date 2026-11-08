@@ -1,0 +1,14 @@
+{
+  "name": "@weiping/wingline-orca",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Wingline 雁阵的 Orca 侧栏插件（草案 P0）",
+  "type": "module",
+  "license": "MIT",
+  "dependencies": {
+    "@weiping/wingline-core": "workspace:^"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.0"
+  }
+}

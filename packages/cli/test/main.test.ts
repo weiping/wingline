@@ -63,7 +63,10 @@ const exec = (argv: string[], c: Commands = cmds()) => {
 const READ_COMMANDS = ['ps', 'listTasks', 'listStale', 'showTask', 'runDispatcherLoop', 'dispatcherStatus', 'attention', 'log', 'followLog', 'console', 'tui']
 
 test('every write command is in the audit table and no read command is', () => {
-  expect(Object.keys(AUDIT).sort()).toEqual([...WRITE_COMMANDS].sort())
+  // 审计表是 core 那一张（CLI、控制台、插件共用）：表里可以有 CLI 没有的命令（如 spec save），
+  // 所以这里只查覆盖与越界，不查两边集合相等。
+  expect(WRITE_COMMANDS.filter((c) => !(c in AUDIT))).toEqual([])
+  expect(READ_COMMANDS.filter((c) => c in AUDIT)).toEqual([])
   expect(Object.keys(cmds()).sort()).toEqual([...WRITE_COMMANDS, ...READ_COMMANDS].sort())
   expect(AUDIT.restore!.skip!({ team: 'duo', dryRun: true })).toBe(true)
   expect(AUDIT.restore!.skip!({ team: 'duo' })).toBe(false)
