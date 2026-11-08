@@ -131,6 +131,11 @@ async function bringUp(team: string, opts: { draft?: boolean; newRun?: boolean; 
     await plugin.request('team.up', { team, ...opts }, { timeoutMs: 120000 })
     set(notice, `${team} 的岗位已拉起`)
     set(error, null)
+    // 先把该团队的离线岗位数乐观归零（按钮随即隐藏），再拉权威数据
+    const current = read(teams)
+    if (current !== null) {
+      set(teams, current.map((t) => (t.name === team ? { ...t, offlinePosts: 0 } : t)))
+    }
     await refresh()
     await loadPosts(team)
   } catch (err) {

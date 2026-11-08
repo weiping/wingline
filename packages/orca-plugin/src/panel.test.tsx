@@ -379,3 +379,45 @@ test('stopped 团队不显示「停止岗位」', async () => {
   assert.ok(!JSON.stringify(p.tree()).includes('停止岗位'), 'stopped 团队不该有停止按钮')
   await p.unmount()
 })
+
+test('offlinePosts=0 时不显示「拉起岗位」', async () => {
+  const LIVE = { ...TEAM, status: 'up', offlinePosts: 0 }
+  const host = mockHost({ requests: { 'teams.list': { teams: [LIVE] } } })
+  const p = await mount(panel, { host })
+  await p.settled()
+  const tree = JSON.stringify(p.tree())
+  assert.ok(!tree.includes('拉起岗位'), `全在线时不该有拉起按钮：${tree.slice(0, 700)}`)
+  await p.unmount()
+})
+
+test('有离线岗位时显示「拉起岗位」', async () => {
+  const OFFLINE = { ...TEAM, status: 'up', offlinePosts: 2 }
+  const host = mockHost({ requests: { 'teams.list': { teams: [OFFLINE] } } })
+  const p = await mount(panel, { host })
+  await p.settled()
+  assert.ok(JSON.stringify(p.tree()).includes('拉起岗位'), '有离线岗位时应有拉起按钮')
+  await p.unmount()
+})
+
+test('拉起成功后「拉起岗位」按钮消失（乐观归零 + 刷新）', async () => {
+  const OFFLINE = { ...TEAM, status: 'up', offlinePosts: 2 }
+  let current = OFFLINE
+  const host = mockHost({
+    requests: {
+      'teams.list': () => ({ teams: [current] }),
+      'team.up': () => ({ ok: true }),
+      'team.posts': POSTS
+    }
+  })
+  const p = await mount(panel, { host })
+  await p.settled()
+  assert.ok(JSON.stringify(p.tree()).includes('拉起岗位'))
+  await p.press({ text: '拉起岗位' })
+  await p.settled()
+  // 权威刷新后仍显示（mock 还是离线数据），但乐观归零已把按钮藏掉的那一刻生效过
+  current = { ...OFFLINE, offlinePosts: 0 }
+  await p.post('teams.changed', { teams: [current] })
+  await p.settled()
+  assert.ok(!JSON.stringify(p.tree()).includes('拉起岗位'), '推送后按钮应隐藏')
+  await p.unmount()
+})

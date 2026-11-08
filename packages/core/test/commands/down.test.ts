@@ -91,9 +91,7 @@ test('--close 对终端已消失的岗位结账未完成请求行：下次 up �
   expect(r.posts.find((p) => p.address === 'checker@duo')!.outcome).toBe('already_gone')
   expect(registry.getRequest('duo:checker:create:12c0bfdb')!.state).toBe('done')
 
-  // 结账后 nextRequestId 开新行，beginRequest 不再撞 request_already_done
-  const { nextRequestId } = await import('../registry-helpers.js').catch(() => ({ nextRequestId: undefined as unknown }))
-  // nextRequestId 在 commands/deps.ts；这里直接走一遍等价逻辑
+  // 结账后下一代可以开新行，beginRequest 不再撞 request_already_done
   const fresh = 'duo:checker:create:12c0bfdb-1'
   expect(() => registry.beginRequest(fresh)).not.toThrow()
   expect(registry.getRequest(fresh)!.state).toBe('pending')

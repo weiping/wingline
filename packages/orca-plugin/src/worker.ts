@@ -53,6 +53,13 @@ async function pushIfChanged(orca: OrcaWorkerApi, key: string, event: 'inbox.cha
 async function refreshAll(orca: OrcaWorkerApi): Promise<void> {
   const d = shared()
   let pending = 0
+  // 团队卡片上的「离线岗位数 / 调度员状态」也要跟着变，否则「拉起岗位」按钮会一直挂着
+  const teams = await teamSummaries(d)
+  const teamsJson = JSON.stringify(teams)
+  if (lastPushed.get('teams') !== teamsJson) {
+    lastPushed.set('teams', teamsJson)
+    orca.panels.post('teams.changed', { teams })
+  }
   for (const team of d.registry.listTeams()) {
     try {
       const inbox = await inboxDto(d, team.name)
