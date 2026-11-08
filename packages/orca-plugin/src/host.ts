@@ -391,12 +391,30 @@ export async function dispatcherDown(
   return pluginWrites().dispatcherDown(deps, a)
 }
 
-/** 拉起岗位：走 core 的 up（幂等，活终端复用、死终端重建）。 */
+export interface UpResultDto {
+  posts: Array<{ address: string; outcome: string; reason?: string }>
+  run: { outcome: string; reason?: string } | null
+}
+
+/**
+ * 拉起岗位：走 core 的 up（幂等，活终端复用、死终端重建）。
+ * 回执带每岗位 outcome 与 run 结果——面板要如实反映，不能一律说「已拉起」。
+ */
 export async function upTeam(
   deps: CommandDeps,
   a: { team: string; draft?: boolean; newRun?: boolean; adoptRun?: string }
-): Promise<unknown> {
-  return pluginWrites().up(deps, a)
+): Promise<UpResultDto> {
+  const r = await pluginWrites().up(deps, a)
+  return {
+    posts: (r.posts ?? []).map((p) => ({
+      address: p.address,
+      outcome: p.outcome,
+      ...(p.reason !== undefined && p.reason !== null ? { reason: p.reason } : {})
+    })),
+    run: r.run
+      ? { outcome: r.run.outcome, ...(r.run.reason !== undefined && r.run.reason !== null ? { reason: r.run.reason } : {}) }
+      : null
+  }
 }
 
 /** 认领任务（以岗位身份）。 */

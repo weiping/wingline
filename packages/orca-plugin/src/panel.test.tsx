@@ -256,7 +256,7 @@ test('stopped 团队显示「拉起岗位」，点击发 team.up 并刷新', asy
       'teams.list': { teams: [STOPPED] },
       'team.up': (input: unknown) => {
         ups.push(input)
-        return { ok: true }
+        return { posts: [{ address: 'builder@duo', outcome: 'launched' }], run: { outcome: 'ok' } }
       },
       'team.posts': POSTS
     }
@@ -267,7 +267,7 @@ test('stopped 团队显示「拉起岗位」，点击发 team.up 并刷新', asy
   await p.settled()
   assert.deepEqual(ups, [{ team: 'duo' }])
   const tree = JSON.stringify(p.tree())
-  assert.ok(tree.includes('已拉起'), `没有成功提示：${tree.slice(0, 500)}`)
+  assert.ok(tree.includes('个岗位已启动'), `没有成功提示：${tree.slice(0, 500)}`)
   await p.unmount()
 })
 
@@ -399,7 +399,33 @@ test('有离线岗位时显示「拉起岗位」', async () => {
   await p.unmount()
 })
 
-test('拉起成功后「拉起岗位」按钮消失（乐观归零 + 刷新）', async () => {
+test('拉起成功后按每岗位 outcome 如实提示（未就绪的要点名）', async () => {
+  const OFFLINE = { ...TEAM, status: 'up', offlinePosts: 2 }
+  const host = mockHost({
+    requests: {
+      'teams.list': { teams: [OFFLINE] },
+      'team.up': () => ({
+        posts: [
+          { address: 'builder@duo', outcome: 'launched' },
+          { address: 'checker@duo', outcome: 'uncertain', reason: '岗位未确认就绪' }
+        ],
+        run: { outcome: 'failed', reason: 'consumer_fenced' }
+      }),
+      'team.posts': POSTS
+    }
+  })
+  const p = await mount(panel, { host })
+  await p.settled()
+  await p.press({ text: '拉起岗位' })
+  await p.settled()
+  const tree = JSON.stringify(p.tree())
+  assert.ok(tree.includes('1 个已启动'), `没如实反映岗位结果：${tree.slice(0, 700)}`)
+  assert.ok(tree.includes('checker@duo uncertain'), `没点名未就绪岗位：${tree.slice(0, 700)}`)
+  assert.ok(tree.includes('Run 未绑定'), `没提示 Run 未绑定：${tree.slice(0, 900)}`)
+  await p.unmount()
+})
+
+test('拉起成功后「拉起岗位」按钮消失（刷新后岗位全在线）', async () => {
   const OFFLINE = { ...TEAM, status: 'up', offlinePosts: 2 }
   let current = OFFLINE
   const host = mockHost({

@@ -128,13 +128,19 @@ async function bringUp(team: string, opts: { draft?: boolean; newRun?: boolean; 
   set(busyTeam, team)
   set(notice, `正在拉起 ${team} 的岗位（可能要 1–2 分钟）…`)
   try {
-    await plugin.request('team.up', { team, ...opts }, { timeoutMs: 120000 })
-    set(notice, `${team} 的岗位已拉起`)
+    const r = await plugin.request('team.up', { team, ...opts }, { timeoutMs: 120000 })
+    const posts = (r.posts ?? []) as Array<{ address: string; outcome: string; reason?: string }>
+    const started = posts.filter((p) => p.outcome === 'launched' || p.outcome === 'already_live')
+    const bad = posts.filter((p) => p.outcome !== 'launched' && p.outcome !== 'already_live')
     set(error, null)
-    // 先把该团队的离线岗位数乐观归零（按钮随即隐藏），再拉权威数据
-    const current = read(teams)
-    if (current !== null) {
-      set(teams, current.map((t) => (t.name === team ? { ...t, offlinePosts: 0 } : t)))
+    if (bad.length === 0) {
+      set(notice, `${team}：${started.length} 个岗位已启动`)
+    } else {
+      set(notice, `${team}：${started.length} 个已启动，${bad.length} 个未就绪（${bad.map((p) => `${p.address} ${p.outcome}`).join('、')}）`)
+    }
+    // Run 没绑上（协调者身份对不上）时，调度员还得重新启动一次才能认领
+    if (r.run && r.run.outcome !== 'ok') {
+      set(notice, `${read(notice)}｜Run 未绑定（${r.run.reason ?? r.run.outcome}），需再点「启动调度员」认领协调者`)
     }
     await refresh()
     await loadPosts(team)

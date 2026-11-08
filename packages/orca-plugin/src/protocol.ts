@@ -61,7 +61,7 @@ declare module 'orca' {
     /** 拉起岗位（wl up 的插件入口；幂等）。耗时可能 1–2 分钟，面板侧用 120s 超时。 */
     'team.up': {
       input: { team: string; draft?: boolean; newRun?: boolean; adoptRun?: string }
-      output: { ok: true }
+      output: import('./host.js').UpResultDto
     }
   }
   interface PluginPanelEvents {
