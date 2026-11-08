@@ -451,6 +451,49 @@ test('拉起成功后「拉起岗位」按钮消失（刷新后岗位全在线�
   await p.unmount()
 })
 
+test('up 团队显示「接回会话」，点击发 team.restore 并按岗位如实显示结果', async () => {
+  const calls: Array<{ name: string; input: unknown }> = []
+  const host = mockHost({
+    requests: {
+      'teams.list': { teams: [TEAM] },
+      'team.restore': (input: unknown) => {
+        calls.push({ name: 'restore', input })
+        return {
+          team: 'duo',
+          dryRun: false,
+          posts: [
+            { address: 'builder@duo', outcome: 'resumed', sessionId: 'sess-1' },
+            { address: 'checker@duo', outcome: 'uncertain', reason: '没找到可接回的会话' }
+          ],
+          run: { outcome: 'ok', runId: 'r-12345678' },
+          dispatcher: { action: 'left', state: 'running' },
+          tasks: [{ taskId: 't1', owner: 'builder@duo', outcome: 'recovered' }]
+        }
+      },
+      'team.posts': POSTS
+    }
+  })
+  const p = await mount(panel, { host })
+  await p.settled()
+  assert.ok(JSON.stringify(p.tree()).includes('接回会话'), '没有接回会话按钮')
+  await p.press({ text: '接回会话' })
+  await p.settled()
+  assert.deepEqual(calls, [{ name: 'restore', input: { team: 'duo' } }])
+  const tree = JSON.stringify(p.tree())
+  assert.ok(tree.includes('builder@duo'), `没画出接回结果：${tree.slice(0, 900)}`)
+  assert.ok(tree.includes('结果不确定'), `没如实标出未接回的岗位：${tree.slice(0, 900)}`)
+  await p.unmount()
+})
+
+test('stopped 团队不显示「接回会话」（restore 只对运行中的团队成立）', async () => {
+  const STOPPED = { ...TEAM, status: 'stopped', dispatcherState: 'stale', offlinePosts: 2 }
+  const host = mockHost({ requests: { 'teams.list': { teams: [STOPPED] } } })
+  const p = await mount(panel, { host })
+  await p.settled()
+  assert.ok(!JSON.stringify(p.tree()).includes('接回会话'), 'stopped 团队不该有接回按钮')
+  await p.unmount()
+})
+
 test('拉起回执带就绪数：面板给出「已就绪/未就绪」结论', async () => {
   const OFFLINE = { ...TEAM, status: 'up', offlinePosts: 2 }
   const host = mockHost({

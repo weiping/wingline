@@ -63,6 +63,11 @@ declare module 'orca' {
       input: { team: string; draft?: boolean; newRun?: boolean; adoptRun?: string }
       output: import('./host.js').UpResultDto & { live: number; total: number }
     }
+    /** 接回会话：把岗位接回原会话，并恢复 Run、调度员与任务（core 的 restore）。 */
+    'team.restore': {
+      input: { team: string; dryRun?: boolean; noTasks?: boolean; sessions?: Record<string, string> }
+      output: import('./host.js').RestoreResultDto
+    }
   }
   interface PluginPanelEvents {
     /** 面板刷新时 worker 广播。 */

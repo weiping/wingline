@@ -18,7 +18,7 @@ import {
   Text
 } from 'orca'
 
-import type { InboxDto, PostDetailDto, PostDto, PreviewDto, TaskDetailDto, TaskDto } from './host.js'
+import type { InboxDto, PostDetailDto, PostDto, PreviewDto, RestoreResultDto, TaskDetailDto, TaskDto } from './host.js'
 import type { TeamSummary } from './protocol.js'
 
 type View = 'posts' | 'inbox' | 'tasks'
@@ -39,6 +39,8 @@ const inbox = atom<Record<string, InboxDto>>({})
 /** 每个团队的任务列表。 */
 const tasks = atom<Record<string, TaskDto[]>>({})
 const busyTeam = atom<string | null>(null)
+/** 接回结果，按团队存。 */
+const restoreResults = atom<Record<string, RestoreResultDto>>({})
 
 /** 写操作的身份：claim / done 要「以岗位身份」执行。 */
 const actor = atom('actor', '')
@@ -181,6 +183,31 @@ async function downTeam(team: string, close: boolean): Promise<void> {
   }
 }
 
+/**
+ * 接回会话：把岗位接回原会话，并恢复 Run、调度员与任务。
+ * 结果按岗位如实显示——不能一律说「已接回」。
+ */
+async function restoreSessions(team: string): Promise<void> {
+  set(busyTeam, team)
+  set(notice, `正在接回 ${team} 的会话…`)
+  try {
+    const r = (await plugin.request('team.restore', { team }, { timeoutMs: 120000 })) as RestoreResultDto
+    set(restoreResults, { ...read(restoreResults), [team]: r })
+    const ok = r.posts.filter((p) => p.outcome === 'kept' || p.outcome === 'resumed' || p.outcome === 'fresh')
+    const bad = r.posts.filter((p) => p.outcome !== 'kept' && p.outcome !== 'resumed' && p.outcome !== 'fresh')
+    const parts = [`${ok.length} 个岗位已接回`]
+    if (bad.length > 0) parts.push(`${bad.length} 个未接回（${bad.map((p) => `${p.address} ${p.outcome}`).join('、')}）`)
+    set(notice, `${team}：${parts.join('｜')}`)
+    set(error, null)
+    await refresh()
+    await loadPosts(team)
+  } catch (err) {
+    set(error, err instanceof Error ? err.message : String(err))
+  } finally {
+    set(busyTeam, null)
+  }
+}
+
 async function dispatcherAction(team: string, up: boolean): Promise<void> {
   set(busyTeam, team)
   try {
@@ -288,6 +315,46 @@ const STATUS_TONE: Record<string, 'success' | 'warning' | 'danger' | 'neutral'> 
   uncertain: 'warning',
   failed: 'danger',
   escalated: 'danger'
+}
+
+/** 接回结果的口径与控制台一致（console 的 RESTORE_OUTCOME）。 */
+const RESTORE_OUTCOME: Record<string, string> = {
+  kept: '已保留',
+  resumed: '已接回',
+  fresh: '重新启动',
+  ambiguous: '待人工确认',
+  uncertain: '结果不确定',
+  failed: '失败'
+}
+
+const TASK_OUTCOME: Record<string, string> = {
+  recovered: '已恢复',
+  queued: '已排队',
+  ready: '无需派发',
+  skipped: '跳过',
+  failed: '失败'
+}
+
+function RestoreResultView({ r }: { r: RestoreResultDto }) {
+  return (
+    <Stack gap="xs">
+      {r.posts.map((p) => (
+        <Text key={p.address} size="xs">
+          {p.address}：{RESTORE_OUTCOME[p.outcome] ?? p.outcome}
+          {p.reason !== undefined ? `（${p.reason}）` : ''}
+        </Text>
+      ))}
+      <Text size="xs" muted>
+        调度员：{r.dispatcher.action}（{r.dispatcher.state}）
+        {r.dispatcher.reason !== undefined ? `｜${r.dispatcher.reason}` : ''}
+      </Text>
+      {r.tasks.length > 0 && (
+        <Text size="xs" muted>
+          任务：{r.tasks.map((t) => `${t.taskId} ${TASK_OUTCOME[t.outcome] ?? t.outcome}`).join('、')}
+        </Text>
+      )}
+    </Stack>
+  )
 }
 
 function PostsView({ rows, team }: { rows: PostDto[]; team: string }) {
@@ -586,6 +653,7 @@ export default function Panel() {
   const allPosts = read(posts)
   const allInbox = read(inbox)
   const allTasks = read(tasks)
+  const allRestores = read(restoreResults)
   const loadingTeam = read(busyTeam)
   const hint = read(notice)
   return (
@@ -647,6 +715,11 @@ export default function Panel() {
                       {read(confirmingDown)[team.name] ? '确认停止？' : '停止岗位'}
                     </Button>
                   )}
+                  {team.status === 'up' && (
+                    <Button variant="ghost" size="sm" disabled={loadingTeam === team.name} onPress={() => restoreSessions(team.name)}>
+                      接回会话
+                    </Button>
+                  )}
                   {team.dispatcherState !== 'running' && (
                     <Button variant="outline" size="sm" disabled={loadingTeam === team.name} onPress={() => dispatcherAction(team.name, true)}>
                       启动调度员
@@ -658,6 +731,7 @@ export default function Panel() {
                     </Button>
                   )}
                 </Row>
+                {allRestores[team.name] !== undefined && <RestoreResultView r={allRestores[team.name]} />}
                 {isOpen ? (
                   <>
                     <Row gap="xs">

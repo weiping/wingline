@@ -417,6 +417,48 @@ export async function upTeam(
   }
 }
 
+export interface RestoreResultDto {
+  team: string
+  dryRun: boolean
+  posts: Array<{ address: string; outcome: string; reason?: string; sessionId?: string }>
+  run: { outcome: string; reason?: string } | null
+  dispatcher: { action: string; state: string; reason?: string }
+  tasks: Array<{ taskId: string; owner: string; outcome: string; reason?: string }>
+}
+
+/**
+ * 接回会话：走 core 的 restore（把岗位接回原会话，并恢复 Run、调度员与任务）。
+ * 回执按岗位带 outcome——面板要如实反映，不能一律说「已接回」。
+ */
+export async function restoreTeam(
+  deps: CommandDeps,
+  a: { team: string; dryRun?: boolean; noTasks?: boolean; sessions?: Record<string, string> }
+): Promise<RestoreResultDto> {
+  const r = await pluginWrites().restore(deps, a)
+  return {
+    team: r.team,
+    dryRun: r.dryRun,
+    posts: r.posts.map((p) => ({
+      address: p.address,
+      outcome: p.outcome,
+      ...(p.reason !== undefined ? { reason: p.reason } : {}),
+      ...(p.sessionId !== undefined ? { sessionId: p.sessionId } : {})
+    })),
+    run: r.run ? { outcome: r.run.outcome, ...(r.run.reason !== undefined ? { reason: r.run.reason } : {}) } : null,
+    dispatcher: {
+      action: r.dispatcher.action,
+      state: r.dispatcher.state,
+      ...(r.dispatcher.reason !== undefined ? { reason: r.dispatcher.reason } : {})
+    },
+    tasks: r.tasks.map((t) => ({
+      taskId: t.taskId,
+      owner: t.owner,
+      outcome: t.outcome,
+      ...(t.reason !== undefined ? { reason: t.reason } : {})
+    }))
+  }
+}
+
 /** 认领任务（以岗位身份）。 */
 export async function claimTask(deps: CommandDeps, a: { id: string; as: string }): Promise<void> {
   return pluginWrites().claimTask(deps, a)

@@ -1,8 +1,8 @@
 # `wl console` 与 Orca 插件：功能对齐表
 
-- 日期：2026-11-07
-- 状态：随插件演进更新（当前对齐到插件 P1 末：岗位详情 / 时间线已上线）
-- 结论速览：**读侧插件已覆盖 console 的核心页面；写侧覆盖了高频三件（回答 / 冻结解冻 / 认领完成）；编辑器与生命周期管理仍归 console。**
+- 日期：2026-11-07（2026-11-08 更新：插件 P2 生命周期按钮上线）
+- 状态：随插件演进更新（当前对齐到插件 P2：岗位详情 / 时间线 / 生命周期按钮）
+- 结论速览：**读侧插件已覆盖 console 的核心页面；写侧覆盖了高频三件（回答 / 冻结解冻 / 认领完成）与 3E 生命周期按钮（up / down / restore / 调度员启停）；编辑器、建队与自动恢复仍归 console。**
 - 依据：3B spec（页面清单 §范围）、3C（编辑器 / TUI）、3E（全生命周期 UI 意图）、插件 spec `2026-11-06-orca-plugin-console-design.md` §7/§15
 
 ## 1. 读侧（页面 / 视图）
@@ -17,7 +17,7 @@
 | 时间线 | 全团队时间线（按任务 / 岗位 / 来源 / 时间过滤） | 仅岗位维度的最近事件；无全团队视图、无过滤 | 🟡 部分 |
 | 团队编辑器（3C） | 表单 / YAML 双向、AST 手术、预演、草稿冲突 | ❌ 无（Phase 3 计划用 components 承载，见 spec §15.4） | ❌ 缺（有意后置） |
 | 设置 / 关于（3C/3E） | 版本、Orca 路径、console 文件 | ❌ 无 | ❌ 缺 |
-| 新建团队 / 生命周期按钮（3E） | init / up / down / restore / dispatcher up·down / autostart | ❌ 无 | ❌ 缺（有意后置） |
+| 新建团队 / 生命周期按钮（3E） | init / up / down / restore / dispatcher up·down / autostart | 团队卡片：拉起岗位 / 停止岗位 / 接回会话 / 启动·停止调度员 | 🟡 部分：up·down·restore·dispatcher 已覆盖；init / autostart 仍缺 |
 
 ## 2. 写侧（操作）
 
@@ -30,7 +30,7 @@
 | 给岗位发消息（send） | ✅ | ❌ | ❌ 缺 |
 | hush / unhush | ✅ | ❌ | ❌ 缺 |
 | 规格（spec）读 / 校验 / 保存 / 丢草稿 | ✅ | 🟡 worker 已有 `spec.readForEdit`（3C 保存走 `createSpecFacade`，面板未接） | 🟡 地基已备 |
-| up / down / restore / 调度员启停（3E） | ✅ | ❌ | ❌ 缺（有意后置） |
+| up / down / restore / 调度员启停（3E） | ✅ | ✅（`team.up` / `team.down` / `team.restore` / `team.dispatcher-up·down`） | ✅ 已覆盖（restore 的「仅预览 / 不恢复任务 / 显式会话绑定」仍只在 console） |
 | init / autostart（3E） | ✅ | ❌ | ❌ 缺（有意后置） |
 
 **审计**：两边同一张 core 审计表、同一 actor（`human`），仅来源前缀不同（`console:` / `plugin:`）。见插件 spec §15.3。
@@ -48,7 +48,7 @@
 ## 4. 结论与路线
 
 1. **读侧**：插件已能替代 console 的日常值班浏览（总览 / 收件箱 / 岗位 / 任务）。
-2. **写侧**：高频处置（回答 / 冻结解冻 / 认领完成）插件已够用；**建任务 / 改派 / resolveGate / send** 等低频重操作仍走 console 或 CLI。
-3. **编辑器与生命周期**：继续归 console（3C/3E 已实现且体验更完整）；插件侧等 Phase 3（components 编辑器）再评估。
+2. **写侧**：高频处置（回答 / 冻结解冻 / 认领完成）与 3E 生命周期按钮（up / down / restore / 调度员启停）插件已够用；**建任务 / 改派 / resolveGate / send** 等低频重操作仍走 console 或 CLI。
+3. **编辑器与建队**：继续归 console（3C/3E 已实现且体验更完整）；插件侧等 Phase 3（components 编辑器）再评估。
 4. **SSE 等价物**：✅ 已实现——worker 30s 轮询 + `panels.post`（`inbox.changed` / `tasks.changed` / `posts.changed`），内容变化才推。
-5. `wl console` **保留**：无 Orca 环境、宽屏多页浏览、编辑器与生命周期管理的主入口。
+5. `wl console` **保留**：无 Orca 环境、宽屏多页浏览、编辑器与建队的主入口；restore 的细粒度选项（仅预览 / 不恢复任务 / 显式会话绑定）也在 console。
