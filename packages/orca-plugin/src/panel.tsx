@@ -138,14 +138,31 @@ async function bringUp(team: string, opts: { draft?: boolean; newRun?: boolean; 
   }
 }
 
+async function dispatcherUpOnce(team: string): Promise<'started' | 'already_running'> {
+  // core 的 dispatcherUp 内部会轮询心跳最多 30s，面板超时要给足（上限 120s）。
+  const r = await plugin.request('team.dispatcher-up', { team }, { timeoutMs: 120000 })
+  return r.outcome as 'started' | 'already_running'
+}
+
 async function dispatcherAction(team: string, up: boolean): Promise<void> {
   set(busyTeam, team)
   try {
     if (up) {
-      const r = await plugin.request('team.dispatcher-up', { team })
-      set(notice, r.outcome === 'started' ? `调度员已启动（${team}）` : '调度员本来就在跑')
+      set(notice, `正在启动调度员（新建终端 + 等心跳，最多 1 分钟）…`)
+      let outcome: 'started' | 'already_running'
+      try {
+        outcome = await dispatcherUpOnce(team)
+      } catch (err) {
+        // 「终端在但进程死了」→ 关掉旧终端重试一次
+        const msg = err instanceof Error ? err.message : String(err)
+        if (!msg.includes('dispatcher_stale')) throw err
+        set(notice, '检测到失联的调度员终端，先关闭再重试…')
+        await plugin.request('team.dispatcher-down', { team, close: true }, { timeoutMs: 60000 })
+        outcome = await dispatcherUpOnce(team)
+      }
+      set(notice, outcome === 'started' ? `调度员已启动（${team}）` : '调度员本来就在跑')
     } else {
-      const r = await plugin.request('team.dispatcher-down', { team, close: true })
+      const r = await plugin.request('team.dispatcher-down', { team, close: true }, { timeoutMs: 60000 })
       set(notice, r.outcome === 'closed' ? '调度员已停止（终端已关闭）' : r.outcome === 'already_gone' ? '调度员终端已经不在（锁已清）' : '无法停止：core 在 close=false 时是 noop')
     }
     set(error, null)

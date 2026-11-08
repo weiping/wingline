@@ -2,6 +2,7 @@
 // 与 wl CLI 用同一套 core 函数与同一条审计链；插件只是另一条入口。
 import fs from 'node:fs'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import {
   attention,
@@ -361,9 +362,25 @@ export async function unfreezePost(
   return pluginWrites().unfreezePostCmd(deps, a)
 }
 
+/**
+ * 插件 worker 的 process.execPath 是宿主（Orca）的二进制、argv[1] 也不是 wingline，
+ * 直接让 core 拼「self 命令」会启动一个 Electron 实例（撞单实例锁秒退）。
+ * 所以这里必须显式传真实 node 与 wingline 入口脚本。
+ */
+function winglineLaunch(): { node: string; script: string } {
+  const node = which('node', process.env)
+  if (!node) throw new Error('PATH 上找不到 node，无法拼调度员启动命令')
+  const candidate = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../cli/dist/main.js')
+  if (fs.existsSync(candidate)) return { node, script: candidate }
+  const wl = which('wl', process.env)
+  if (wl) return { node, script: wl }
+  throw new Error('找不到 wingline CLI 入口（cli/dist/main.js 或全局 wl），无法拼调度员启动命令')
+}
+
 /** 启动调度员（core dispatcherUp：新建调度员终端并跑循环）。 */
 export async function dispatcherUp(deps: CommandDeps, a: { team: string }): Promise<{ outcome: 'already_running' | 'started' }> {
-  return pluginWrites().dispatcherUp(deps, a)
+  const launch = winglineLaunch()
+  return pluginWrites().dispatcherUp(deps, { team: a.team, node: launch.node, script: launch.script })
 }
 
 /** 停止调度员＝关闭调度员终端（循环随之退出）；close=false 是 core 的 noop。 */

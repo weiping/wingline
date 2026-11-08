@@ -43,7 +43,7 @@ declare module 'orca' {
     'post.detail': { input: { team: string; address: string }; output: import('./host.js').PostDetailDto }
     /** 任务详情：计划、历史、gate 输出。 */
     'task.detail': { input: { id: string }; output: import('./host.js').TaskDetailDto }
-    /** 启动调度员。 */
+    /** 启动调度员。node/script 由 worker 自动解析（宿主 execPath 是 Orca 时不能用）。 */
     'team.dispatcher-up': {
       input: { team: string }
       output: { outcome: 'already_running' | 'started' }
