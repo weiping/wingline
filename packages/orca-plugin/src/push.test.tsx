@@ -2,7 +2,7 @@ import { assert, mockHost, mount, test } from 'orca/testing'
 
 import * as panel from './panel.js'
 
-const TEAM = { name: 'duo', status: 'up', runId: 'r1', posts: 1, specPath: '/tmp/x', dispatcherState: 'running' }
+const TEAM = { name: 'duo', status: 'up', runId: 'r1', posts: 1, specPath: '/tmp/x', dispatcherState: 'running', offlinePosts: 0 }
 
 test('worker 推送 posts/inbox/tasks changed 时面板跟着更新', async () => {
   const host = mockHost({

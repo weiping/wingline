@@ -76,4 +76,5 @@ export interface TeamSummary {
   posts: number
   specPath: string
   dispatcherState: 'running' | 'stale' | 'stopped' | 'never'
+  offlinePosts: number | null
 }

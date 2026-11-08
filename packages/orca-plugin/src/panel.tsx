@@ -570,7 +570,7 @@ export default function Panel() {
                   {team.posts} 个岗位 · 调度员 {team.dispatcherState}
                 </Text>
                 <Row gap="xs">
-                  {team.status === 'stopped' && (
+                  {(team.status === 'stopped' || (team.offlinePosts !== null && team.offlinePosts > 0)) && (
                     <Button variant="outline" size="sm" disabled={loadingTeam === team.name} onPress={() => bringUp(team.name)}>
                       拉起岗位
                     </Button>

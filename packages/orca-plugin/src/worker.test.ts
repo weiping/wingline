@@ -6,6 +6,6 @@ import * as main from './worker.js'
 test('worker 能应答 teams.list', async () => {
   const worker = await mountWorker(main)
   const answer = (await worker.request('teams.list')) as { teams: unknown[] }
-  assert.ok(Array.isArray(answer.teams))
+  assert.ok(Array.isArray(answer.teams), `teams 应该是数组，实际：${JSON.stringify(answer).slice(0, 200)}`)
   await worker.deactivate()
 })

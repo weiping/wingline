@@ -2,7 +2,7 @@ import { assert, mockHost, mount, test } from 'orca/testing'
 
 import * as panel from './panel.js'
 
-const TEAM = { name: 'duo', status: 'up', runId: 'r-12345678', posts: 2, specPath: '/tmp/duo/team.yaml', dispatcherState: 'running' }
+const TEAM = { name: 'duo', status: 'up', runId: 'r-12345678', posts: 2, specPath: '/tmp/duo/team.yaml', dispatcherState: 'running', offlinePosts: 0 }
 const POSTS = {
   posts: [{ address: 'builder@duo', agent: 'claude', status: 'live', handle: 'term_1', isLead: true }]
 }
@@ -249,7 +249,7 @@ test('岗位「详情」请求 post.detail 并画出时间线', async () => {
 })
 
 test('stopped 团队显示「拉起岗位」，点击发 team.up 并刷新', async () => {
-  const STOPPED = { ...TEAM, status: 'stopped', dispatcherState: 'stale' }
+  const STOPPED = { ...TEAM, status: 'stopped', dispatcherState: 'stale', offlinePosts: 2 }
   const ups: unknown[] = []
   const host = mockHost({
     requests: {
@@ -292,7 +292,7 @@ test('岗位视图有离线岗位时显示「重拉离线岗位」', async () =>
 })
 
 test('调度员启停：stale 显示「启动调度员」，点击发 team.dispatcher-up', async () => {
-  const STALE = { ...TEAM, dispatcherState: 'stale' }
+  const STALE = { ...TEAM, dispatcherState: 'stale', offlinePosts: 2 }
   const calls: Array<{ name: string; input: unknown }> = []
   const host = mockHost({
     requests: {

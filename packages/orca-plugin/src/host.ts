@@ -68,22 +68,38 @@ export function createDeps(env: NodeJS.ProcessEnv = process.env): CommandDeps {
   }
 }
 
-export function teamSummaries(deps: CommandDeps): Array<{
+export async function teamSummaries(deps: CommandDeps): Promise<Array<{
   name: string
   status: 'up' | 'stopped'
   runId: string | null
   posts: number
   specPath: string
   dispatcherState: 'running' | 'stale' | 'stopped' | 'never'
-}> {
-  return deps.registry.listTeams().map((row) => ({
-    name: row.name,
-    status: row.status,
-    runId: row.runId,
-    posts: deps.registry.listPosts(row.name).length,
-    specPath: row.specPath,
-    dispatcherState: dispatcherHealth(deps, row.name).state
-  }))
+  /** 实时离线岗位数；团队从未启动或 Orca 不可达时为 null（面板据此决定要不要显示「拉起岗位」）。 */
+  offlinePosts: number | null
+}>> {
+  return Promise.all(
+    deps.registry.listTeams().map(async (row) => {
+      let offlinePosts: number | null = null
+      if (row.runId !== null) {
+        try {
+          const rows = await ps(deps, { team: row.name })
+          offlinePosts = rows.filter((r) => r.status !== 'live').length
+        } catch {
+          // Orca 不可达：保持 null，按钮交给 dispatcher/up 的幂等性兜底
+        }
+      }
+      return {
+        name: row.name,
+        status: row.status,
+        runId: row.runId,
+        posts: deps.registry.listPosts(row.name).length,
+        specPath: row.specPath,
+        dispatcherState: dispatcherHealth(deps, row.name).state,
+        offlinePosts
+      }
+    })
+  )
 }
 
 export interface PostDto {

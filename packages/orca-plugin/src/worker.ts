@@ -143,7 +143,7 @@ export default function activate(orca: OrcaWorkerApi): void {
   })
 
   orca.panels.handle('teams.list', async () => {
-    const teams = teamSummaries(shared())
+    const teams = await teamSummaries(shared())
     orca.panels.post('teams.changed', { teams })
     return { teams }
   })
