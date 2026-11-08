@@ -50,6 +50,8 @@ const detail = atom<PostDetailDto | null>(null)
 const detailAddress = atom('detailAddress', '')
 /** 回答提问的草稿，按 messageId 存。 */
 const replyDrafts = atom<Record<string, string>>({})
+/** 「停止岗位」的二段确认：第一次点亮，再点才执行。 */
+const confirmingDown = atom<Record<string, boolean>>({})
 /** 任务详情（计划 / 历史 / gate 输出），按任务 id 存。 */
 const taskDetails = atom<Record<string, TaskDetailDto>>({})
 const detailLoading = atom('detailLoading', '')
@@ -142,6 +144,26 @@ async function dispatcherUpOnce(team: string): Promise<'started' | 'already_runn
   // core 的 dispatcherUp 内部会轮询心跳最多 30s，面板超时要给足（上限 120s）。
   const r = await plugin.request('team.dispatcher-up', { team }, { timeoutMs: 120000 })
   return r.outcome as 'started' | 'already_running'
+}
+
+async function downTeam(team: string, close: boolean): Promise<void> {
+  set(busyTeam, team)
+  set(confirmingDown, { ...read(confirmingDown), [team]: false })
+  try {
+    const r = await plugin.request('team.down', { team, close }, { timeoutMs: 120000 })
+    const posts = (r.posts ?? []) as Array<{ address: string; outcome: string; reason?: string }>
+    const closed = posts.filter((p) => p.outcome === 'closed').length
+    const uncertain = posts.filter((p) => p.outcome === 'uncertain').length
+    set(notice, close
+      ? `已停止：${closed} 个终端关闭${uncertain > 0 ? `，${uncertain} 个结果不确定` : ''}`
+      : `团队已标为 stopped（终端未动）`)
+    set(error, null)
+    await refresh()
+  } catch (err) {
+    set(error, err instanceof Error ? err.message : String(err))
+  } finally {
+    set(busyTeam, null)
+  }
 }
 
 async function dispatcherAction(team: string, up: boolean): Promise<void> {
@@ -590,6 +612,24 @@ export default function Panel() {
                   {(team.status === 'stopped' || (team.offlinePosts !== null && team.offlinePosts > 0)) && (
                     <Button variant="outline" size="sm" disabled={loadingTeam === team.name} onPress={() => bringUp(team.name)}>
                       拉起岗位
+                    </Button>
+                  )}
+                  {team.status === 'up' && (
+                    <Button
+                      variant={read(confirmingDown)[team.name] ? 'solid' : 'outline'}
+                      tone={read(confirmingDown)[team.name] ? 'danger' : 'neutral'}
+                      size="sm"
+                      disabled={loadingTeam === team.name}
+                      onPress={() => {
+                        if (read(confirmingDown)[team.name]) {
+                          void downTeam(team.name, true)
+                        } else {
+                          set(confirmingDown, { ...read(confirmingDown), [team.name]: true })
+                          set(notice, '再点一次确认：将关闭岗位终端（agent 会话结束）')
+                        }
+                      }}
+                    >
+                      {read(confirmingDown)[team.name] ? '确认停止？' : '停止岗位'}
                     </Button>
                   )}
                   {team.dispatcherState !== 'running' && (

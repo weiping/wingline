@@ -409,6 +409,15 @@ export async function doneTask(deps: CommandDeps, a: { id: string; as: string })
   return pluginWrites().doneTask(deps, a)
 }
 
+/** 停止团队（close=true 关掉岗位终端；false 只把团队标为 stopped，终端不动）。 */
+export async function downTeam(
+  deps: CommandDeps,
+  a: { team: string; close: boolean }
+): Promise<{ posts: Array<{ address: string; outcome: string; reason?: string }> }> {
+  const r = await pluginWrites().down(deps, a)
+  return { posts: r.posts.map((p) => ({ address: p.address, outcome: p.outcome, reason: p.reason })) }
+}
+
 // ── 岗位终端预览 ────────────────────────────────────────────
 
 export interface PreviewDto {

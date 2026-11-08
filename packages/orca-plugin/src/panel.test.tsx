@@ -340,3 +340,42 @@ test('调度员 running 时显示「停止调度员」，点击发 team.dispatch
   assert.ok(JSON.stringify(p.tree()).includes('调度员已停止（终端已关闭）'))
   await p.unmount()
 })
+
+test('up 团队显示「停止岗位」，二段确认后发 team.down（close=true）', async () => {
+  const calls: Array<{ name: string; input: unknown }> = []
+  const host = mockHost({
+    requests: {
+      'teams.list': { teams: [TEAM] },
+      'team.posts': POSTS,
+      'team.down': (input: unknown) => {
+        calls.push({ name: 'down', input })
+        return { posts: [{ address: 'builder@duo', outcome: 'closed' }, { address: 'checker@duo', outcome: 'closed' }] }
+      }
+    }
+  })
+  const p = await mount(panel, { host })
+  await p.settled()
+  assert.ok(JSON.stringify(p.tree()).includes('停止岗位'), '没有停止按钮')
+
+  // 第一段：只点亮确认
+  await p.press({ text: '停止岗位' })
+  await p.settled()
+  assert.equal(calls.length, 0, '第一段就发了请求')
+  assert.ok(JSON.stringify(p.tree()).includes('确认停止？'), '没进入确认态')
+
+  // 第二段：真正执行
+  await p.press({ text: '确认停止？' })
+  await p.settled()
+  assert.deepEqual(calls, [{ name: 'down', input: { team: 'duo', close: true } }])
+  assert.ok(JSON.stringify(p.tree()).includes('已停止'), '没有成功提示')
+  await p.unmount()
+})
+
+test('stopped 团队不显示「停止岗位」', async () => {
+  const STOPPED = { ...TEAM, status: 'stopped', dispatcherState: 'stale', offlinePosts: 2 }
+  const host = mockHost({ requests: { 'teams.list': { teams: [STOPPED] } } })
+  const p = await mount(panel, { host })
+  await p.settled()
+  assert.ok(!JSON.stringify(p.tree()).includes('停止岗位'), 'stopped 团队不该有停止按钮')
+  await p.unmount()
+})

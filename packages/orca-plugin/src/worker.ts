@@ -9,6 +9,7 @@ import {
   dispatcherDown,
   dispatcherUp,
   doneTask,
+  downTeam,
   freezePost,
   inboxDto,
   openPostTerminal,
@@ -205,6 +206,10 @@ export default function activate(orca: OrcaWorkerApi): void {
 
   orca.panels.handle('team.dispatcher-up', async ({ team }) => {
     return dispatcherUp(shared(), { team })
+  })
+
+  orca.panels.handle('team.down', async ({ team, close }) => {
+    return downTeam(shared(), { team, close })
   })
 
   orca.panels.handle('team.dispatcher-down', async ({ team, close }) => {
