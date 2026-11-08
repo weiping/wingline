@@ -1,0 +1,31 @@
+{
+  "pluginKey": "local.wingline",
+  "source": {
+    "repo": "https://github.com/weiping/wingline",
+    "path": "packages/orca-plugin",
+    "tag": "orca-plugin-v0.1.0"
+  },
+  "catalogEntry": {
+    "version": "0.1.0",
+    "commit": "39ef7ac52ea7263977a7daf2ce3f51f303acf61d",
+    "contentHash": "8a59e75d2b4014e9f5ec35a26278ed8b8e5b3685c2cf7b9be919038b823bf844",
+    "execution": "trusted-worker",
+    "minimumOrca": "1.4.248",
+    "name": "Wingline",
+    "contributes": [
+      {
+        "kind": "panels",
+        "name": "Wingline"
+      },
+      {
+        "kind": "statusBarItems",
+        "name": "雁阵"
+      }
+    ],
+    "capabilities": [
+      "storage:own",
+      "settings:own",
+      "workspace:read"
+    ]
+  }
+}
