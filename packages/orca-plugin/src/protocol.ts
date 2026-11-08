@@ -14,6 +14,21 @@ declare module 'orca' {
     }
     /** 编辑器：加载团队规格（需 team 已登记）。 */
     'spec.readForEdit': { input: { team: string }; output: import('./host.js').SpecForEditDto }
+    /** 校验一段 YAML（可带结构化 op），返回错误与预演；不落盘。 */
+    'spec.validate': {
+      input: { team: string; yaml: string; set?: unknown; files?: Record<string, string> }
+      output: import('./host.js').SpecValidateDto
+    }
+    /** 保存规格与文档；审计 plugin: spec save。 */
+    'spec.save': {
+      input: { team: string; yaml: string; baseHash: string | null; running: boolean; files?: Record<string, string> }
+      output: import('./host.js').SpecSaveResultDto
+    }
+    /** 新建团队（模板）。 */
+    'team.init': {
+      input: { name: string; template: 'duo' | 'solo' | 'trio'; repo: string }
+      output: { team: string; specPath: string; created: boolean }
+    }
     /** 团队清单（来自本地账本，不碰 Orca）。 */
     'teams.list': { output: { teams: TeamSummary[] } }
     /** 岗位列表：走 core 的 ps()，含存活状态与终端 handle。 */

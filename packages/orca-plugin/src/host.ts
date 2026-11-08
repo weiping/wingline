@@ -510,6 +510,73 @@ export async function dispatcherDown(
   return pluginWrites().dispatcherDown(deps, a)
 }
 
+export interface SpecErrorDto { code: string; message: string; line: number | null }
+export interface SpecPlanDto {
+  posts: Array<{ id: string; kind: string; fields?: string[] }>
+  fields: Array<{ path: string; before: unknown; after: unknown }>
+  commands: string[]
+}
+export interface SpecPostsParsedDto {
+  id: string
+  agent: string
+  model?: string
+  worktree?: string
+}
+export interface SpecValidateDto {
+  yaml: string
+  errors: SpecErrorDto[]
+  preview: SpecPlanDto | null
+  postsParsed: SpecPostsParsedDto[]
+}
+export interface SpecSaveResultDto {
+  wrote: 'draft' | 'spec'
+  path: string
+  hash: string
+  docsUpdated: string[]
+}
+
+function postsOfParsed(parsed: unknown): SpecPostsParsedDto[] {
+  const p = parsed as { posts?: Array<Record<string, unknown>> } | null
+  if (!p || !Array.isArray(p.posts)) return []
+  return p.posts.map((x) => ({
+    id: String(x.id),
+    agent: String(x.agent),
+    ...(x.model !== undefined ? { model: String(x.model) } : {}),
+    ...(x.worktree !== undefined ? { worktree: String(x.worktree) } : {})
+  }))
+}
+
+/** 校验一段 YAML（可带一个结构化 op），返回错误与预演；不落盘。 */
+export async function specValidate(
+  deps: CommandDeps,
+  a: { team: string; yaml: string; set?: import('@weiping/wingline-core').SpecEditOp; files?: Record<string, string> }
+): Promise<SpecValidateDto> {
+  const f = createSpecFacade(deps)
+  const r = f.validate(a.team, { yaml: a.yaml, set: a.set, files: a.files })
+  return {
+    yaml: r.yaml,
+    errors: r.errors.map((e) => ({ code: e.code, message: e.message, line: e.line })),
+    preview: r.preview
+      ? {
+          posts: r.preview.posts.map((p) => ({ id: p.id, kind: p.kind, ...(p.fields ? { fields: [...p.fields] } : {}) })),
+          fields: r.preview.fields.map((f) => ({ path: f.path, before: f.before, after: f.after })),
+          commands: [...r.preview.commands]
+        }
+      : null,
+    postsParsed: postsOfParsed(r.parsed)
+  }
+}
+
+/** 保存规格与文档；审计 plugin: spec save（actor=human）。running 时写草稿。 */
+export async function specSave(
+  deps: CommandDeps,
+  a: { team: string; yaml: string; baseHash: string | null; running: boolean; files?: Record<string, string> }
+): Promise<SpecSaveResultDto> {
+  const f = createSpecFacade(deps)
+  const r = await f.save(a.team, { yaml: a.yaml, baseHash: a.baseHash, running: a.running, files: a.files })
+  return { wrote: r.wrote, path: r.path, hash: r.hash, docsUpdated: r.docsUpdated }
+}
+
 // ── 接回会话（restore） ─────────────────────────────────────
 
 export interface RestoreResultDto {
@@ -598,6 +665,8 @@ export function auditedInit() {
 export type SpecForEditDto = Pick<SpecForEdit, 'specPath' | 'yaml' | 'hash' | 'running'> & {
   hasDraft: boolean
   docKeys: string[]
+  /** 引用文档正文（NORMS / briefs），键为规格里的相对路径。 */
+  files: Record<string, string>
 }
 
 export function specForEditDto(view: SpecForEdit): SpecForEditDto {
@@ -607,6 +676,7 @@ export function specForEditDto(view: SpecForEdit): SpecForEditDto {
     hash: view.hash,
     running: view.running,
     hasDraft: view.draft !== null,
-    docKeys: Object.keys(view.files)
+    docKeys: Object.keys(view.files),
+    files: view.files
   }
 }

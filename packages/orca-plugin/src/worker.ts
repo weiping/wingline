@@ -19,6 +19,8 @@ import {
   replyQuestion,
   restoreTeam,
   specForEditDto,
+  specSave,
+  specValidate,
   staleDtos,
   taskDetailDto,
   taskDtos,
@@ -28,6 +30,7 @@ import {
   upTeam
 } from './host.js'
 import { createSpecFacade, type CommandDeps } from '@weiping/wingline-core'
+import { pluginWrites } from './host.js'
 
 let deps: CommandDeps | undefined
 
@@ -151,6 +154,19 @@ export default function activate(orca: OrcaWorkerApi): void {
   orca.panels.handle('spec.readForEdit', async ({ team }) => {
     const view = createSpecFacade(shared()).readForEdit(team)
     return specForEditDto(view)
+  })
+
+  orca.panels.handle('spec.validate', async ({ team, yaml, set, files }) => {
+    return specValidate(shared(), { team, yaml, set, files })
+  })
+
+  orca.panels.handle('spec.save', async ({ team, yaml, baseHash, running, files }) => {
+    return specSave(shared(), { team, yaml, baseHash, running, files })
+  })
+
+  orca.panels.handle('team.init', async ({ name, template, repo }) => {
+    const cmds = pluginWrites()
+    return cmds.initTeamCmd(shared(), { mode: 'template', name, template, repo })
   })
 
   orca.panels.handle('teams.list', async () => {
