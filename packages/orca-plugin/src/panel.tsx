@@ -18,10 +18,10 @@ import {
   Text
 } from 'orca'
 
-import type { InboxDto, PostDetailDto, PostDto, PreviewDto, RestoreResultDto, TaskDetailDto, TaskDto, UpResultDto } from './host.js'
+import type { InboxDto, PostDetailDto, PostDto, PreviewDto, RestoreResultDto, StaleDto, TaskDetailDto, TaskDto, TimelineEventDto, UpResultDto } from './host.js'
 import type { TeamSummary } from './protocol.js'
 
-type View = 'posts' | 'inbox' | 'tasks'
+type View = 'posts' | 'inbox' | 'tasks' | 'stale' | 'timeline'
 
 const teams = atom<TeamSummary[] | null>(null)
 const error = atom<string | null>(null)
@@ -57,6 +57,12 @@ const confirmingDown = atom<Record<string, boolean>>({})
 /** 任务详情（计划 / 历史 / gate 输出），按任务 id 存。 */
 const taskDetails = atom<Record<string, TaskDetailDto>>({})
 const detailLoading = atom('detailLoading', '')
+/** 滞留任务。 */
+const staleItems = atom<Record<string, StaleDto[]>>({})
+/** 任务视图是否只看滞留。 */
+const staleOnly = atom<Record<string, boolean>>({})
+/** 全团队时间线。 */
+const timeline = atom<Record<string, TimelineEventDto[]>>({})
 
 async function refresh(): Promise<void> {
   set(loading, true)
@@ -89,6 +95,24 @@ async function loadInbox(team: string): Promise<void> {
   }
 }
 
+async function loadStale(team: string): Promise<void> {
+  try {
+    const answer = await plugin.request('team.tasks.stale', { team })
+    set(staleItems, { ...read(staleItems), [team]: answer.stale as StaleDto[] })
+  } catch (err) {
+    set(error, err instanceof Error ? err.message : String(err))
+  }
+}
+
+async function loadTimeline(team: string): Promise<void> {
+  try {
+    const answer = await plugin.request('team.timeline', { team, limit: 100 })
+    set(timeline, { ...read(timeline), [team]: answer.events as TimelineEventDto[] })
+  } catch (err) {
+    set(error, err instanceof Error ? err.message : String(err))
+  }
+}
+
 async function loadTasks(team: string): Promise<void> {
   try {
     const answer = await plugin.request('team.tasks', { team })
@@ -105,7 +129,9 @@ async function open(team: string): Promise<void> {
     const v = read(view)
     if (v === 'posts') await loadPosts(team)
     else if (v === 'inbox') await loadInbox(team)
-    else await loadTasks(team)
+    else if (v === 'tasks') await loadTasks(team)
+    else if (v === 'stale') await loadStale(team)
+    else await loadTimeline(team)
   } finally {
     set(busyTeam, null)
   }
@@ -514,6 +540,45 @@ function InboxView({ box, team }: { box: InboxDto | undefined; team: string }) {
   )
 }
 
+function StaleView({ rows, team }: { rows: StaleDto[]; team: string }) {
+  if (rows.length === 0) return <Text muted size="xs">没有滞留的任务。</Text>
+  return (
+    <Stack gap="xs">
+      {rows.map((s) => (
+        <Stack key={s.taskId} gap="xs">
+          <Row justify="between" gap="xs">
+            <Text size="xs" truncate>
+              {s.title}
+            </Text>
+            <Badge tone="warning">{s.reason}</Badge>
+          </Row>
+          <Text size="xs" muted>
+            {s.owner ?? '无主'} · 处理：{s.command}
+          </Text>
+        </Stack>
+      ))}
+    </Stack>
+  )
+}
+
+function TimelineView({ rows, team }: { rows: TimelineEventDto[]; team: string }) {
+  if (rows.length === 0) return <Text muted size="xs">还没有事件。</Text>
+  return (
+    <Stack gap="xs">
+      {rows.slice(-20).reverse().map((e) => (
+        <Text key={e.id} size="xs">
+          {e.at.slice(11, 19)} {e.action}
+          {e.target !== null ? ` → ${e.target}` : ''}
+          {e.outcome !== null && e.outcome !== 'ok' ? `（${e.outcome}）` : ''} · {e.actor}
+        </Text>
+      ))}
+      <Text size="xs" muted>
+        共 {rows.length} 条（最近 20 条倒序）
+      </Text>
+    </Stack>
+  )
+}
+
 function TasksView({ rows, team }: { rows: TaskDto[] | undefined; team: string }) {
   const actorText = read(actor)
   const details = read(taskDetails)
@@ -547,6 +612,11 @@ function TasksView({ rows, team }: { rows: TaskDto[] | undefined; team: string }
                 <Badge tone={STATUS_TONE[t.status] ?? 'neutral'}>{t.status}</Badge>
               </Row>
             </Row>
+            {t.tags.length > 0 && (
+              <Text size="xs" muted>
+                标签：{t.tags.join('、')}
+              </Text>
+            )}
             <Row gap="xs">
               <Button
                 variant="outline"
@@ -613,6 +683,8 @@ export default function Panel() {
   const allPosts = read(posts)
   const allInbox = read(inbox)
   const allTasks = read(tasks)
+  const allStale = read(staleItems)
+  const allTimeline = read(timeline)
   const allRestores = read(restoreResults)
   const loadingTeam = read(busyTeam)
   const hint = read(notice)
@@ -701,6 +773,20 @@ export default function Panel() {
                       >
                         任务
                       </Button>
+                      <Button
+                        variant={currentView === 'stale' ? 'solid' : 'ghost'}
+                        size="sm"
+                        onPress={() => switchView('stale', team.name)}
+                      >
+                        滞留
+                      </Button>
+                      <Button
+                        variant={currentView === 'timeline' ? 'solid' : 'ghost'}
+                        size="sm"
+                        onPress={() => switchView('timeline', team.name)}
+                      >
+                        时间线
+                      </Button>
                     </Row>
                     {loadingTeam === team.name && <Spinner label="正在读取" labelHidden />}
                     {loadingTeam !== team.name && currentView === 'posts' && (
@@ -709,6 +795,12 @@ export default function Panel() {
                     {loadingTeam !== team.name && currentView === 'inbox' && <InboxView box={box} team={team.name} />}
                     {loadingTeam !== team.name && currentView === 'tasks' && (
                       <TasksView rows={allTasks[team.name]} team={team.name} />
+                    )}
+                    {loadingTeam !== team.name && currentView === 'stale' && (
+                      <StaleView rows={allStale[team.name] ?? []} team={team.name} />
+                    )}
+                    {loadingTeam !== team.name && currentView === 'timeline' && (
+                      <TimelineView rows={allTimeline[team.name] ?? []} team={team.name} />
                     )}
                     <Row gap="xs">
                       <Button variant="ghost" size="sm" onPress={() => open(team.name)}>

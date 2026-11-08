@@ -24,6 +24,10 @@ declare module 'orca' {
     'team.inbox': { input: { team: string }; output: import('./host.js').InboxDto }
     /** 任务看板：团队当前的任务列表。 */
     'team.tasks': { input: { team: string }; output: { tasks: import('./host.js').TaskDto[] } }
+    /** 滞留任务（--stale 口径）。 */
+    'team.tasks.stale': { input: { team: string }; output: { stale: import('./host.js').StaleDto[] } }
+    /** 全团队时间线（最近 limit 条）。 */
+    'team.timeline': { input: { team: string; limit?: number }; output: { events: import('./host.js').TimelineEventDto[] } }
     /** 写操作：回答提问。 */
     'write.reply': {
       input: { team: string; messageId: string; body: string }
