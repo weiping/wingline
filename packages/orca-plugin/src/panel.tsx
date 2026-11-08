@@ -341,14 +341,8 @@ function PostsView({ rows, team }: { rows: PostDto[]; team: string }) {
   if (rows.length === 0) {
     return <Text muted size="xs">这个团队还没有岗位。</Text>
   }
-  const offline = rows.some((r) => r.status !== 'live')
   return (
     <Stack gap="xs">
-      {offline && (
-        <Button variant="outline" size="sm" onPress={() => bringUp(team)}>
-          重拉离线岗位（wl up 幂等，活终端不动）
-        </Button>
-      )}
       {rows.map((post) => (
         <Stack key={post.address} gap="xs">
           <Row justify="between" gap="xs">
