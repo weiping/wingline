@@ -144,7 +144,11 @@ async function bringUp(team: string, opts: { draft?: boolean; newRun?: boolean; 
     parts.push(total > 0 ? (live >= total ? `${live} 个已就绪` : `${live}/${total} 已就绪`) : '未读到岗位状态')
     // Run 没绑上（协调者身份对不上）时，调度员还得重新启动一次才能认领
     if (r.run && r.run.outcome !== 'ok') {
-      parts.push(`Run 未绑定（${r.run.reason ?? r.run.outcome}），需再点「启动调度员」认领协调者`)
+      const disp = r.dispatcher as { outcome?: string; reason?: string } | null | undefined
+      if (disp?.outcome === 'started') parts.push('调度员已启动')
+      else if (disp?.outcome === 'already_running') parts.push('调度员已在运行')
+      else if (disp) parts.push(`调度员未启动（${disp.reason ?? disp.outcome}）`)
+      parts.push(`Run 未绑定（${r.run.reason ?? r.run.outcome}）`)
     }
     set(notice, `${team}：${parts.join('｜')}`)
     set(error, null)
@@ -171,8 +175,10 @@ async function downTeam(team: string, close: boolean): Promise<void> {
     const posts = (r.posts ?? []) as Array<{ address: string; outcome: string; reason?: string }>
     const closed = posts.filter((p) => p.outcome === 'closed').length
     const uncertain = posts.filter((p) => p.outcome === 'uncertain').length
+    const disp = r.dispatcher as { outcome?: string } | null | undefined
+    const dispText = disp?.outcome === 'closed' ? '，调度员已停' : disp?.outcome === 'already_gone' ? '，调度员本就不在' : ''
     set(notice, close
-      ? `已停止：${closed} 个终端关闭${uncertain > 0 ? `，${uncertain} 个结果不确定` : ''}`
+      ? `已停止：${closed} 个终端关闭${uncertain > 0 ? `，${uncertain} 个结果不确定` : ''}${dispText}`
       : `团队已标为 stopped（终端未动）`)
     set(error, null)
     await refresh()
@@ -201,36 +207,6 @@ async function restoreSessions(team: string): Promise<void> {
     set(error, null)
     await refresh()
     await loadPosts(team)
-  } catch (err) {
-    set(error, err instanceof Error ? err.message : String(err))
-  } finally {
-    set(busyTeam, null)
-  }
-}
-
-async function dispatcherAction(team: string, up: boolean): Promise<void> {
-  set(busyTeam, team)
-  try {
-    if (up) {
-      set(notice, `正在启动调度员（新建终端 + 等心跳，最多 1 分钟）…`)
-      let outcome: 'started' | 'already_running'
-      try {
-        outcome = await dispatcherUpOnce(team)
-      } catch (err) {
-        // 「终端在但进程死了」→ 关掉旧终端重试一次
-        const msg = err instanceof Error ? err.message : String(err)
-        if (!msg.includes('dispatcher_stale')) throw err
-        set(notice, '检测到失联的调度员终端，先关闭再重试…')
-        await plugin.request('team.dispatcher-down', { team, close: true }, { timeoutMs: 60000 })
-        outcome = await dispatcherUpOnce(team)
-      }
-      set(notice, outcome === 'started' ? `调度员已启动（${team}）` : '调度员本来就在跑')
-    } else {
-      const r = await plugin.request('team.dispatcher-down', { team, close: true }, { timeoutMs: 60000 })
-      set(notice, r.outcome === 'closed' ? '调度员已停止（终端已关闭）' : r.outcome === 'already_gone' ? '调度员终端已经不在（锁已清）' : '无法停止：core 在 close=false 时是 noop')
-    }
-    set(error, null)
-    await refresh()
   } catch (err) {
     set(error, err instanceof Error ? err.message : String(err))
   } finally {
@@ -718,16 +694,6 @@ export default function Panel() {
                   {team.status === 'up' && (
                     <Button variant="ghost" size="sm" disabled={loadingTeam === team.name} onPress={() => restoreSessions(team.name)}>
                       接回会话
-                    </Button>
-                  )}
-                  {team.dispatcherState !== 'running' && (
-                    <Button variant="outline" size="sm" disabled={loadingTeam === team.name} onPress={() => dispatcherAction(team.name, true)}>
-                      启动调度员
-                    </Button>
-                  )}
-                  {team.dispatcherState === 'running' && (
-                    <Button variant="ghost" size="sm" disabled={loadingTeam === team.name} onPress={() => dispatcherAction(team.name, false)}>
-                      停止调度员
                     </Button>
                   )}
                 </Row>

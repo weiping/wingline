@@ -292,56 +292,6 @@ test('岗位视图有离线岗位时显示「重拉离线岗位」', async () =>
   await p.unmount()
 })
 
-test('调度员启停：stale 显示「启动调度员」，点击发 team.dispatcher-up', async () => {
-  const STALE = { ...TEAM, dispatcherState: 'stale', offlinePosts: 2 }
-  const calls: Array<{ name: string; input: unknown }> = []
-  const host = mockHost({
-    requests: {
-      'teams.list': { teams: [STALE] },
-      'team.dispatcher-up': (input: unknown) => {
-        calls.push({ name: 'up', input })
-        return { outcome: 'started' }
-      },
-      'team.dispatcher-down': (input: unknown) => {
-        calls.push({ name: 'down', input })
-        return { outcome: 'closed' }
-      }
-    }
-  })
-  const p = await mount(panel, { host })
-  await p.settled()
-  const tree = JSON.stringify(p.tree())
-  assert.ok(tree.includes('启动调度员'), `没有启动按钮：${tree.slice(0, 600)}`)
-  assert.ok(!tree.includes('停止调度员'), 'running 才该有停止按钮')
-  await p.press({ text: '启动调度员' })
-  await p.settled()
-  assert.deepEqual(calls, [{ name: 'up', input: { team: 'duo' } }])
-  assert.ok(JSON.stringify(p.tree()).includes('调度员已启动'))
-  await p.unmount()
-})
-
-test('调度员 running 时显示「停止调度员」，点击发 team.dispatcher-down', async () => {
-  const calls: Array<{ name: string; input: unknown }> = []
-  const host = mockHost({
-    requests: {
-      'teams.list': { teams: [TEAM] },
-      'team.dispatcher-down': (input: unknown) => {
-        calls.push({ name: 'down', input })
-        return { outcome: 'closed' }
-      }
-    }
-  })
-  const p = await mount(panel, { host })
-  await p.settled()
-  const tree = JSON.stringify(p.tree())
-  assert.ok(tree.includes('停止调度员'), `没有停止按钮：${tree.slice(0, 600)}`)
-  await p.press({ text: '停止调度员' })
-  await p.settled()
-  assert.deepEqual(calls, [{ name: 'down', input: { team: 'duo', close: true } }])
-  assert.ok(JSON.stringify(p.tree()).includes('调度员已停止（终端已关闭）'))
-  await p.unmount()
-})
-
 test('up 团队显示「停止岗位」，二段确认后发 team.down（close=true）', async () => {
   const calls: Array<{ name: string; input: unknown }> = []
   const host = mockHost({
@@ -523,5 +473,16 @@ test('拉起回执带就绪数：面板给出「已就绪/未就绪」结论', a
   const tree = JSON.stringify(p.tree())
   assert.ok(tree.includes('2 个已就绪'), `没给出就绪结论：${tree.slice(0, 600)}`)
   assert.ok(tree.includes('2 个岗位已启动'), `没给出启动结果：${tree.slice(0, 600)}`)
+  await p.unmount()
+})
+
+test('面板不再显示调度员启停按钮（调度员随岗位隐式起停）', async () => {
+  const STALE = { ...TEAM, dispatcherState: 'stale', offlinePosts: 2 }
+  const host = mockHost({ requests: { 'teams.list': { teams: [STALE] } } })
+  const p = await mount(panel, { host })
+  await p.settled()
+  const tree = JSON.stringify(p.tree())
+  assert.ok(!tree.includes('启动调度员'), `不该有启动调度员按钮：${tree.slice(0, 700)}`)
+  assert.ok(!tree.includes('停止调度员'), `不该有停止调度员按钮：${tree.slice(0, 700)}`)
   await p.unmount()
 })

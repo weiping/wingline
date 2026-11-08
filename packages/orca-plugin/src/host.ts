@@ -18,6 +18,7 @@ import {
   ps,
   readTimeline,
   Registry,
+  loadTeamSpec,
   signalSummary,
   createSpecFacade,
   initTeamCmd,
@@ -377,10 +378,20 @@ function winglineLaunch(): { node: string; script: string } {
   throw new Error('找不到 wingline CLI 入口（cli/dist/main.js 或全局 wl），无法拼调度员启动命令')
 }
 
-/** 启动调度员（core dispatcherUp：新建调度员终端并跑循环）。 */
+/**
+ * 启动调度员（core dispatcherUp：新建调度员终端并跑循环）。
+ * 「终端在但进程死了」（dispatcher_stale）→ 先关掉旧终端再试一次。
+ */
 export async function dispatcherUp(deps: CommandDeps, a: { team: string }): Promise<{ outcome: 'already_running' | 'started' }> {
   const launch = winglineLaunch()
-  return pluginWrites().dispatcherUp(deps, { team: a.team, node: launch.node, script: launch.script })
+  try {
+    return await pluginWrites().dispatcherUp(deps, { team: a.team, node: launch.node, script: launch.script })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    if (!msg.includes('dispatcher_stale')) throw err
+    await pluginWrites().dispatcherDown(deps, { team: a.team, close: true })
+    return pluginWrites().dispatcherUp(deps, { team: a.team, node: launch.node, script: launch.script })
+  }
 }
 
 /** 停止调度员＝关闭调度员终端（循环随之退出）；close=false 是 core 的 noop。 */
@@ -394,6 +405,8 @@ export async function dispatcherDown(
 export interface UpResultDto {
   posts: Array<{ address: string; outcome: string; reason?: string }>
   run: { outcome: string; reason?: string } | null
+  /** 调度器是否被顺带启动（调度员是团队的隐式组件，不在面板上单独暴露）。 */
+  dispatcher: { outcome: 'started' | 'already_running' | 'failed'; reason?: string } | null
 }
 
 /**
@@ -404,7 +417,26 @@ export async function upTeam(
   deps: CommandDeps,
   a: { team: string; draft?: boolean; newRun?: boolean; adoptRun?: string }
 ): Promise<UpResultDto> {
+  // Orca 的 worktree 选择器 current 按「调用进程的 cwd」解析；插件 worker 的 cwd 是 /，
+  // 会报 No Orca-managed worktree contains the current directory。指到团队 repo 上才能落进真正的 worktree。
+  const row = deps.registry.getTeam(a.team)
+  if (row) {
+    try {
+      const repo = loadTeamSpec(row.specPath).repo
+      if (repo.startsWith('path:')) process.chdir(repo.slice(5))
+    } catch {
+      // 规格读不了就让 up 自己报错
+    }
+  }
   const r = await pluginWrites().up(deps, a)
+  // 调度员需要真实终端身份来认领协调者（插件 worker 当不了协调者），随岗位一起静默拉起。
+  let dispatcher: UpResultDto['dispatcher'] = null
+  try {
+    const d = await dispatcherUp(deps, { team: a.team })
+    dispatcher = { outcome: d.outcome }
+  } catch (err) {
+    dispatcher = { outcome: 'failed', reason: err instanceof Error ? err.message : String(err) }
+  }
   return {
     posts: (r.posts ?? []).map((p) => ({
       address: p.address,
@@ -413,7 +445,8 @@ export async function upTeam(
     })),
     run: r.run
       ? { outcome: r.run.outcome, ...(r.run.reason !== undefined && r.run.reason !== null ? { reason: r.run.reason } : {}) }
-      : null
+      : null,
+    dispatcher
   }
 }
 
@@ -477,14 +510,26 @@ export async function doneTask(deps: CommandDeps, a: { id: string; as: string })
 export async function downTeam(
   deps: CommandDeps,
   a: { team: string; close: boolean }
-): Promise<{ posts: Array<{ address: string; outcome: string; reason?: string }> }> {
+): Promise<{
+  posts: Array<{ address: string; outcome: string; reason?: string }>
+  dispatcher: { outcome: string; reason?: string } | null
+}> {
+  // 先静默停调度员：顺序反了，调度员会在最后几秒继续往即将关闭的岗位派活。
+  let dispatcher: { outcome: string; reason?: string } | null = null
+  try {
+    const d = await dispatcherDown(deps, { team: a.team, close: true })
+    dispatcher = { outcome: d.outcome }
+  } catch (err) {
+    dispatcher = { outcome: 'failed', reason: err instanceof Error ? err.message : String(err) }
+  }
   const r = await pluginWrites().down(deps, a)
   return {
     posts: (r.posts ?? []).map((p) => ({
       address: p.address,
       outcome: p.outcome,
       ...(p.reason !== undefined && p.reason !== null ? { reason: p.reason } : {})
-    }))
+    })),
+    dispatcher
   }
 }
 
