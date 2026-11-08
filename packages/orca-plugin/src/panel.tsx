@@ -145,8 +145,8 @@ async function dispatcherAction(team: string, up: boolean): Promise<void> {
       const r = await plugin.request('team.dispatcher-up', { team })
       set(notice, r.outcome === 'started' ? `调度员已启动（${team}）` : '调度员本来就在跑')
     } else {
-      const r = await plugin.request('team.dispatcher-down', { team, close: false })
-      set(notice, r.outcome === 'closed' ? '调度员已停止' : r.outcome === 'already_gone' ? '调度员终端已经不在' : '调度员本来就没在跑')
+      const r = await plugin.request('team.dispatcher-down', { team, close: true })
+      set(notice, r.outcome === 'closed' ? '调度员已停止（终端已关闭）' : r.outcome === 'already_gone' ? '调度员终端已经不在（锁已清）' : '无法停止：core 在 close=false 时是 noop')
     }
     set(error, null)
     await refresh()

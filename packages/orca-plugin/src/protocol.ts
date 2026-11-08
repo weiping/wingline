@@ -48,7 +48,7 @@ declare module 'orca' {
       input: { team: string }
       output: { outcome: 'already_running' | 'started' }
     }
-    /** 停止调度员（close=false 只停循环）。 */
+    /** 停止调度员＝关闭调度员终端（close 缺省 true；false 是 core 的 noop，别用）。 */
     'team.dispatcher-down': {
       input: { team: string; close?: boolean }
       output: { outcome: 'noop' | 'closed' | 'already_gone' }

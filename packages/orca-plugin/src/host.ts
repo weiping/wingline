@@ -366,7 +366,7 @@ export async function dispatcherUp(deps: CommandDeps, a: { team: string }): Prom
   return pluginWrites().dispatcherUp(deps, a)
 }
 
-/** 停止调度员（close=false 只停循环，不动终端）。 */
+/** 停止调度员＝关闭调度员终端（循环随之退出）；close=false 是 core 的 noop。 */
 export async function dispatcherDown(
   deps: CommandDeps,
   a: { team: string; close?: boolean }

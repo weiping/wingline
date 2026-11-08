@@ -208,7 +208,8 @@ export default function activate(orca: OrcaWorkerApi): void {
   })
 
   orca.panels.handle('team.dispatcher-down', async ({ team, close }) => {
-    return dispatcherDown(shared(), { team, close: close ?? false })
+    // core 的语义：close=false 是 noop（什么都不做）；「停止调度员」＝关掉调度员终端（循环随之退出）。
+    return dispatcherDown(shared(), { team, close: close ?? true })
   })
 
   orca.panels.handle('task.detail', async ({ id }) => {
