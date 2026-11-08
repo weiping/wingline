@@ -6,6 +6,7 @@ import {
   Callout,
   Card,
   CodeView,
+  Collapsible,
   EmptyState,
   Heading,
   Input,
@@ -15,13 +16,14 @@ import {
   set,
   Spinner,
   Stack,
-  Text
+  Text,
+  Textarea
 } from 'orca'
 
-import type { InboxDto, PostDetailDto, PostDto, PreviewDto, RestoreResultDto, StaleDto, TaskDetailDto, TaskDto, TimelineEventDto, UpResultDto } from './host.js'
+import type { InboxDto, PostDetailDto, PostDto, PreviewDto, RestoreResultDto, SpecValidateDto, StaleDto, TaskDetailDto, TaskDto, TimelineEventDto, UpResultDto } from './host.js'
 import type { TeamSummary } from './protocol.js'
 
-type View = 'posts' | 'inbox' | 'tasks' | 'stale' | 'timeline'
+type View = 'posts' | 'inbox' | 'tasks' | 'stale' | 'timeline' | 'edit'
 
 const teams = atom<TeamSummary[] | null>(null)
 const error = atom<string | null>(null)
@@ -54,6 +56,28 @@ const detailAddress = atom('detailAddress', '')
 const replyDrafts = atom<Record<string, string>>({})
 /** 「停止岗位」的二段确认：第一次点亮，再点才执行。 */
 const confirmingDown = atom<Record<string, boolean>>({})
+/** 团队编辑视图的状态（每团队一份）。 */
+const editStates = atom<Record<string, EditState>>({})
+const editLoading = atom('editLoading', '')
+/** 新建团队表单。 */
+const newTeam = atom<{ open: boolean; name: string; template: 'duo' | 'solo' | 'trio'; repo: string }>({
+  open: false, name: '', template: 'duo', repo: ''
+})
+/** 新增岗位表单（每团队一份）。 */
+const addPostForm = atom<Record<string, { id: string; agent: string; model: string; worktree: string }>>({})
+
+interface EditState {
+  yaml: string
+  files: Record<string, string>
+  baseHash: string | null
+  running: boolean
+  hasDraft: boolean
+  errors: Array<{ code: string; message: string; line: number | null }>
+  previewPosts: Array<{ id: string; kind: string; fields?: string[] }>
+  previewCommands: string[]
+  postsParsed: Array<{ id: string; agent: string; model?: string; worktree?: string }>
+  loaded: boolean
+}
 /** 任务详情（计划 / 历史 / gate 输出），按任务 id 存。 */
 const taskDetails = atom<Record<string, TaskDetailDto>>({})
 const detailLoading = atom('detailLoading', '')
@@ -104,6 +128,89 @@ async function loadStale(team: string): Promise<void> {
   }
 }
 
+async function loadEdit(team: string): Promise<void> {
+  set(editLoading, team)
+  try {
+    const d = await plugin.request('spec.readForEdit', { team })
+    set(editStates, {
+      ...read(editStates),
+      [team]: {
+        yaml: d.yaml as string,
+        files: (d.files ?? {}) as Record<string, string>,
+        baseHash: (d.hash ?? null) as string | null,
+        running: d.running as boolean,
+        hasDraft: d.hasDraft as boolean,
+        errors: [],
+        previewPosts: [], previewCommands: [],
+        postsParsed: [], loaded: true
+      }
+    })
+    set(error, null)
+  } catch (err) {
+    set(error, err instanceof Error ? err.message : String(err))
+  } finally {
+    set(editLoading, '')
+  }
+}
+
+/** 应用一个结构化 op（增删岗位/改字段）：worker 校验并返回新 YAML 与预演。 */
+async function applyOp(team: string, setOp: unknown): Promise<void> {
+  const st = read(editStates)[team]
+  if (!st) return
+  try {
+    const r = await plugin.request('spec.validate', { team, yaml: st.yaml, set: setOp, files: st.files })
+    const v = r as SpecValidateDto
+    set(editStates, { ...read(editStates), [team]: { ...st, yaml: v.yaml, errors: v.errors, previewPosts: v.preview?.posts ?? [], previewCommands: v.preview?.commands ?? [], postsParsed: v.postsParsed } })
+    set(error, null)
+  } catch (err) {
+    set(error, err instanceof Error ? err.message : String(err))
+  }
+}
+
+async function validateEdit(team: string): Promise<void> {
+  const st = read(editStates)[team]
+  if (!st) return
+  try {
+    const r = await plugin.request('spec.validate', { team, yaml: st.yaml, files: st.files })
+    const v = r as SpecValidateDto
+    set(editStates, { ...read(editStates), [team]: { ...st, yaml: v.yaml, errors: v.errors, previewPosts: v.preview?.posts ?? [], previewCommands: v.preview?.commands ?? [], postsParsed: v.postsParsed } })
+    set(error, null)
+  } catch (err) {
+    set(error, err instanceof Error ? err.message : String(err))
+  }
+}
+
+async function saveEdit(team: string): Promise<void> {
+  const st = read(editStates)[team]
+  if (!st) return
+  try {
+    const r = await plugin.request('spec.save', { team, yaml: st.yaml, baseHash: st.baseHash, running: st.running, files: st.files })
+    const wrote = (r as { wrote: string; docsUpdated: string[] }).wrote
+    set(notice, wrote === 'draft' ? `已保存为草稿（团队运行中；用 wl up --draft 应用）` : `已保存到团队规格`)
+    set(error, null)
+    await loadEdit(team)
+    await refresh()
+  } catch (err) {
+    set(error, err instanceof Error ? err.message : String(err))
+  }
+}
+
+async function initTeam(): Promise<void> {
+  const f = read(newTeam)
+  set(busyTeam, f.name || '__init__')
+  try {
+    await plugin.request('team.init', { name: f.name, template: f.template, repo: f.repo })
+    set(newTeam, { open: false, name: '', template: 'duo', repo: '' })
+    set(notice, `团队 ${f.name} 已创建（未启动；点「拉起岗位」开始）`)
+    set(error, null)
+    await refresh()
+  } catch (err) {
+    set(error, err instanceof Error ? err.message : String(err))
+  } finally {
+    set(busyTeam, null)
+  }
+}
+
 async function loadTimeline(team: string): Promise<void> {
   try {
     const answer = await plugin.request('team.timeline', { team, limit: 100 })
@@ -131,6 +238,7 @@ async function open(team: string): Promise<void> {
     else if (v === 'inbox') await loadInbox(team)
     else if (v === 'tasks') await loadTasks(team)
     else if (v === 'stale') await loadStale(team)
+    else if (v === 'edit') await loadEdit(team)
     else await loadTimeline(team)
   } finally {
     set(busyTeam, null)
@@ -579,6 +687,114 @@ function TimelineView({ rows, team }: { rows: TimelineEventDto[]; team: string }
   )
 }
 
+function EditView({ team }: { team: string }) {
+  const st = read(editStates)[team]
+  const loading = read(editLoading) === team
+  const form = read(addPostForm)[team] ?? { id: '', agent: '', model: '', worktree: 'current' }
+  if (loading) return <Spinner label="正在读取规格" labelHidden />
+  if (!st) return <Text muted size="xs">还没加载规格。</Text>
+  const fileKeys = Object.keys(st.files)
+  return (
+    <Stack gap="sm">
+      {st.hasDraft && <Callout tone="warning" title="存在未应用的草稿">当前编辑基于正式规格；保存会再写一份草稿。</Callout>}
+      {st.errors.length > 0 && (
+        <Callout tone="danger" title={`校验失败（${st.errors.length}）`}>
+          <Stack gap="xs">
+            {st.errors.slice(0, 5).map((e, i) => (
+              <Text key={i} size="xs">
+                {e.message}
+                {e.line !== null ? `（第 ${e.line} 行）` : ''}
+              </Text>
+            ))}
+          </Stack>
+        </Callout>
+      )}
+      {st.previewCommands.length > 0 && (
+        <Callout tone="accent" title="预演：保存/应用后会执行">
+          <Stack gap="xs">
+            {st.previewCommands.map((c, i) => (
+              <Text key={i} size="xs">{c}</Text>
+            ))}
+          </Stack>
+        </Callout>
+      )}
+      {st.previewPosts.length > 0 && (
+        <Stack gap="xs">
+          {st.previewPosts.map((p) => (
+            <Text key={`pp-${p.id}`} size="xs">
+              岗位变更：{p.id} · {p.kind}
+              {p.fields ? `（${p.fields.join('、')}）` : ''}
+            </Text>
+          ))}
+        </Stack>
+      )}
+      <Text size="xs" muted>岗位（{st.postsParsed.length}）</Text>
+      {st.postsParsed.map((p) => (
+        <Row key={`post-${p.id}`} justify="between" gap="xs">
+          <Text size="xs">
+            {p.id} · {p.agent}
+            {p.model ? ` · ${p.model}` : ''}
+            {p.worktree ? ` · ${p.worktree}` : ''}
+          </Text>
+          <Button
+            variant="ghost"
+            size="sm"
+            onPress={() => {
+              const idx = st.postsParsed.findIndex((x) => x.id === p.id)
+              if (idx >= 0) void applyOp(team, { op: 'remove_post', index: idx })
+            }}
+          >
+            删除
+          </Button>
+        </Row>
+      ))}
+      <Row gap="xs">
+        <Input label="岗位 id" placeholder="writer" value={form.id} onChange={(v: string) => set(addPostForm, { ...read(addPostForm), [team]: { ...form, id: v } })} />
+        <Input label="agent" placeholder="claude / codex / pi" value={form.agent} onChange={(v: string) => set(addPostForm, { ...read(addPostForm), [team]: { ...form, agent: v } })} />
+      </Row>
+      <Row gap="xs">
+        <Input label="model" placeholder="可空；如 opus" value={form.model} onChange={(v: string) => set(addPostForm, { ...read(addPostForm), [team]: { ...form, model: v } })} />
+        <Input label="worktree" placeholder="current / 选择器" value={form.worktree} onChange={(v: string) => set(addPostForm, { ...read(addPostForm), [team]: { ...form, worktree: v } })} />
+      </Row>
+      <Button
+        variant="outline"
+        size="sm"
+        disabled={form.id.trim().length === 0 || form.agent.trim().length === 0}
+        onPress={() => {
+          const post: Record<string, unknown> = { id: form.id.trim(), agent: form.agent.trim() }
+          if (form.model.trim().length > 0) post.model = form.model.trim()
+          if (form.worktree.trim().length > 0) post.worktree = form.worktree.trim()
+          void applyOp(team, { op: 'add_post', post })
+          set(addPostForm, { ...read(addPostForm), [team]: { id: '', agent: '', model: '', worktree: 'current' } })
+        }}
+      >
+        添加岗位
+      </Button>
+      <Text size="xs" muted>YAML（直接编辑；删除/新增岗位也可通过上面的按钮）</Text>
+      <Textarea label="team.yaml" labelHidden rows={16} value={st.yaml} onChange={(v: string) => set(editStates, { ...read(editStates), [team]: { ...st, yaml: v } })} />
+      {fileKeys.map((k) => (
+        <Collapsible key={`doc-${k}`} title={`文档：${k}`}>
+          <Textarea label={k} labelHidden rows={8} value={st.files[k] ?? ''} onChange={(v: string) => set(editStates, { ...read(editStates), [team]: { ...st, files: { ...st.files, [k]: v } } })} />
+        </Collapsible>
+      ))}
+      <Row gap="xs">
+        <Button variant="outline" size="sm" onPress={() => validateEdit(team)}>
+          校验
+        </Button>
+        <Button variant="solid" size="sm" onPress={() => saveEdit(team)}>
+          保存
+        </Button>
+        <Button variant="ghost" size="sm" onPress={() => loadEdit(team)}>
+          重置
+        </Button>
+      </Row>
+      <Text size="xs" muted>
+        {st.running ? '团队运行中：保存写入草稿，需 wl up --draft 应用' : '团队未运行：保存直接写入团队规格'}
+      </Text>
+    </Stack>
+  )
+}
+
 function TasksView({ rows, team }: { rows: TaskDto[] | undefined; team: string }) {
   const actorText = read(actor)
   const details = read(taskDetails)
@@ -685,6 +901,7 @@ export default function Panel() {
   const allTasks = read(tasks)
   const allStale = read(staleItems)
   const allTimeline = read(timeline)
+  const newFormState = read(newTeam)
   const allRestores = read(restoreResults)
   const loadingTeam = read(busyTeam)
   const hint = read(notice)
@@ -694,10 +911,40 @@ export default function Panel() {
         <Heading>雁阵</Heading>
         <Row gap="xs">
           {list !== null && <Badge tone="accent">{list.length} 个团队</Badge>}
+          <Button variant="ghost" onPress={() => set(newTeam, { ...newFormState, open: !newFormState.open })}>
+            新建团队
+          </Button>
           <Button variant="ghost" onPress={refresh} disabled={busy}>
             刷新
           </Button>
         </Row>
+        {newFormState.open && (
+          <Card title="新建团队">
+            <Stack gap="xs">
+              <Row gap="xs">
+                <Input label="团队名" placeholder="小写短名（如 duo2）" value={newFormState.name} onChange={(v: string) => set(newTeam, { ...newFormState, name: v })} />
+                <Input label="仓库目录" placeholder="/绝对/路径/到/仓库" value={newFormState.repo} onChange={(v: string) => set(newTeam, { ...newFormState, repo: v })} />
+              </Row>
+              <Row justify="between" gap="xs">
+                <Row gap="xs">
+                  {(['duo', 'solo', 'trio'] as const).map((t) => (
+                    <Button key={t} variant={newFormState.template === t ? 'solid' : 'ghost'} size="sm" onPress={() => set(newTeam, { ...newFormState, template: t })}>
+                      {t}
+                    </Button>
+                  ))}
+                </Row>
+                <Row gap="xs">
+                  <Button variant="outline" size="sm" disabled={newFormState.name.trim().length === 0 || newFormState.repo.trim().length === 0 || busy} onPress={() => initTeam()}>
+                    创建
+                  </Button>
+                  <Button variant="ghost" size="sm" onPress={() => set(newTeam, { ...newFormState, open: false })}>
+                    取消
+                  </Button>
+                </Row>
+              </Row>
+            </Stack>
+          </Card>
+        )}
       </Row>
       {err !== null && <Callout tone="danger" title="操作失败">{err}</Callout>}
       {hint !== null && <Callout tone="accent" title="已完成">{hint}</Callout>}
@@ -787,6 +1034,13 @@ export default function Panel() {
                       >
                         时间线
                       </Button>
+                      <Button
+                        variant={currentView === 'edit' ? 'solid' : 'ghost'}
+                        size="sm"
+                        onPress={() => switchView('edit', team.name)}
+                      >
+                        编辑
+                      </Button>
                     </Row>
                     {loadingTeam === team.name && <Spinner label="正在读取" labelHidden />}
                     {loadingTeam !== team.name && currentView === 'posts' && (
@@ -801,6 +1055,9 @@ export default function Panel() {
                     )}
                     {loadingTeam !== team.name && currentView === 'timeline' && (
                       <TimelineView rows={allTimeline[team.name] ?? []} team={team.name} />
+                    )}
+                    {loadingTeam !== team.name && currentView === 'edit' && (
+                      <EditView team={team.name} />
                     )}
                     <Row gap="xs">
                       <Button variant="ghost" size="sm" onPress={() => open(team.name)}>

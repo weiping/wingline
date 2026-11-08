@@ -380,3 +380,106 @@ test('时间线视图列出全团队事件（倒序，带条数）', async () =>
   assert.ok(tree.includes('共') && tree.includes('条'), `没画出条数：${tree.slice(0, 700)}`)
   await p.unmount()
 })
+
+test('编辑视图：读规格 → 加岗位（add_post op）→ 保存走 spec.save', async () => {
+  const YAML = 'version: 1\nname: duo\nrepo: "path:/r"\nnorms: NORMS.md\nlead: builder\nposts:\n  - id: builder\n    agent: claude\n    model: opus\n    worktree: current\n    brief: [briefs/builder.md]\n  - id: checker\n    agent: codex\n    launch: codex\n    worktree: current\n    brief: [briefs/checker.md]\n'
+  const ops: unknown[] = []
+  const saves: unknown[] = []
+  const host = mockHost({
+    requests: {
+      'teams.list': { teams: [TEAM] },
+      'team.posts': POSTS,
+      'spec.readForEdit': {
+        specPath: '/s/team.yaml', yaml: YAML, hash: 'h1', running: false, hasDraft: false,
+        docKeys: ['NORMS.md'], files: { 'NORMS.md': '# 规范\n' }
+      },
+      'spec.validate': (input: unknown) => {
+        ops.push(input)
+        const i = input as { set?: { op?: string } }
+        const added = i.set && i.set.op === 'add_post'
+        return {
+          yaml: YAML + (added ? '  - id: writer\n    agent: pi\n    worktree: current\n' : ''),
+          errors: [],
+          preview: added
+            ? { posts: [{ id: 'writer', kind: 'added' }], fields: [], commands: ['wl up /s/team.yaml'] }
+            : { posts: [], fields: [], commands: [] },
+          postsParsed: added
+            ? [
+                { id: 'builder', agent: 'claude', model: 'opus', worktree: 'current' },
+                { id: 'checker', agent: 'codex', worktree: 'current' },
+                { id: 'writer', agent: 'pi', worktree: 'current' }
+              ]
+            : [
+                { id: 'builder', agent: 'claude', model: 'opus', worktree: 'current' },
+                { id: 'checker', agent: 'codex', worktree: 'current' }
+              ]
+        }
+      },
+      'spec.save': (input: unknown) => {
+        saves.push(input)
+        return { wrote: 'spec', path: '/s/team.yaml', hash: 'h2', docsUpdated: [] }
+      }
+    }
+  })
+  const p = await mount(panel, { host })
+  await p.settled()
+  await p.press({ text: '展开' })
+  await p.settled()
+  await p.press({ text: '编辑' })
+  await p.settled()
+  const tree = JSON.stringify(p.tree())
+  assert.ok(tree.includes('builder'), `没画出岗位列表：${tree.slice(0, 800)}`)
+
+  // 新增岗位（三段表单）
+    const fs = await import('node:fs')
+  fs.writeFileSync('/tmp/edit-tree.json', JSON.stringify(p.tree()))
+await p.type({ label: '岗位 id' }, 'writer')
+  await p.settled()
+  await p.type({ label: 'agent' }, 'pi')
+  await p.settled()
+  await p.press({ text: '添加岗位' })
+  await p.settled()
+  assert.equal(ops.length, 1)
+  assert.equal((ops[0] as { set: { op: string; post: { id: string } } }).set.op, 'add_post')
+  assert.equal((ops[0] as { set: { post: { id: string } } }).set.post.id, 'writer')
+
+  // 删除（第一个「删除」按钮）
+  await p.press({ text: '删除' })
+  await p.settled()
+  assert.equal(ops.length, 2)
+  assert.equal((ops[1] as { set: { op: string; index: number } }).set.op, 'remove_post')
+
+  // 保存
+  await p.press({ text: '保存' })
+  await p.settled()
+  assert.equal(saves.length, 1)
+  assert.equal((saves[0] as { baseHash: string }).baseHash, 'h1')
+  assert.equal((saves[0] as { running: boolean }).running, false)
+  assert.ok(JSON.stringify(p.tree()).includes('已保存到团队规格'), '没有保存提示')
+  await p.unmount()
+})
+
+test('空态提供「新建团队」，提交走 team.init', async () => {
+  const inits: unknown[] = []
+  const host = mockHost({
+    requests: {
+      'teams.list': { teams: [] },
+      'team.init': (input: unknown) => {
+        inits.push(input)
+        return { team: 'newteam', specPath: '/s', created: true }
+      }
+    }
+  })
+  const p = await mount(panel, { host })
+  await p.settled()
+  await p.press({ text: '新建团队' })
+  await p.settled()
+  await p.type({ label: '团队名' }, 'demo')
+  await p.settled()
+  await p.type({ label: '仓库目录' }, '/tmp/repo')
+  await p.settled()
+  await p.press({ text: '创建' })
+  await p.settled()
+  assert.deepEqual(inits, [{ name: 'demo', template: 'duo', repo: '/tmp/repo' }])
+  await p.unmount()
+})
