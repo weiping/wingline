@@ -19,6 +19,7 @@ async function closePost(deps: CommandDeps, post: PostRow, specHash: string): Pr
     const located = await locatePost(orca, address)
     if (!located) {
       registry.setPostStatus(address, 'closed')
+      registry.finalizePostRequests(post.team, address.split('@')[0]!)
       return { address, outcome: 'already_gone' }
     }
     const id = nextRequestId(registry, post.team, address.split('@')[0]!, 'close', specHash)
@@ -29,6 +30,7 @@ async function closePost(deps: CommandDeps, post: PostRow, specHash: string): Pr
     })
     registry.finishRequest(id, ptyKilled ? 'done' : 'uncertain', { ptyKilled })
     registry.setPostStatus(address, ptyKilled ? 'closed' : 'uncertain')
+    if (ptyKilled) registry.finalizePostRequests(post.team, address.split('@')[0]!)
     return ptyKilled ? { address, outcome: 'closed' } : { address, outcome: 'uncertain', reason: 'Orca 未确认进程已退出' }
   } catch (err) {
     if (!(err instanceof WinglineError) || err.kind === 'input' || err.kind === 'internal') throw err

@@ -409,13 +409,23 @@ export async function doneTask(deps: CommandDeps, a: { id: string; as: string })
   return pluginWrites().doneTask(deps, a)
 }
 
-/** 停止团队（close=true 关掉岗位终端；false 只把团队标为 stopped，终端不动）。 */
+/**
+ * 停止团队（close=true 关掉岗位终端；false 只把团队标为 stopped，终端不动）。
+ * 注意：Orca 对 handler 回执做 JSON 序列化，字段值不能是 undefined——
+ * DownResult 的 reason 大多数岗位没有，必须条件展开，不能 `reason: p.reason`。
+ */
 export async function downTeam(
   deps: CommandDeps,
   a: { team: string; close: boolean }
 ): Promise<{ posts: Array<{ address: string; outcome: string; reason?: string }> }> {
   const r = await pluginWrites().down(deps, a)
-  return { posts: r.posts.map((p) => ({ address: p.address, outcome: p.outcome, reason: p.reason })) }
+  return {
+    posts: (r.posts ?? []).map((p) => ({
+      address: p.address,
+      outcome: p.outcome,
+      ...(p.reason !== undefined && p.reason !== null ? { reason: p.reason } : {})
+    }))
+  }
 }
 
 // ── 岗位终端预览 ────────────────────────────────────────────
