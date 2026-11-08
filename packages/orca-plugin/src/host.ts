@@ -11,6 +11,7 @@ import {
   createCallLog,
   createOrcaClient,
   createOrcaRunner,
+  dispatcherHealth,
   listTasks,
   plainText,
   ps,
@@ -73,13 +74,15 @@ export function teamSummaries(deps: CommandDeps): Array<{
   runId: string | null
   posts: number
   specPath: string
+  dispatcherState: 'running' | 'stale' | 'stopped' | 'never'
 }> {
   return deps.registry.listTeams().map((row) => ({
     name: row.name,
     status: row.status,
     runId: row.runId,
     posts: deps.registry.listPosts(row.name).length,
-    specPath: row.specPath
+    specPath: row.specPath,
+    dispatcherState: dispatcherHealth(deps, row.name).state
   }))
 }
 
@@ -340,6 +343,19 @@ export async function unfreezePost(
   a: { address: string }
 ): Promise<{ skipped: Array<{ taskId: string; command: string }> }> {
   return pluginWrites().unfreezePostCmd(deps, a)
+}
+
+/** 启动调度员（core dispatcherUp：新建调度员终端并跑循环）。 */
+export async function dispatcherUp(deps: CommandDeps, a: { team: string }): Promise<{ outcome: 'already_running' | 'started' }> {
+  return pluginWrites().dispatcherUp(deps, a)
+}
+
+/** 停止调度员（close=false 只停循环，不动终端）。 */
+export async function dispatcherDown(
+  deps: CommandDeps,
+  a: { team: string; close?: boolean }
+): Promise<{ outcome: 'noop' | 'closed' | 'already_gone' }> {
+  return pluginWrites().dispatcherDown(deps, a)
 }
 
 /** 拉起岗位：走 core 的 up（幂等，活终端复用、死终端重建）。 */

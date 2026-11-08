@@ -138,6 +138,25 @@ async function bringUp(team: string, opts: { draft?: boolean; newRun?: boolean; 
   }
 }
 
+async function dispatcherAction(team: string, up: boolean): Promise<void> {
+  set(busyTeam, team)
+  try {
+    if (up) {
+      const r = await plugin.request('team.dispatcher-up', { team })
+      set(notice, r.outcome === 'started' ? `调度员已启动（${team}）` : '调度员本来就在跑')
+    } else {
+      const r = await plugin.request('team.dispatcher-down', { team, close: false })
+      set(notice, r.outcome === 'closed' ? '调度员已停止' : r.outcome === 'already_gone' ? '调度员终端已经不在' : '调度员本来就没在跑')
+    }
+    set(error, null)
+    await refresh()
+  } catch (err) {
+    set(error, err instanceof Error ? err.message : String(err))
+  } finally {
+    set(busyTeam, null)
+  }
+}
+
 async function loadTaskDetail(id: string): Promise<void> {
   set(detailLoading, id)
   try {
@@ -548,12 +567,22 @@ export default function Panel() {
                   {pending > 0 && <Badge tone="warning">{pending} 待处理</Badge>}
                 </Row>
                 <Text muted size="xs">
-                  {team.posts} 个岗位
+                  {team.posts} 个岗位 · 调度员 {team.dispatcherState}
                 </Text>
                 <Row gap="xs">
                   {team.status === 'stopped' && (
                     <Button variant="outline" size="sm" disabled={loadingTeam === team.name} onPress={() => bringUp(team.name)}>
                       拉起岗位
+                    </Button>
+                  )}
+                  {team.dispatcherState !== 'running' && (
+                    <Button variant="outline" size="sm" disabled={loadingTeam === team.name} onPress={() => dispatcherAction(team.name, true)}>
+                      启动调度员
+                    </Button>
+                  )}
+                  {team.dispatcherState === 'running' && (
+                    <Button variant="ghost" size="sm" disabled={loadingTeam === team.name} onPress={() => dispatcherAction(team.name, false)}>
+                      停止调度员
                     </Button>
                   )}
                 </Row>

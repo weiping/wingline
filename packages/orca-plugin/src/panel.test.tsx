@@ -2,7 +2,7 @@ import { assert, mockHost, mount, test } from 'orca/testing'
 
 import * as panel from './panel.js'
 
-const TEAM = { name: 'duo', status: 'up', runId: 'r-12345678', posts: 2, specPath: '/tmp/duo/team.yaml' }
+const TEAM = { name: 'duo', status: 'up', runId: 'r-12345678', posts: 2, specPath: '/tmp/duo/team.yaml', dispatcherState: 'running' }
 const POSTS = {
   posts: [{ address: 'builder@duo', agent: 'claude', status: 'live', handle: 'term_1', isLead: true }]
 }
@@ -249,7 +249,7 @@ test('岗位「详情」请求 post.detail 并画出时间线', async () => {
 })
 
 test('stopped 团队显示「拉起岗位」，点击发 team.up 并刷新', async () => {
-  const STOPPED = { ...TEAM, status: 'stopped' }
+  const STOPPED = { ...TEAM, status: 'stopped', dispatcherState: 'stale' }
   const ups: unknown[] = []
   const host = mockHost({
     requests: {
@@ -288,5 +288,55 @@ test('岗位视图有离线岗位时显示「重拉离线岗位」', async () =>
   await p.press({ text: '展开' })
   await p.settled()
   assert.ok(JSON.stringify(p.tree()).includes('重拉离线岗位'))
+  await p.unmount()
+})
+
+test('调度员启停：stale 显示「启动调度员」，点击发 team.dispatcher-up', async () => {
+  const STALE = { ...TEAM, dispatcherState: 'stale' }
+  const calls: Array<{ name: string; input: unknown }> = []
+  const host = mockHost({
+    requests: {
+      'teams.list': { teams: [STALE] },
+      'team.dispatcher-up': (input: unknown) => {
+        calls.push({ name: 'up', input })
+        return { outcome: 'started' }
+      },
+      'team.dispatcher-down': (input: unknown) => {
+        calls.push({ name: 'down', input })
+        return { outcome: 'closed' }
+      }
+    }
+  })
+  const p = await mount(panel, { host })
+  await p.settled()
+  const tree = JSON.stringify(p.tree())
+  assert.ok(tree.includes('启动调度员'), `没有启动按钮：${tree.slice(0, 600)}`)
+  assert.ok(!tree.includes('停止调度员'), 'running 才该有停止按钮')
+  await p.press({ text: '启动调度员' })
+  await p.settled()
+  assert.deepEqual(calls, [{ name: 'up', input: { team: 'duo' } }])
+  assert.ok(JSON.stringify(p.tree()).includes('调度员已启动'))
+  await p.unmount()
+})
+
+test('调度员 running 时显示「停止调度员」，点击发 team.dispatcher-down', async () => {
+  const calls: Array<{ name: string; input: unknown }> = []
+  const host = mockHost({
+    requests: {
+      'teams.list': { teams: [TEAM] },
+      'team.dispatcher-down': (input: unknown) => {
+        calls.push({ name: 'down', input })
+        return { outcome: 'closed' }
+      }
+    }
+  })
+  const p = await mount(panel, { host })
+  await p.settled()
+  const tree = JSON.stringify(p.tree())
+  assert.ok(tree.includes('停止调度员'), `没有停止按钮：${tree.slice(0, 600)}`)
+  await p.press({ text: '停止调度员' })
+  await p.settled()
+  assert.deepEqual(calls, [{ name: 'down', input: { team: 'duo', close: false } }])
+  assert.ok(JSON.stringify(p.tree()).includes('调度员已停止'))
   await p.unmount()
 })

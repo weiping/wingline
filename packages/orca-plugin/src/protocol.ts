@@ -43,6 +43,16 @@ declare module 'orca' {
     'post.detail': { input: { team: string; address: string }; output: import('./host.js').PostDetailDto }
     /** 任务详情：计划、历史、gate 输出。 */
     'task.detail': { input: { id: string }; output: import('./host.js').TaskDetailDto }
+    /** 启动调度员。 */
+    'team.dispatcher-up': {
+      input: { team: string }
+      output: { outcome: 'already_running' | 'started' }
+    }
+    /** 停止调度员（close=false 只停循环）。 */
+    'team.dispatcher-down': {
+      input: { team: string; close?: boolean }
+      output: { outcome: 'noop' | 'closed' | 'already_gone' }
+    }
     /** 拉起岗位（wl up 的插件入口；幂等）。耗时可能 1–2 分钟，面板侧用 120s 超时。 */
     'team.up': {
       input: { team: string; draft?: boolean; newRun?: boolean; adoptRun?: string }
@@ -65,4 +75,5 @@ export interface TeamSummary {
   runId: string | null
   posts: number
   specPath: string
+  dispatcherState: 'running' | 'stale' | 'stopped' | 'never'
 }

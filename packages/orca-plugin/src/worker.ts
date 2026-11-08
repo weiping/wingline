@@ -6,6 +6,8 @@ import {
   auditedInit,
   claimTask,
   createDeps,
+  dispatcherDown,
+  dispatcherUp,
   doneTask,
   freezePost,
   inboxDto,
@@ -199,6 +201,14 @@ export default function activate(orca: OrcaWorkerApi): void {
   orca.panels.handle('team.up', async ({ team, draft, newRun, adoptRun }) => {
     await upTeam(shared(), { team, draft, newRun, adoptRun })
     return { ok: true }
+  })
+
+  orca.panels.handle('team.dispatcher-up', async ({ team }) => {
+    return dispatcherUp(shared(), { team })
+  })
+
+  orca.panels.handle('team.dispatcher-down', async ({ team, close }) => {
+    return dispatcherDown(shared(), { team, close: close ?? false })
   })
 
   orca.panels.handle('task.detail', async ({ id }) => {
