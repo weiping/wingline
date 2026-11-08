@@ -1,18 +1,37 @@
 {
   "name": "@weiping/wingline",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "雁阵 Wingline：在 Orca 之上运行常驻 agent 团队的命令行（wl）",
   "license": "MIT",
   "type": "module",
-  "bin": { "wingline": "dist/main.js", "wl": "dist/main.js" },
-  "files": ["dist"],
-  "engines": { "node": ">=22.13" },
-  "publishConfig": { "access": "public" },
+  "bin": {
+    "wingline": "dist/main.js",
+    "wl": "dist/main.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22.13"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/weiping/wingline.git",
     "directory": "packages/cli"
   },
-  "keywords": ["orca", "agent", "team", "claude", "codex", "orchestration"],
-  "dependencies": { "@weiping/wingline-core": "workspace:^", "commander": "^13.0.0" }
+  "keywords": [
+    "orca",
+    "agent",
+    "team",
+    "claude",
+    "codex",
+    "orchestration"
+  ],
+  "dependencies": {
+    "@weiping/wingline-core": "workspace:^",
+    "commander": "^13.0.0"
+  }
 }
