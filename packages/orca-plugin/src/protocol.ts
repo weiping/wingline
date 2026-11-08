@@ -19,7 +19,7 @@ declare module 'orca' {
     /** 岗位列表：走 core 的 ps()，含存活状态与终端 handle。 */
     'team.posts': { input: { team: string }; output: { posts: import('./host.js').PostDto[] } }
     /** 把 Orca 窗口切到某个岗位的终端。 */
-    'post.openTerminal': { input: { address: string }; output: { navigated: boolean; handle: string | null } }
+    'post.openTerminal': { input: { address: string }; output: { navigated: boolean; handle: string | null; reason: string | null } }
     /** 收件箱：需要人处理的事项（冻结、信号、提问、滞留、警告）。 */
     'team.inbox': { input: { team: string }; output: import('./host.js').InboxDto }
     /** 任务看板：团队当前的任务列表。 */

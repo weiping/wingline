@@ -202,6 +202,22 @@ test('任务视图列出任务，并可认领（以岗位身份）', async () =>
   await p.unmount()
 })
 
+test('offline 岗位禁用「打开终端 / 预览」', async () => {
+  const host = mockHost({
+    requests: {
+      'teams.list': { teams: [TEAM] },
+      'team.posts': { posts: [{ address: 'checker@duo', agent: 'codex', status: 'offline', handle: 'term_stale', isLead: false }] }
+    }
+  })
+  const p = await mount(panel, { host })
+  await p.settled()
+  await p.press({ text: '展开' })
+  await p.settled()
+  const tree = JSON.stringify(p.tree())
+  assert.ok(tree.includes('"disabled":true'), `offline 岗位的按钮没有被禁用：${tree.slice(0, 800)}`)
+  await p.unmount()
+})
+
 test('岗位「详情」请求 post.detail 并画出时间线', async () => {
   const requested: unknown[] = []
   const host = mockHost({

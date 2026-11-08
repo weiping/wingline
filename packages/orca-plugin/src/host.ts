@@ -103,16 +103,23 @@ export async function postDtos(deps: CommandDeps, team: string): Promise<PostDto
   }))
 }
 
-/** 把 Orca 窗口切到某个岗位的终端；没有存活终端时返回 navigated: false。 */
-export async function openPostTerminal(deps: CommandDeps, address: string): Promise<{ navigated: boolean; handle: string | null }> {
+/** 把 Orca 窗口切到某个岗位的终端。岗位不在线（终端已退出）时给出原因，不碰过期 handle。 */
+export async function openPostTerminal(
+  deps: CommandDeps,
+  address: string
+): Promise<{ navigated: boolean; handle: string | null; reason: string | null }> {
   const team = address.split('@')[1]
-  if (!team) return { navigated: false, handle: null }
-  // 先跑一次 ps()：它会把当前活着的终端 handle 写回注册表。
-  await ps(deps, { team })
-  const post = deps.registry.getPost(address)
-  if (!post?.handle) return { navigated: false, handle: null }
+  if (!team) return { navigated: false, handle: null, reason: '岗位地址格式不对' }
+  // ps() 会把当前活着的终端 handle 写回注册表；以它的实时状态为准，
+  // 不直接信注册表里的 handle——终端退出后那个 handle 是过期残留（switch 会报 terminal_exited）。
+  const rows = await ps(deps, { team })
+  const post = rows.find((r) => r.address === address)
+  if (!post) return { navigated: false, handle: null, reason: '岗位不存在' }
+  if (post.status !== 'live' || post.handle === null) {
+    return { navigated: false, handle: null, reason: `${address} 不在线（${post.status}），先 wl up 或 wl restore` }
+  }
   const res = await deps.orca.terminalSwitch({ handle: post.handle })
-  return { navigated: res.navigated, handle: post.handle }
+  return { navigated: res.navigated, handle: post.handle, reason: null }
 }
 
 // ── P1 只读：收件箱与任务看板 ───────────────────────────────────

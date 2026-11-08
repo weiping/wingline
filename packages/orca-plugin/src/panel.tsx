@@ -115,7 +115,8 @@ async function switchView(next: View, team: string): Promise<void> {
 async function openTerminal(address: string): Promise<void> {
   try {
     const answer = await plugin.request('post.openTerminal', { address })
-    set(notice, answer.navigated ? `已切到 ${address}` : `${address} 没有存活的终端，先 wl up 或 wl restore`)
+    if (answer.navigated) set(notice, `已切到 ${address}`)
+    else set(notice, answer.reason ?? `${address} 无法切换`)
   } catch (err) {
     set(error, err instanceof Error ? err.message : String(err))
   }
@@ -219,10 +220,10 @@ function PostsView({ rows, team }: { rows: PostDto[]; team: string }) {
             </Text>
             <Row gap="xs">
               <Badge tone={STATUS_TONE[post.status] ?? 'neutral'}>{post.status}</Badge>
-              <Button variant="ghost" size="sm" disabled={post.handle === null} onPress={() => openTerminal(post.address)}>
+              <Button variant="ghost" size="sm" disabled={post.status !== 'live'} onPress={() => openTerminal(post.address)}>
                 打开终端
               </Button>
-              <Button variant="ghost" size="sm" disabled={post.handle === null} onPress={() => loadPreview(post.address)}>
+              <Button variant="ghost" size="sm" disabled={post.status !== 'live'} onPress={() => loadPreview(post.address)}>
                 预览
               </Button>
               <Button variant="ghost" size="sm" onPress={() => loadDetail(team, post.address)}>

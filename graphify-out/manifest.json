@@ -2106,8 +2106,8 @@
     "semantic_hash": ""
   },
   "docs/superpowers/specs/2026-11-06-orca-plugin-console-design.md": {
-    "mtime": 1794059393.0652342,
-    "seen": 1794059427.0831559,
+    "mtime": 1794060040.7501137,
+    "seen": 1794060052.958338,
     "ast_hash": "220ebfbaff1bfe7570c3edb7b1db3c60",
     "semantic_hash": ""
   },
@@ -2190,9 +2190,9 @@
     "semantic_hash": ""
   },
   "packages/orca-plugin/src/host.ts": {
-    "mtime": 1794059268.5550318,
-    "seen": 1794059427.083083,
-    "ast_hash": "f8849827fe8ed7189c78794fe4318070",
+    "mtime": 1794059603.310855,
+    "seen": 1794060052.95826,
+    "ast_hash": "f9da5801fa167197ead5dd0901043ff1",
     "semantic_hash": ""
   },
   "packages/orca-plugin/src/panel.check.ts": {
@@ -2208,15 +2208,15 @@
     "semantic_hash": ""
   },
   "packages/orca-plugin/src/panel.tsx": {
-    "mtime": 1794059314.541906,
-    "seen": 1794059427.083084,
-    "ast_hash": "15aed5f2aa7ee021a5c65573b95b1a97",
+    "mtime": 1794059788.4734912,
+    "seen": 1794060052.958262,
+    "ast_hash": "df6e2f7d8d86ddd6cebec3c956fd5b61",
     "semantic_hash": ""
   },
   "packages/orca-plugin/src/protocol.ts": {
-    "mtime": 1794059280.0700543,
-    "seen": 1794059427.083085,
-    "ast_hash": "966b72a475172b97b4e7522edbb4be83",
+    "mtime": 1794059588.6765554,
+    "seen": 1794060052.958262,
+    "ast_hash": "b10e380f6d795abd58ef17c3fd8229c6",
     "semantic_hash": ""
   },
   "packages/orca-plugin/src/worker.test.ts": {
@@ -2226,9 +2226,9 @@
     "semantic_hash": ""
   },
   "packages/orca-plugin/src/worker.ts": {
-    "mtime": 1794059280.0700545,
-    "seen": 1794059427.083086,
-    "ast_hash": "3b36c7bb9e3ba8fcdffde460d32d5e40",
+    "mtime": 1794059588.6772356,
+    "seen": 1794060052.958265,
+    "ast_hash": "f5668d7db5895dfcaf1f140d5de5a3f5",
     "semantic_hash": ""
   },
   "packages/orca-plugin/tsconfig.json": {
@@ -2292,9 +2292,15 @@
     "semantic_hash": ""
   },
   "docs/superpowers/specs/2026-11-07-console-plugin-parity.md": {
-    "mtime": 1794059379.8031476,
-    "seen": 1794059427.0831559,
-    "ast_hash": "0126764eaa59f79d2e29c5e9b30cc5a5",
+    "mtime": 1794060040.7495503,
+    "seen": 1794060052.958339,
+    "ast_hash": "e280ce6a9d70f6a6e9270eb56dec92dc",
+    "semantic_hash": ""
+  },
+  "packages/orca-plugin/src/push.test.tsx": {
+    "mtime": 1794059902.0777235,
+    "seen": 1794060052.9582632,
+    "ast_hash": "90fdfbcba1cac38301692dd2df7143ca",
     "semantic_hash": ""
   }
 }
