@@ -122,6 +122,22 @@ async function openTerminal(address: string): Promise<void> {
   }
 }
 
+async function bringUp(team: string, opts: { draft?: boolean; newRun?: boolean; adoptRun?: string } = {}): Promise<void> {
+  set(busyTeam, team)
+  set(notice, `正在拉起 ${team} 的岗位（可能要 1–2 分钟）…`)
+  try {
+    await plugin.request('team.up', { team, ...opts }, { timeoutMs: 120000 })
+    set(notice, `${team} 的岗位已拉起`)
+    set(error, null)
+    await refresh()
+    await loadPosts(team)
+  } catch (err) {
+    set(error, err instanceof Error ? err.message : String(err))
+  } finally {
+    set(busyTeam, null)
+  }
+}
+
 async function loadTaskDetail(id: string): Promise<void> {
   set(detailLoading, id)
   try {
@@ -209,8 +225,14 @@ function PostsView({ rows, team }: { rows: PostDto[]; team: string }) {
   if (rows.length === 0) {
     return <Text muted size="xs">这个团队还没有岗位。</Text>
   }
+  const offline = rows.some((r) => r.status !== 'live')
   return (
     <Stack gap="xs">
+      {offline && (
+        <Button variant="outline" size="sm" onPress={() => bringUp(team)}>
+          重拉离线岗位（wl up 幂等，活终端不动）
+        </Button>
+      )}
       {rows.map((post) => (
         <Stack key={post.address} gap="xs">
           <Row justify="between" gap="xs">
@@ -528,6 +550,13 @@ export default function Panel() {
                 <Text muted size="xs">
                   {team.posts} 个岗位
                 </Text>
+                <Row gap="xs">
+                  {team.status === 'stopped' && (
+                    <Button variant="outline" size="sm" disabled={loadingTeam === team.name} onPress={() => bringUp(team.name)}>
+                      拉起岗位
+                    </Button>
+                  )}
+                </Row>
                 {isOpen ? (
                   <>
                     <Row gap="xs">

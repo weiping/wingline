@@ -18,7 +18,8 @@ import {
   taskDetailDto,
   taskDtos,
   teamSummaries,
-  unfreezePost
+  unfreezePost,
+  upTeam
 } from './host.js'
 import { createSpecFacade, type CommandDeps } from '@weiping/wingline-core'
 
@@ -193,6 +194,11 @@ export default function activate(orca: OrcaWorkerApi): void {
 
   orca.panels.handle('post.detail', async ({ team, address }) => {
     return postDetailDto(shared(), team, address)
+  })
+
+  orca.panels.handle('team.up', async ({ team, draft, newRun, adoptRun }) => {
+    await upTeam(shared(), { team, draft, newRun, adoptRun })
+    return { ok: true }
   })
 
   orca.panels.handle('task.detail', async ({ id }) => {

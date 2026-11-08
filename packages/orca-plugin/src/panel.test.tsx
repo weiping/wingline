@@ -247,3 +247,46 @@ test('岗位「详情」请求 post.detail 并画出时间线', async () => {
   assert.ok(tree.includes('done'), `没画出时间线事件：${tree}`)
   await p.unmount()
 })
+
+test('stopped 团队显示「拉起岗位」，点击发 team.up 并刷新', async () => {
+  const STOPPED = { ...TEAM, status: 'stopped' }
+  const ups: unknown[] = []
+  const host = mockHost({
+    requests: {
+      'teams.list': { teams: [STOPPED] },
+      'team.up': (input: unknown) => {
+        ups.push(input)
+        return { ok: true }
+      },
+      'team.posts': POSTS
+    }
+  })
+  const p = await mount(panel, { host })
+  await p.settled()
+  await p.press({ text: '拉起岗位' })
+  await p.settled()
+  assert.deepEqual(ups, [{ team: 'duo' }])
+  const tree = JSON.stringify(p.tree())
+  assert.ok(tree.includes('已拉起'), `没有成功提示：${tree.slice(0, 500)}`)
+  await p.unmount()
+})
+
+test('岗位视图有离线岗位时显示「重拉离线岗位」', async () => {
+  const host = mockHost({
+    requests: {
+      'teams.list': { teams: [TEAM] },
+      'team.posts': {
+        posts: [
+          { address: 'builder@duo', agent: 'claude', status: 'live', handle: 'h1', isLead: true },
+          { address: 'checker@duo', agent: 'codex', status: 'offline', handle: null, isLead: false }
+        ]
+      }
+    }
+  })
+  const p = await mount(panel, { host })
+  await p.settled()
+  await p.press({ text: '展开' })
+  await p.settled()
+  assert.ok(JSON.stringify(p.tree()).includes('重拉离线岗位'))
+  await p.unmount()
+})

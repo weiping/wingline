@@ -342,6 +342,14 @@ export async function unfreezePost(
   return pluginWrites().unfreezePostCmd(deps, a)
 }
 
+/** 拉起岗位：走 core 的 up（幂等，活终端复用、死终端重建）。 */
+export async function upTeam(
+  deps: CommandDeps,
+  a: { team: string; draft?: boolean; newRun?: boolean; adoptRun?: string }
+): Promise<unknown> {
+  return pluginWrites().up(deps, a)
+}
+
 /** 认领任务（以岗位身份）。 */
 export async function claimTask(deps: CommandDeps, a: { id: string; as: string }): Promise<void> {
   return pluginWrites().claimTask(deps, a)

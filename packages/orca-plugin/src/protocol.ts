@@ -43,6 +43,11 @@ declare module 'orca' {
     'post.detail': { input: { team: string; address: string }; output: import('./host.js').PostDetailDto }
     /** 任务详情：计划、历史、gate 输出。 */
     'task.detail': { input: { id: string }; output: import('./host.js').TaskDetailDto }
+    /** 拉起岗位（wl up 的插件入口；幂等）。耗时可能 1–2 分钟，面板侧用 120s 超时。 */
+    'team.up': {
+      input: { team: string; draft?: boolean; newRun?: boolean; adoptRun?: string }
+      output: { ok: true }
+    }
   }
   interface PluginPanelEvents {
     /** 面板刷新时 worker 广播。 */
