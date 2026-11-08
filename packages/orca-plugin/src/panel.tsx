@@ -128,20 +128,24 @@ async function bringUp(team: string, opts: { draft?: boolean; newRun?: boolean; 
   set(busyTeam, team)
   set(notice, `正在拉起 ${team} 的岗位（可能要 1–2 分钟）…`)
   try {
+    set(notice, `正在拉起 ${team} 的岗位并等待就绪（可能要 1–2 分钟）…`)
+    // worker 内部会等到岗位真正 live（或超时）才回，回执带每岗位 outcome 与就绪数
+    // plugin.request 的 timeoutMs 上限是 120000；up 本身约 60s，worker 再等最多 20s 就绪。
     const r = await plugin.request('team.up', { team, ...opts }, { timeoutMs: 120000 })
     const posts = (r.posts ?? []) as Array<{ address: string; outcome: string; reason?: string }>
     const started = posts.filter((p) => p.outcome === 'launched' || p.outcome === 'already_live')
     const bad = posts.filter((p) => p.outcome !== 'launched' && p.outcome !== 'already_live')
-    set(error, null)
-    if (bad.length === 0) {
-      set(notice, `${team}：${started.length} 个岗位已启动`)
-    } else {
-      set(notice, `${team}：${started.length} 个已启动，${bad.length} 个未就绪（${bad.map((p) => `${p.address} ${p.outcome}`).join('、')}）`)
-    }
+    const live = typeof r.live === 'number' ? r.live : 0
+    const total = typeof r.total === 'number' ? r.total : posts.length
+    const parts: string[] = []
+    parts.push(bad.length === 0 ? `${started.length} 个岗位已启动` : `${started.length} 个已启动，${bad.length} 个未就绪（${bad.map((p) => `${p.address} ${p.outcome}`).join('、')}）`)
+    parts.push(total > 0 ? (live >= total ? `${live} 个已就绪` : `${live}/${total} 已就绪`) : '未读到岗位状态')
     // Run 没绑上（协调者身份对不上）时，调度员还得重新启动一次才能认领
     if (r.run && r.run.outcome !== 'ok') {
-      set(notice, `${read(notice)}｜Run 未绑定（${r.run.reason ?? r.run.outcome}），需再点「启动调度员」认领协调者`)
+      parts.push(`Run 未绑定（${r.run.reason ?? r.run.outcome}），需再点「启动调度员」认领协调者`)
     }
+    set(notice, `${team}：${parts.join('｜')}`)
+    set(error, null)
     await refresh()
     await loadPosts(team)
   } catch (err) {

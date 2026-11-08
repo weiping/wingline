@@ -256,7 +256,7 @@ test('stopped 团队显示「拉起岗位」，点击发 team.up 并刷新', asy
       'teams.list': { teams: [STOPPED] },
       'team.up': (input: unknown) => {
         ups.push(input)
-        return { posts: [{ address: 'builder@duo', outcome: 'launched' }], run: { outcome: 'ok' } }
+        return { posts: [{ address: 'builder@duo', outcome: 'launched' }], run: { outcome: 'ok' }, live: 1, total: 1 }
       },
       'team.posts': POSTS
     }
@@ -268,6 +268,7 @@ test('stopped 团队显示「拉起岗位」，点击发 team.up 并刷新', asy
   assert.deepEqual(ups, [{ team: 'duo' }])
   const tree = JSON.stringify(p.tree())
   assert.ok(tree.includes('个岗位已启动'), `没有成功提示：${tree.slice(0, 500)}`)
+  assert.ok(tree.includes('1 个已就绪'), `没有就绪结论：${tree.slice(0, 500)}`)
   await p.unmount()
 })
 
@@ -409,7 +410,9 @@ test('拉起成功后按每岗位 outcome 如实提示（未就绪的要点名�
           { address: 'builder@duo', outcome: 'launched' },
           { address: 'checker@duo', outcome: 'uncertain', reason: '岗位未确认就绪' }
         ],
-        run: { outcome: 'failed', reason: 'consumer_fenced' }
+        run: { outcome: 'failed', reason: 'consumer_fenced' },
+        live: 1,
+        total: 2
       }),
       'team.posts': POSTS
     }
@@ -445,5 +448,37 @@ test('拉起成功后「拉起岗位」按钮消失（刷新后岗位全在线�
   await p.post('teams.changed', { teams: [current] })
   await p.settled()
   assert.ok(!JSON.stringify(p.tree()).includes('拉起岗位'), '推送后按钮应隐藏')
+  await p.unmount()
+})
+
+test('拉起回执带就绪数：面板给出「已就绪/未就绪」结论', async () => {
+  const OFFLINE = { ...TEAM, status: 'up', offlinePosts: 2 }
+  const host = mockHost({
+    requests: {
+      'teams.list': () => ({ teams: [OFFLINE] }),
+      'team.up': () => ({
+        posts: [
+          { address: 'builder@duo', outcome: 'launched' },
+          { address: 'checker@duo', outcome: 'launched' }
+        ],
+        run: { outcome: 'ok' },
+        live: 2,
+        total: 2
+      }),
+      'team.posts': {
+        posts: [
+          { address: 'builder@duo', agent: 'claude', status: 'live', handle: 'h1', isLead: true },
+          { address: 'checker@duo', agent: 'codex', status: 'live', handle: 'h2', isLead: false }
+        ]
+      }
+    }
+  })
+  const p = await mount(panel, { host })
+  await p.settled()
+  await p.press({ text: '拉起岗位' })
+  await p.settled()
+  const tree = JSON.stringify(p.tree())
+  assert.ok(tree.includes('2 个已就绪'), `没给出就绪结论：${tree.slice(0, 600)}`)
+  assert.ok(tree.includes('2 个岗位已启动'), `没给出启动结果：${tree.slice(0, 600)}`)
   await p.unmount()
 })
