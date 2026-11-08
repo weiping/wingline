@@ -16,6 +16,7 @@ import {
   listTasks,
   plainText,
   ps,
+  listStale,
   readTimeline,
   Registry,
   loadTeamSpec,
@@ -330,6 +331,27 @@ export async function taskDetailDto(deps: CommandDeps, id: string): Promise<Task
     result: t.result,
     history: (t.history ?? []).map((h) => ({ at: h.at, actor: h.actor, action: h.action, detail: h.detail }))
   }
+}
+
+export interface StaleDto {
+  taskId: string
+  title: string
+  reason: string
+  owner: string | null
+  since: string | null
+  command: string
+}
+
+/** 滞留任务：走 core 的 listStale()（同 CLI `wl task list --stale`）。 */
+export async function staleDtos(deps: CommandDeps, team: string): Promise<StaleDto[]> {
+  const rows = await listStale(deps, team)
+  return rows.map((r) => ({ taskId: r.taskId, title: r.title, reason: r.reason, owner: r.owner, since: r.since, command: r.command }))
+}
+
+/** 全团队时间线（最近 limit 条，默认 100）：与控制台时间线同口径。 */
+export async function teamTimeline(deps: CommandDeps, team: string, limit = 100): Promise<TimelineEventDto[]> {
+  const res = await readTimeline(deps, { team, limit })
+  return timelineDto(res.events)
 }
 
 // ── 写操作（审计走 core 的同一张表，actor=human） ─────────────────

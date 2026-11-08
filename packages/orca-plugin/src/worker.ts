@@ -19,9 +19,11 @@ import {
   replyQuestion,
   restoreTeam,
   specForEditDto,
+  staleDtos,
   taskDetailDto,
   taskDtos,
   teamSummaries,
+  teamTimeline,
   unfreezePost,
   upTeam
 } from './host.js'
@@ -173,6 +175,16 @@ export default function activate(orca: OrcaWorkerApi): void {
   orca.panels.handle('team.tasks', async ({ team }) => {
     const tasks = await taskDtos(shared(), team)
     return { tasks }
+  })
+
+  orca.panels.handle('team.tasks.stale', async ({ team }) => {
+    const stale = await staleDtos(shared(), team)
+    return { stale }
+  })
+
+  orca.panels.handle('team.timeline', async ({ team, limit }) => {
+    const events = await teamTimeline(shared(), team, limit ?? 100)
+    return { events }
   })
 
   orca.panels.handle('write.reply', async ({ team, messageId, body }) => {

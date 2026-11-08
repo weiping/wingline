@@ -332,3 +332,51 @@ test('岗位视图有离线岗位时不出「重拉离线岗位」按钮（拉�
   await p.unmount()
 })
 
+test('滞留视图列出滞留任务与处理命令', async () => {
+  const STALE = {
+    stale: [{ taskId: 't9', title: '卡住的任务', reason: '无进展', owner: 'builder@duo', since: null, command: 'wl task recover t9' }]
+  }
+  const host = mockHost({
+    requests: {
+      'teams.list': { teams: [TEAM] },
+      'team.posts': POSTS,
+      'team.tasks.stale': STALE,
+      'team.tasks': { tasks: [] }
+    }
+  })
+  const p = await mount(panel, { host })
+  await p.settled()
+  await p.press({ text: '展开' })
+  await p.settled()
+  await p.press({ text: '滞留' })
+  await p.settled()
+  const tree = JSON.stringify(p.tree())
+  assert.ok(tree.includes('卡住的任务'), `没画出滞留任务：${tree.slice(0, 700)}`)
+  assert.ok(tree.includes('wl task recover t9'), `没画出处理命令：${tree.slice(0, 700)}`)
+  await p.unmount()
+})
+
+test('时间线视图列出全团队事件（倒序，带条数）', async () => {
+  const host = mockHost({
+    requests: {
+      'teams.list': { teams: [TEAM] },
+      'team.posts': POSTS,
+      'team.timeline': {
+        events: [
+          { id: 'task:1', at: '2026-11-08T01:00:00Z', source: 'task', actor: 'builder@duo', action: 'done', target: 't1', outcome: 'ok' },
+          { id: 'task:2', at: '2026-11-08T02:00:00Z', source: 'task', actor: 'dispatcher@duo', action: 'dispatch', target: 't2', outcome: 'ok' }
+        ]
+      }
+    }
+  })
+  const p = await mount(panel, { host })
+  await p.settled()
+  await p.press({ text: '展开' })
+  await p.settled()
+  await p.press({ text: '时间线' })
+  await p.settled()
+  const tree = JSON.stringify(p.tree())
+  assert.ok(tree.includes('dispatch'), `没画出时间线事件：${tree.slice(0, 700)}`)
+  assert.ok(tree.includes('共') && tree.includes('条'), `没画出条数：${tree.slice(0, 700)}`)
+  await p.unmount()
+})
