@@ -2106,8 +2106,8 @@
     "semantic_hash": ""
   },
   "docs/superpowers/specs/2026-11-06-orca-plugin-console-design.md": {
-    "mtime": 1794127212.901971,
-    "seen": 1794127216.31953,
+    "mtime": 1794127427.967622,
+    "seen": 1794127431.781537,
     "ast_hash": "220ebfbaff1bfe7570c3edb7b1db3c60",
     "semantic_hash": ""
   },
@@ -2202,15 +2202,15 @@
     "semantic_hash": ""
   },
   "packages/orca-plugin/src/panel.test.tsx": {
-    "mtime": 1794126881.995903,
-    "seen": 1794127216.319457,
-    "ast_hash": "399381d18e7aa4cc2e66b8e311715211",
+    "mtime": 1794127389.925213,
+    "seen": 1794127431.78146,
+    "ast_hash": "fb7d2b52f841e438ca0aaa7db0c8a248",
     "semantic_hash": ""
   },
   "packages/orca-plugin/src/panel.tsx": {
-    "mtime": 1794126874.3727574,
-    "seen": 1794127216.319457,
-    "ast_hash": "80663b15d39d635565c4c8150f966509",
+    "mtime": 1794127378.5417938,
+    "seen": 1794127431.781461,
+    "ast_hash": "c5a08a88121368659aaad45fe6ef2a00",
     "semantic_hash": ""
   },
   "packages/orca-plugin/src/protocol.ts": {

@@ -248,7 +248,7 @@ test('岗位「详情」请求 post.detail 并画出时间线', async () => {
   await p.unmount()
 })
 
-test('stopped 团队显示「拉起岗位」，点击发 team.up 并刷新', async () => {
+test('stopped 团队显示「拉起岗位」，路由到 team.up（新生命周期）', async () => {
   const STOPPED = { ...TEAM, status: 'stopped', dispatcherState: 'stale', offlinePosts: 2 }
   const ups: unknown[] = []
   const host = mockHost({
@@ -256,7 +256,13 @@ test('stopped 团队显示「拉起岗位」，点击发 team.up 并刷新', asy
       'teams.list': { teams: [STOPPED] },
       'team.up': (input: unknown) => {
         ups.push(input)
-        return { posts: [{ address: 'builder@duo', outcome: 'launched' }], run: { outcome: 'ok' }, live: 1, total: 1 }
+        return {
+          posts: [{ address: 'builder@duo', outcome: 'launched' }, { address: 'checker@duo', outcome: 'launched' }],
+          run: { outcome: 'ok' },
+          dispatcher: { outcome: 'started' },
+          live: 2,
+          total: 2
+        }
       },
       'team.posts': POSTS
     }
@@ -267,8 +273,40 @@ test('stopped 团队显示「拉起岗位」，点击发 team.up 并刷新', asy
   await p.settled()
   assert.deepEqual(ups, [{ team: 'duo' }])
   const tree = JSON.stringify(p.tree())
-  assert.ok(tree.includes('个岗位已启动'), `没有成功提示：${tree.slice(0, 500)}`)
-  assert.ok(tree.includes('1 个已就绪'), `没有就绪结论：${tree.slice(0, 500)}`)
+  assert.ok(tree.includes('2 个岗位已全新启动'), `没有全新启动提示：${tree.slice(0, 500)}`)
+  assert.ok(tree.includes('2 个已就绪'), `没有就绪结论：${tree.slice(0, 500)}`)
+  await p.unmount()
+})
+
+test('up 团队的拉起路由到 team.restore（kept/resumed/fresh 逐岗位判断）', async () => {
+  const restores: unknown[] = []
+  const OFFLINE_UP = { ...TEAM, status: 'up', offlinePosts: 2 } // 团队 up 但岗位掉线（崩溃恢复场景）
+  const host = mockHost({
+    requests: {
+      'teams.list': { teams: [OFFLINE_UP] },
+      'team.restore': (input: unknown) => {
+        restores.push(input)
+        return {
+          team: 'duo', dryRun: false,
+          posts: [
+            { address: 'builder@duo', outcome: 'kept' },
+            { address: 'checker@duo', outcome: 'resumed', sessionId: 's1' }
+          ],
+          run: { outcome: 'ok' }, dispatcher: { action: 'restarted', state: 'running' }, tasks: [],
+          live: 2, total: 2
+        }
+      },
+      'team.posts': POSTS
+    }
+  })
+  const p = await mount(panel, { host })
+  await p.settled()
+  await p.press({ text: '拉起岗位' })
+  await p.settled()
+  assert.deepEqual(restores, [{ team: 'duo' }])
+  const tree = JSON.stringify(p.tree())
+  assert.ok(tree.includes('2 个岗位已接回'), `没有接回提示：${tree.slice(0, 600)}`)
+  assert.ok(tree.includes('接回了原会话'), `没有 resumed 标注：${tree.slice(0, 600)}`)
   await p.unmount()
 })
 

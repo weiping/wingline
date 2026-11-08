@@ -363,6 +363,45 @@ export async function unfreezePost(
   return pluginWrites().unfreezePostCmd(deps, a)
 }
 
+/** 认领任务（以岗位身份）。 */
+export async function claimTask(deps: CommandDeps, a: { id: string; as: string }): Promise<void> {
+  return pluginWrites().claimTask(deps, a)
+}
+
+/** 完成任务（以岗位身份）。 */
+export async function doneTask(deps: CommandDeps, a: { id: string; as: string }): Promise<unknown> {
+  return pluginWrites().doneTask(deps, a)
+}
+
+/**
+ * 停止团队：先静默停调度员（关它的终端），再关岗位终端。
+ * 顺序反了会让调度员在最后几秒继续往即将关闭的岗位派活。
+ */
+export async function downTeam(
+  deps: CommandDeps,
+  a: { team: string; close: boolean }
+): Promise<{
+  posts: Array<{ address: string; outcome: string; reason?: string }>
+  dispatcher: { outcome: string; reason?: string } | null
+}> {
+  let dispatcher: { outcome: string; reason?: string } | null = null
+  try {
+    const d = await dispatcherDown(deps, { team: a.team, close: true })
+    dispatcher = { outcome: d.outcome }
+  } catch (err) {
+    dispatcher = { outcome: 'failed', reason: err instanceof Error ? err.message : String(err) }
+  }
+  const r = await pluginWrites().down(deps, a)
+  return {
+    posts: (r.posts ?? []).map((p) => ({
+      address: p.address,
+      outcome: p.outcome,
+      ...(p.reason !== undefined && p.reason !== null ? { reason: p.reason } : {})
+    })),
+    dispatcher
+  }
+}
+
 /**
  * 插件 worker 的 process.execPath 是宿主（Orca）的二进制、argv[1] 也不是 wingline，
  * 直接让 core 拼「self 命令」会启动一个 Electron 实例（撞单实例锁秒退）。
@@ -394,14 +433,6 @@ export async function dispatcherUp(deps: CommandDeps, a: { team: string }): Prom
   }
 }
 
-/** 停止调度员＝关闭调度员终端（循环随之退出）；close=false 是 core 的 noop。 */
-export async function dispatcherDown(
-  deps: CommandDeps,
-  a: { team: string; close?: boolean }
-): Promise<{ outcome: 'noop' | 'closed' | 'already_gone' }> {
-  return pluginWrites().dispatcherDown(deps, a)
-}
-
 export interface UpResultDto {
   posts: Array<{ address: string; outcome: string; reason?: string }>
   run: { outcome: string; reason?: string } | null
@@ -410,15 +441,15 @@ export interface UpResultDto {
 }
 
 /**
- * 拉起岗位：走 core 的 up（幂等，活终端复用、死终端重建）。
- * 回执带每岗位 outcome 与 run 结果——面板要如实反映，不能一律说「已拉起」。
+ * 全新拉起：走 core 的 up（幂等，活终端复用、死终端重建），随后静默启动调度员。
+ * 团队已停止时的拉起走这条路径（新生命周期）；崩溃恢复走 restore。
+ * 注意：Orca 的 worktree 选择器 current 按调用进程 cwd 解析，插件 worker 的 cwd 是 /，
+ * 所以必须先 chdir 到团队 repo。
  */
 export async function upTeam(
   deps: CommandDeps,
   a: { team: string; draft?: boolean; newRun?: boolean; adoptRun?: string }
 ): Promise<UpResultDto> {
-  // Orca 的 worktree 选择器 current 按「调用进程的 cwd」解析；插件 worker 的 cwd 是 /，
-  // 会报 No Orca-managed worktree contains the current directory。指到团队 repo 上才能落进真正的 worktree。
   const row = deps.registry.getTeam(a.team)
   if (row) {
     try {
@@ -429,7 +460,6 @@ export async function upTeam(
     }
   }
   const r = await pluginWrites().up(deps, a)
-  // 调度员需要真实终端身份来认领协调者（插件 worker 当不了协调者），随岗位一起静默拉起。
   let dispatcher: UpResultDto['dispatcher'] = null
   try {
     const d = await dispatcherUp(deps, { team: a.team })
@@ -450,6 +480,16 @@ export async function upTeam(
   }
 }
 
+/** 停止调度员＝关闭调度员终端（循环随之退出）；close=false 是 core 的 noop。 */
+export async function dispatcherDown(
+  deps: CommandDeps,
+  a: { team: string; close?: boolean }
+): Promise<{ outcome: 'noop' | 'closed' | 'already_gone' }> {
+  return pluginWrites().dispatcherDown(deps, a)
+}
+
+// ── 接回会话（restore） ─────────────────────────────────────
+
 export interface RestoreResultDto {
   team: string
   dryRun: boolean
@@ -457,12 +497,12 @@ export interface RestoreResultDto {
   run: { outcome: string; reason?: string } | null
   dispatcher: { action: string; state: string; reason?: string }
   tasks: Array<{ taskId: string; owner: string; outcome: string; reason?: string }>
+  /** worker 等岗位就绪后回填。 */
+  live?: number
+  total?: number
 }
 
-/**
- * 接回会话：走 core 的 restore（把岗位接回原会话，并恢复 Run、调度员与任务）。
- * 回执按岗位带 outcome——面板要如实反映，不能一律说「已接回」。
- */
+/** 接回会话：走 core 的 restore（把岗位接回原会话，并恢复 Run、调度员与任务）。 */
 export async function restoreTeam(
   deps: CommandDeps,
   a: { team: string; dryRun?: boolean; noTasks?: boolean; sessions?: Record<string, string> }
@@ -471,65 +511,22 @@ export async function restoreTeam(
   return {
     team: r.team,
     dryRun: r.dryRun,
-    posts: r.posts.map((p) => ({
-      address: p.address,
-      outcome: p.outcome,
-      ...(p.reason !== undefined ? { reason: p.reason } : {}),
-      ...(p.sessionId !== undefined ? { sessionId: p.sessionId } : {})
-    })),
-    run: r.run ? { outcome: r.run.outcome, ...(r.run.reason !== undefined ? { reason: r.run.reason } : {}) } : null,
-    dispatcher: {
-      action: r.dispatcher.action,
-      state: r.dispatcher.state,
-      ...(r.dispatcher.reason !== undefined ? { reason: r.dispatcher.reason } : {})
-    },
-    tasks: r.tasks.map((t) => ({
-      taskId: t.taskId,
-      owner: t.owner,
-      outcome: t.outcome,
-      ...(t.reason !== undefined ? { reason: t.reason } : {})
-    }))
-  }
-}
-
-/** 认领任务（以岗位身份）。 */
-export async function claimTask(deps: CommandDeps, a: { id: string; as: string }): Promise<void> {
-  return pluginWrites().claimTask(deps, a)
-}
-
-/** 完成任务（以岗位身份）。 */
-export async function doneTask(deps: CommandDeps, a: { id: string; as: string }): Promise<unknown> {
-  return pluginWrites().doneTask(deps, a)
-}
-
-/**
- * 停止团队（close=true 关掉岗位终端；false 只把团队标为 stopped，终端不动）。
- * 注意：Orca 对 handler 回执做 JSON 序列化，字段值不能是 undefined——
- * DownResult 的 reason 大多数岗位没有，必须条件展开，不能 `reason: p.reason`。
- */
-export async function downTeam(
-  deps: CommandDeps,
-  a: { team: string; close: boolean }
-): Promise<{
-  posts: Array<{ address: string; outcome: string; reason?: string }>
-  dispatcher: { outcome: string; reason?: string } | null
-}> {
-  // 先静默停调度员：顺序反了，调度员会在最后几秒继续往即将关闭的岗位派活。
-  let dispatcher: { outcome: string; reason?: string } | null = null
-  try {
-    const d = await dispatcherDown(deps, { team: a.team, close: true })
-    dispatcher = { outcome: d.outcome }
-  } catch (err) {
-    dispatcher = { outcome: 'failed', reason: err instanceof Error ? err.message : String(err) }
-  }
-  const r = await pluginWrites().down(deps, a)
-  return {
     posts: (r.posts ?? []).map((p) => ({
       address: p.address,
       outcome: p.outcome,
-      ...(p.reason !== undefined && p.reason !== null ? { reason: p.reason } : {})
+      ...(p.reason !== undefined && p.reason !== null ? { reason: p.reason } : {}),
+      ...(p.sessionId !== undefined ? { sessionId: p.sessionId } : {})
     })),
-    dispatcher
+    ...(r.run
+      ? { run: { outcome: r.run.outcome, ...(r.run.reason !== undefined && r.run.reason !== null ? { reason: r.run.reason } : {}) } }
+      : { run: null }),
+    dispatcher: { action: r.dispatcher.action, state: r.dispatcher.state, ...(r.dispatcher.reason ? { reason: r.dispatcher.reason } : {}) },
+    tasks: (r.tasks ?? []).map((t) => ({
+      taskId: t.taskId,
+      owner: t.owner,
+      outcome: t.outcome,
+      ...(t.reason !== undefined && t.reason !== null ? { reason: t.reason } : {})
+    }))
   }
 }
 

@@ -207,18 +207,6 @@ export default function activate(orca: OrcaWorkerApi): void {
     return postDetailDto(shared(), team, address)
   })
 
-  orca.panels.handle('team.up', async ({ team, draft, newRun, adoptRun }) => {
-    const result = await upTeam(shared(), { team, draft, newRun, adoptRun })
-    // up 返回时终端刚建，Orca 还没登记标题，ps() 会看到 offline —— 在这里等到就绪再回。
-    const deadline = Date.now() + 20_000
-    let rows = await postDtos(shared(), team)
-    while (rows.length > 0 && rows.some((r) => r.status !== 'live') && Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 3000))
-      rows = await postDtos(shared(), team)
-    }
-    return { ...result, live: rows.filter((r) => r.status === 'live').length, total: rows.length }
-  })
-
   orca.panels.handle('team.dispatcher-up', async ({ team }) => {
     return dispatcherUp(shared(), { team })
   })
@@ -232,8 +220,28 @@ export default function activate(orca: OrcaWorkerApi): void {
     return dispatcherDown(shared(), { team, close: close ?? true })
   })
 
+  orca.panels.handle('team.up', async ({ team, draft, newRun, adoptRun }) => {
+    const result = await upTeam(shared(), { team, draft, newRun, adoptRun })
+    // up 返回时终端刚建，Orca 还没登记标题，ps() 会看到 offline —— 在这里等到就绪再回。
+    const deadline = Date.now() + 20_000
+    let rows = await postDtos(shared(), team)
+    while (rows.length > 0 && rows.some((r) => r.status !== 'live') && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 3000))
+      rows = await postDtos(shared(), team)
+    }
+    return { ...result, live: rows.filter((r) => r.status === 'live').length, total: rows.length }
+  })
+
   orca.panels.handle('team.restore', async ({ team, dryRun, noTasks, sessions }) => {
-    return restoreTeam(shared(), { team, dryRun, noTasks, sessions })
+    const result = await restoreTeam(shared(), { team, dryRun, noTasks, sessions })
+    // restore 返回时终端刚建/刚接回，Orca 还没登记标题，ps() 会看到 offline —— 等到就绪再回。
+    const deadline = Date.now() + 20_000
+    let rows = await postDtos(shared(), team)
+    while (rows.length > 0 && rows.some((r) => r.status !== 'live') && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 3000))
+      rows = await postDtos(shared(), team)
+    }
+    return { ...result, live: rows.filter((r) => r.status === 'live').length, total: rows.length }
   })
 
   orca.panels.handle('task.detail', async ({ id }) => {

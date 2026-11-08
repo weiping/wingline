@@ -1,17 +1,17 @@
 # Graph Report - wingline  (2026-11-08)
 
 ## Corpus Check
-- 379 files · ~337,541 words
+- 379 files · ~336,735 words
 - Verdict: corpus is large enough that graph structure adds value.
 - Unclassified: 7 file(s) not represented in the graph (top: (none) 5, .css 1, .cmd 1)
 
 ## Summary
-- 3402 nodes · 11039 edges · 147 communities (135 shown, 12 thin omitted)
+- 3402 nodes · 11038 edges · 146 communities (134 shown, 12 thin omitted)
 - Extraction: 84% EXTRACTED · 16% INFERRED · 0% AMBIGUOUS · INFERRED: 1726 edges (avg confidence: 0.94)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `fb7553a4`
+- Built from commit: `91213c7d`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -135,7 +135,6 @@
 - draft.ts
 - pnpm-workspace.yaml
 - README.md
-- open
 - signal-summary.ts
 - builder.md
 - checker.md
@@ -191,7 +190,7 @@
 ## Import Cycles
 - None detected.
 
-## Communities (147 total, 12 thin omitted)
+## Communities (146 total, 12 thin omitted)
 
 ### Community 0 - "load.ts"
 Cohesion: 0.10
@@ -330,8 +329,8 @@ Cohesion: 0.12
 Nodes (28): Global Constraints, Review Focus, 阶段 3B：本地 HTTP API 与控制台 Implementation Plan, Critical, Issues, Minor, currentCursor(), cursorOf() (+20 more)
 
 ### Community 35 - "Panel"
-Cohesion: 0.19
-Nodes (14): bringUp(), downTeam(), loadDetail(), loadPosts(), loadPreview(), openTerminal(), Panel(), PostDetailView() (+6 more)
+Cohesion: 0.17
+Nodes (16): bringUp(), downTeam(), InboxView(), loadInbox(), loadPosts(), loadTaskDetail(), loadTasks(), open() (+8 more)
 
 ### Community 36 - "TaskBoard.tsx"
 Cohesion: 0.28
@@ -566,8 +565,8 @@ Cohesion: 0.17
 Nodes (11): compilerOptions, composite, declaration, esModuleInterop, module, moduleResolution, noUncheckedIndexedAccess, skipLibCheck (+3 more)
 
 ### Community 95 - "panel.tsx"
-Cohesion: 0.05
-Nodes (28): PreviewDto, RestoreResultDto, TaskDto, actor, busyTeam, confirmingDown, detail, detailAddress (+20 more)
+Cohesion: 0.04
+Nodes (33): PreviewDto, RestoreResultDto, TaskDto, actor, busyTeam, confirmingDown, detail, detailAddress (+25 more)
 
 ### Community 96 - "compilerOptions"
 Cohesion: 0.18
@@ -656,10 +655,6 @@ Nodes (4): allowBuilds, esbuild, onlyBuiltDependencies, packages
 ### Community 118 - "README.md"
 Cohesion: 0.22
 Nodes (4): 升级与行为变化, 已知问题（合并后）, 遗留的 Orca 测试数据, 阶段 2A 发布说明
-
-### Community 119 - "open"
-Cohesion: 0.33
-Nodes (7): InboxView(), loadInbox(), loadTaskDetail(), loadTasks(), open(), runWrite(), TasksView()
 
 ### Community 120 - "signal-summary.ts"
 Cohesion: 0.53

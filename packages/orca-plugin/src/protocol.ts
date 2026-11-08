@@ -53,6 +53,11 @@ declare module 'orca' {
       input: { team: string; close?: boolean }
       output: { outcome: 'noop' | 'closed' | 'already_gone' }
     }
+    /** 全新拉起（stopped 团队的入口；新生命周期）。耗时可能 1–2 分钟，面板侧用 120s 超时。 */
+    'team.up': {
+      input: { team: string; draft?: boolean; newRun?: boolean; adoptRun?: string }
+      output: import('./host.js').UpResultDto & { live: number; total: number }
+    }
     /** 停止团队：先静默停调度员，再关岗位终端（二段确认由面板做）。 */
     'team.down': {
       input: { team: string; close: boolean }
@@ -60,11 +65,6 @@ declare module 'orca' {
         posts: Array<{ address: string; outcome: string; reason?: string }>
         dispatcher: { outcome: string; reason?: string } | null
       }
-    }
-    /** 拉起岗位（wl up 的插件入口；幂等）。耗时可能 1–2 分钟，面板侧用 120s 超时。 */
-    'team.up': {
-      input: { team: string; draft?: boolean; newRun?: boolean; adoptRun?: string }
-      output: import('./host.js').UpResultDto & { live: number; total: number }
     }
     /** 接回会话：把岗位接回原会话，并恢复 Run、调度员与任务（core 的 restore）。 */
     'team.restore': {

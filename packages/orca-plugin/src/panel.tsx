@@ -18,7 +18,7 @@ import {
   Text
 } from 'orca'
 
-import type { InboxDto, PostDetailDto, PostDto, PreviewDto, RestoreResultDto, TaskDetailDto, TaskDto } from './host.js'
+import type { InboxDto, PostDetailDto, PostDto, PreviewDto, RestoreResultDto, TaskDetailDto, TaskDto, UpResultDto } from './host.js'
 import type { TeamSummary } from './protocol.js'
 
 type View = 'posts' | 'inbox' | 'tasks'
@@ -126,30 +126,41 @@ async function openTerminal(address: string): Promise<void> {
   }
 }
 
-async function bringUp(team: string, opts: { draft?: boolean; newRun?: boolean; adoptRun?: string } = {}): Promise<void> {
+/**
+ * 拉起岗位 = 确保团队跑起来。走 core 的 restore：它逐岗位自动判断——
+ * 活着 → kept（不动）；有历史会话 → resumed（接回上下文）；没有 → fresh（等价 wl up 的新建路径，发启动包）。
+ * 并顺带恢复 Run、调度员与任务。回执按岗位如实反映。
+ */
+async function bringUp(team: string): Promise<void> {
   set(busyTeam, team)
-  set(notice, `正在拉起 ${team} 的岗位（可能要 1–2 分钟）…`)
+  set(notice, `正在拉起 ${team} 的岗位并等待就绪（可能要 1–2 分钟）…`)
   try {
-    set(notice, `正在拉起 ${team} 的岗位并等待就绪（可能要 1–2 分钟）…`)
-    // worker 内部会等到岗位真正 live（或超时）才回，回执带每岗位 outcome 与就绪数
-    // plugin.request 的 timeoutMs 上限是 120000；up 本身约 60s，worker 再等最多 20s 就绪。
-    const r = await plugin.request('team.up', { team, ...opts }, { timeoutMs: 120000 })
-    const posts = (r.posts ?? []) as Array<{ address: string; outcome: string; reason?: string }>
-    const started = posts.filter((p) => p.outcome === 'launched' || p.outcome === 'already_live')
-    const bad = posts.filter((p) => p.outcome !== 'launched' && p.outcome !== 'already_live')
+    // 自动路由：团队已停止 → up（新生命周期）；运行中（含岗位掉线）→ restore（kept/resumed/fresh 逐岗位判断）
+    const current = read(teams)?.find((t) => t.name === team)
+    const stopped = current?.status === 'stopped'
+    // plugin.request 的 timeoutMs 上限是 120000；worker 内部会等岗位就绪（最多 20s）
+    const r = stopped
+      ? await plugin.request('team.up', { team }, { timeoutMs: 120000 })
+      : await plugin.request('team.restore', { team }, { timeoutMs: 120000 })
     const live = typeof r.live === 'number' ? r.live : 0
-    const total = typeof r.total === 'number' ? r.total : posts.length
+    const total = typeof r.total === 'number' ? r.total : 0
     const parts: string[] = []
-    parts.push(bad.length === 0 ? `${started.length} 个岗位已启动` : `${started.length} 个已启动，${bad.length} 个未就绪（${bad.map((p) => `${p.address} ${p.outcome}`).join('、')}）`)
-    parts.push(total > 0 ? (live >= total ? `${live} 个已就绪` : `${live}/${total} 已就绪`) : '未读到岗位状态')
-    // Run 没绑上（协调者身份对不上）时，调度员还得重新启动一次才能认领
-    if (r.run && r.run.outcome !== 'ok') {
-      const disp = r.dispatcher as { outcome?: string; reason?: string } | null | undefined
-      if (disp?.outcome === 'started') parts.push('调度员已启动')
-      else if (disp?.outcome === 'already_running') parts.push('调度员已在运行')
-      else if (disp) parts.push(`调度员未启动（${disp.reason ?? disp.outcome}）`)
-      parts.push(`Run 未绑定（${r.run.reason ?? r.run.outcome}）`)
+    if (stopped) {
+      const posts = ((r as UpResultDto).posts ?? []) as Array<{ address: string; outcome: string; reason?: string }>
+      const okN = posts.filter((p) => p.outcome === 'launched' || p.outcome === 'already_live').length
+      const badN = posts.length - okN
+      parts.push(badN === 0 ? `${okN} 个岗位已全新启动` : `${okN} 个全新启动，${badN} 个未就绪（${posts.filter((p) => !(p.outcome === 'launched' || p.outcome === 'already_live')).map((p) => `${p.address} ${p.outcome}`).join('、')}）`)
+    } else {
+      const dto = r as RestoreResultDto
+      set(restoreResults, { ...read(restoreResults), [team]: dto })
+      const okOut = dto.posts.filter((p) => p.outcome === 'kept' || p.outcome === 'resumed' || p.outcome === 'fresh')
+      const bad = dto.posts.filter((p) => p.outcome !== 'kept' && p.outcome !== 'resumed' && p.outcome !== 'fresh')
+      parts.push(`${okOut.length} 个岗位已接回`)
+      if (bad.length > 0) parts.push(`${bad.length} 个未接回（${bad.map((p) => `${p.address} ${p.outcome}`).join('、')}）`)
+      const resumed = okOut.filter((p) => p.outcome === 'resumed').length
+      if (resumed > 0) parts.push(`其中 ${resumed} 个接回了原会话`)
     }
+    if (total > 0) parts.push(live >= total ? `${live} 个已就绪` : `${live}/${total} 已就绪`)
     set(notice, `${team}：${parts.join('｜')}`)
     set(error, null)
     await refresh()
@@ -193,27 +204,6 @@ async function downTeam(team: string, close: boolean): Promise<void> {
  * 接回会话：把岗位接回原会话，并恢复 Run、调度员与任务。
  * 结果按岗位如实显示——不能一律说「已接回」。
  */
-async function restoreSessions(team: string): Promise<void> {
-  set(busyTeam, team)
-  set(notice, `正在接回 ${team} 的会话…`)
-  try {
-    const r = (await plugin.request('team.restore', { team }, { timeoutMs: 120000 })) as RestoreResultDto
-    set(restoreResults, { ...read(restoreResults), [team]: r })
-    const ok = r.posts.filter((p) => p.outcome === 'kept' || p.outcome === 'resumed' || p.outcome === 'fresh')
-    const bad = r.posts.filter((p) => p.outcome !== 'kept' && p.outcome !== 'resumed' && p.outcome !== 'fresh')
-    const parts = [`${ok.length} 个岗位已接回`]
-    if (bad.length > 0) parts.push(`${bad.length} 个未接回（${bad.map((p) => `${p.address} ${p.outcome}`).join('、')}）`)
-    set(notice, `${team}：${parts.join('｜')}`)
-    set(error, null)
-    await refresh()
-    await loadPosts(team)
-  } catch (err) {
-    set(error, err instanceof Error ? err.message : String(err))
-  } finally {
-    set(busyTeam, null)
-  }
-}
-
 async function loadTaskDetail(id: string): Promise<void> {
   set(detailLoading, id)
   try {
@@ -683,11 +673,6 @@ export default function Panel() {
                       }}
                     >
                       {read(confirmingDown)[team.name] ? '确认停止？' : '停止岗位'}
-                    </Button>
-                  )}
-                  {team.status === 'up' && (
-                    <Button variant="ghost" size="sm" disabled={loadingTeam === team.name} onPress={() => restoreSessions(team.name)}>
-                      接回会话
                     </Button>
                   )}
                 </Row>
